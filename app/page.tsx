@@ -199,7 +199,7 @@ export default function Home() {
         </div>
 
         {memberFilter !== 'all' && <div className="mb-4 flex items-center gap-2 text-xs text-ink-subtle">正在看 <Owner id={memberFilter} label /> 的任务 <button onClick={() => setMemberFilter('all')} className="rounded-full p-1 hover:bg-ink/5" aria-label="清除筛选"><X className="size-3" /></button></div>}
-        <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+        <DndContext id="tinyship-board" sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
           <div className="-mx-2 flex snap-x gap-1 overflow-x-auto pb-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {columns.map((column) => <BoardColumn key={column.id} column={column} tasks={visibleTasks.filter((task) => task.status === column.id)} onAdd={setComposer} />)}
           </div>
