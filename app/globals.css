@@ -1,0 +1,73 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--card);
+  --color-popover-foreground: var(--foreground);
+  --color-primary: var(--ink);
+  --color-primary-foreground: var(--background);
+  --color-secondary: var(--soft);
+  --color-secondary-foreground: var(--ink);
+  --color-muted: var(--soft);
+  --color-muted-foreground: var(--ink-subtle);
+  --color-accent: var(--acid);
+  --color-accent-foreground: var(--ink);
+  --color-destructive: #c94032;
+  --color-border: color-mix(in srgb, var(--ink) 12%, transparent);
+  --color-input: color-mix(in srgb, var(--ink) 12%, transparent);
+  --color-ring: var(--ink);
+  --color-ink: var(--ink);
+  --color-ink-subtle: var(--ink-subtle);
+  --color-ink-faint: var(--ink-faint);
+  --color-canvas: var(--canvas);
+  --color-acid: var(--acid);
+  --color-acid-wash: var(--acid-wash);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+}
+
+:root {
+  --background: #f4f3ee;
+  --foreground: #1d1e19;
+  --card: #fbfaf6;
+  --canvas: #f0efe9;
+  --soft: #ebeae3;
+  --ink: #1d1e19;
+  --ink-subtle: #6e7068;
+  --ink-faint: #9a9b94;
+  --acid: #c8f246;
+  --acid-wash: #eff7d8;
+}
+
+.dark {
+  --background: #171814;
+  --foreground: #eeeee7;
+  --card: #20211c;
+  --canvas: #1b1c18;
+  --soft: #292a24;
+  --ink: #eeeee7;
+  --ink-subtle: #aaa99f;
+  --ink-faint: #74756d;
+  --acid: #c8f246;
+  --acid-wash: #28331a;
+}
+
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  html { @apply font-sans; }
+  body { @apply bg-background text-foreground; }
+  button, [role='button'] { -webkit-tap-highlight-color: transparent; }
+  ::selection { background: var(--acid); color: #1d1e19; }
+}
