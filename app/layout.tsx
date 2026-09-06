@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://tinyship-kanban.proud-ocean-9488.chatgpt.site'),
+  metadataBase: new URL('https://kanby.dev'),
   title: 'tinyship — 少开会，多交付',
   description: '为 1–3 人 vibe coding 团队打造的极简 Kanban。',
   openGraph: {

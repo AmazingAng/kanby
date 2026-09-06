@@ -8,6 +8,9 @@ const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   '00000000-0000-4000-8000-000000000000';
 
 const { d1, r2 } = hostingConfig;
+const isDirectCloudflareDeploy = Boolean(process.env.CF_D1_DATABASE_ID);
+const workerName = process.env.CF_WORKER_NAME ?? 'kanby';
+const customDomain = process.env.CF_CUSTOM_DOMAIN ?? 'kanby.dev';
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === 'seatbelt';
@@ -15,8 +18,6 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === 'seatbelt';
 const runtimeVars = Object.fromEntries(
   [
     'GITHUB_CLIENT_ID',
-    'GITHUB_CLIENT_SECRET',
-    'SESSION_SECRET',
     'PUBLIC_APP_ORIGIN',
     'ALLOWED_GITHUB_LOGINS',
   ]
@@ -25,14 +26,19 @@ const runtimeVars = Object.fromEntries(
 );
 
 const localBindingConfig = {
+  name: workerName,
   main: 'vinext/server/fetch-handler',
   compatibility_flags: ['nodejs_compat'],
   vars: runtimeVars,
+  routes: isDirectCloudflareDeploy
+    ? [{ pattern: customDomain, custom_domain: true }]
+    : [],
   d1_databases: d1
     ? [
         {
           binding: d1,
-          database_name: 'site-creator-d1',
+          database_name:
+            process.env.CF_D1_DATABASE_NAME ?? 'site-creator-d1',
           database_id:
             process.env.CF_D1_DATABASE_ID ?? SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
         },
