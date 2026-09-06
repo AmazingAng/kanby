@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   closestCorners,
   DndContext,
@@ -27,35 +27,44 @@ import {
   Circle,
   Clock3,
   GripVertical,
+  GitBranch,
+  LoaderCircle,
+  LogOut,
   Plus,
   Search,
   Sparkles,
   X,
 } from 'lucide-react';
 
-import { Avatar, AvatarFallback, AvatarGroup } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarGroup, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 
 type ColumnId = 'ideas' | 'building' | 'shipped';
-type MemberId = 'lin' | 'mika' | 'you';
+type AuthUser = {
+  id: string;
+  login: string;
+  name: string;
+  avatarUrl: string | null;
+};
 
 type Task = {
   id: string;
   title: string;
   note: string;
   tag: '产品' | '设计' | '代码' | '增长';
-  owner: MemberId;
+  owner: AuthUser;
   due?: string;
   status: ColumnId;
+  position: number;
 };
 
-const members: Record<MemberId, { name: string; initials: string; color: string }> = {
-  lin: { name: 'Lin', initials: 'L', color: 'bg-[#f3b59f] text-[#542b1e]' },
-  mika: { name: 'Mika', initials: 'M', color: 'bg-[#b8d7ff] text-[#15345c]' },
-  you: { name: 'You', initials: 'Y', color: 'bg-[#d8ff63] text-[#253000]' },
+const demoUsers: Record<'lin' | 'mika' | 'you', AuthUser> = {
+  lin: { id: 'seed-lin', login: 'lin', name: 'Lin', avatarUrl: null },
+  mika: { id: 'seed-mika', login: 'mika', name: 'Mika', avatarUrl: null },
+  you: { id: 'seed-you', login: 'you', name: 'You', avatarUrl: null },
 };
 
 const columns: { id: ColumnId; title: string; hint: string }[] = [
@@ -65,23 +74,28 @@ const columns: { id: ColumnId; title: string; hint: string }[] = [
 ];
 
 const initialTasks: Task[] = [
-  { id: 'task-1', title: '梳理新用户 onboarding', note: '把首次价值体验压缩到 60 秒内', tag: '产品', owner: 'lin', due: '今天', status: 'building' },
-  { id: 'task-2', title: '实现 Command 菜单', note: '⌘K 快速创建与跳转', tag: '代码', owner: 'you', due: '周五', status: 'building' },
-  { id: 'task-3', title: '重写定价页标题', note: '说人话，少一点功能列表', tag: '增长', owner: 'mika', status: 'ideas' },
-  { id: 'task-4', title: '空状态插画', note: '只保留一个让人行动的提示', tag: '设计', owner: 'lin', due: '下周一', status: 'ideas' },
-  { id: 'task-5', title: '接入错误监控', note: '生产环境异常自动聚合', tag: '代码', owner: 'you', status: 'ideas' },
-  { id: 'task-6', title: '邀请 5 位种子用户', note: '记录首次使用的卡点', tag: '增长', owner: 'mika', status: 'shipped' },
-  { id: 'task-7', title: '发布 v0.1', note: '核心流程可以稳定跑通', tag: '产品', owner: 'you', status: 'shipped' },
+  { id: 'task-1', title: '梳理新用户 onboarding', note: '把首次价值体验压缩到 60 秒内', tag: '产品', owner: demoUsers.lin, due: '今天', status: 'building', position: 0 },
+  { id: 'task-2', title: '实现 Command 菜单', note: '⌘K 快速创建与跳转', tag: '代码', owner: demoUsers.you, due: '周五', status: 'building', position: 1 },
+  { id: 'task-3', title: '重写定价页标题', note: '说人话，少一点功能列表', tag: '增长', owner: demoUsers.mika, status: 'ideas', position: 0 },
+  { id: 'task-4', title: '空状态插画', note: '只保留一个让人行动的提示', tag: '设计', owner: demoUsers.lin, due: '下周一', status: 'ideas', position: 1 },
+  { id: 'task-5', title: '接入错误监控', note: '生产环境异常自动聚合', tag: '代码', owner: demoUsers.you, status: 'ideas', position: 2 },
+  { id: 'task-6', title: '邀请 5 位种子用户', note: '记录首次使用的卡点', tag: '增长', owner: demoUsers.mika, status: 'shipped', position: 0 },
+  { id: 'task-7', title: '发布 v0.1', note: '核心流程可以稳定跑通', tag: '产品', owner: demoUsers.you, status: 'shipped', position: 1 },
 ];
 
-function Owner({ id, label = false }: { id: MemberId; label?: boolean }) {
-  const member = members[id];
+function Owner({ user, label = false }: { user: AuthUser; label?: boolean }) {
+  const colors: Record<string, string> = {
+    'seed-lin': 'bg-[#f3b59f] text-[#542b1e]',
+    'seed-mika': 'bg-[#b8d7ff] text-[#15345c]',
+    'seed-you': 'bg-[#d8ff63] text-[#253000]',
+  };
   return (
     <div className="flex items-center gap-2">
-      <Avatar size="sm" aria-label={member.name}>
-        <AvatarFallback className={cn('font-semibold', member.color)}>{member.initials}</AvatarFallback>
+      <Avatar size="sm" aria-label={user.name}>
+        {user.avatarUrl && <AvatarImage src={user.avatarUrl} alt="" />}
+        <AvatarFallback className={cn('font-semibold', colors[user.id] ?? 'bg-acid text-[#253000]')}>{user.name.slice(0, 1).toUpperCase()}</AvatarFallback>
       </Avatar>
-      {label && <span className="text-xs text-ink-subtle">{member.name}</span>}
+      {label && <span className="text-xs text-ink-subtle">{user.name}</span>}
     </div>
   );
 }
@@ -108,7 +122,7 @@ function TaskCard({ task, overlay = false }: { task: Task; overlay?: boolean }) 
       <h3 className="pr-5 text-[15px] font-semibold leading-5 tracking-[-0.01em]">{task.title}</h3>
       <p className="mt-1.5 text-[12px] leading-[1.55] text-ink-subtle">{task.note}</p>
       <div className="mt-4 flex items-center justify-between">
-        <Owner id={task.owner} />
+        <Owner user={task.owner} />
         {task.due ? <span className="flex items-center gap-1 text-[11px] text-ink-subtle"><Clock3 className="size-3" /> {task.due}</span> : <span className="text-[11px] text-ink-faint">无截止日</span>}
       </div>
     </article>
@@ -136,21 +150,74 @@ function BoardColumn({ column, tasks, onAdd }: { column: (typeof columns)[number
   );
 }
 
+function LoginScreen() {
+  return (
+    <main className="grid min-h-screen place-items-center bg-background p-5 text-foreground">
+      <section className="w-full max-w-md rounded-[28px] border border-ink/10 bg-card p-7 shadow-[0_30px_100px_rgba(20,20,15,0.08)] sm:p-9">
+        <div className="mb-10 flex items-center gap-3">
+          <div className="grid size-9 place-items-center rounded-[11px] bg-ink text-background"><Sparkles className="size-4" /></div>
+          <div><p className="text-base font-bold tracking-tight">tinyship</p><p className="text-[10px] uppercase tracking-[0.14em] text-ink-faint">Build less. Ship more.</p></div>
+        </div>
+        <Badge variant="outline" className="mb-4 border-ink/10 bg-canvas text-ink-subtle">团队工作台</Badge>
+        <h1 className="text-4xl font-semibold leading-[1.05] tracking-[-0.05em]">欢迎回来，<br />继续把它做出来。</h1>
+        <p className="mt-4 text-sm leading-6 text-ink-subtle">使用 GitHub 登录。tinyship 只读取你的公开身份，不会访问代码仓库。</p>
+        <a href="/api/auth/github" className={cn(buttonVariants(), 'mt-8 h-12 w-full rounded-full bg-ink text-background hover:bg-ink/85')}>
+          <GitBranch className="size-4" /> 使用 GitHub 继续
+        </a>
+        <p className="mt-5 text-center text-[11px] text-ink-faint">登录后，团队任务将安全保存在 Cloudflare D1。</p>
+      </section>
+    </main>
+  );
+}
+
 export default function Home() {
   const [tasks, setTasks] = useState(initialTasks);
+  const [auth, setAuth] = useState<{ configured: boolean; user: AuthUser | null } | null>(null);
+  const [syncError, setSyncError] = useState('');
   const [activeId, setActiveId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [memberFilter, setMemberFilter] = useState<MemberId | 'all'>('all');
+  const [memberFilter, setMemberFilter] = useState('all');
   const [composer, setComposer] = useState<ColumnId | null>(null);
   const [newTitle, setNewTitle] = useState('');
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
   const activeTask = tasks.find((task) => task.id === activeId);
+  const teamMembers = useMemo(() => {
+    const unique = new Map<string, AuthUser>();
+    for (const task of tasks) unique.set(task.owner.id, task.owner);
+    if (auth?.user) unique.set(auth.user.id, auth.user);
+    return [...unique.values()].slice(0, 3);
+  }, [tasks, auth]);
   const visibleTasks = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return tasks.filter((task) => (memberFilter === 'all' || task.owner === memberFilter) && (!query || `${task.title} ${task.note} ${task.tag}`.toLowerCase().includes(query)));
+    return tasks.filter((task) => (memberFilter === 'all' || task.owner.id === memberFilter) && (!query || `${task.title} ${task.note} ${task.tag}`.toLowerCase().includes(query)));
   }, [tasks, memberFilter, search]);
   const doneCount = tasks.filter((task) => task.status === 'shipped').length;
-  const progress = Math.round((doneCount / tasks.length) * 100);
+  const progress = tasks.length ? Math.round((doneCount / tasks.length) * 100) : 0;
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/auth/session', { cache: 'no-store' })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('session');
+        return response.json() as Promise<{ configured: boolean; user: AuthUser | null }>;
+      })
+      .then(async (session) => {
+        if (cancelled) return;
+        setAuth(session);
+        if (!session.user) return;
+        const response = await fetch('/api/tasks', { cache: 'no-store' });
+        if (!response.ok) throw new Error('tasks');
+        const payload = (await response.json()) as { tasks: Task[] };
+        if (!cancelled) setTasks(payload.tasks);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAuth({ configured: false, user: null });
+          setSyncError('暂时无法连接服务端，已切换到演示模式。');
+        }
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   function handleDragStart(event: DragStartEvent) { setActiveId(String(event.active.id)); }
   function handleDragEnd(event: DragEndEvent) {
@@ -162,19 +229,47 @@ export default function Home() {
     const overId = String(over.id);
     const overIndex = tasks.findIndex((task) => task.id === overId);
     const targetStatus = columns.some((column) => column.id === overId) ? (overId as ColumnId) : overIndex >= 0 ? tasks[overIndex].status : tasks[activeIndex].status;
-    setTasks((current) => {
-      const from = current.findIndex((task) => task.id === active.id);
-      const to = current.findIndex((task) => task.id === overId);
-      const updated = current.map((task) => task.id === active.id ? { ...task, status: targetStatus } : task);
-      return to >= 0 ? arrayMove(updated, from, to) : updated;
-    });
+    const from = tasks.findIndex((task) => task.id === active.id);
+    const to = tasks.findIndex((task) => task.id === overId);
+    const moved = tasks.map((task) => task.id === active.id ? { ...task, status: targetStatus } : task);
+    const reordered = to >= 0 ? arrayMove(moved, from, to) : moved;
+    const positions: Record<ColumnId, number> = { ideas: 0, building: 0, shipped: 0 };
+    const normalized = reordered.map((task) => ({ ...task, position: positions[task.status]++ }));
+    setTasks(normalized);
+    if (auth?.user) {
+      void fetch('/api/tasks', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: normalized.map(({ id, status, position }) => ({ id, status, position })) }),
+      }).then((response) => { if (!response.ok) setSyncError('排序保存失败，请刷新后重试。'); });
+    }
   }
-  function addTask(event: React.FormEvent) {
+  async function addTask(event: React.SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!newTitle.trim() || !composer) return;
-    setTasks((current) => [...current, { id: `task-${Date.now()}`, title: newTitle.trim(), note: '刚刚创建，补充一点上下文吧', tag: '产品', owner: 'you', status: composer }]);
-    setNewTitle(''); setComposer(null);
+    const title = newTitle.trim();
+    const status = composer;
+    setNewTitle('');
+    setComposer(null);
+    if (auth?.user) {
+      try {
+        const response = await fetch('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, status }) });
+        if (!response.ok) throw new Error('create');
+        const payload = (await response.json()) as { task: Task };
+        setTasks((current) => [...current, payload.task]);
+      } catch {
+        setSyncError('任务创建失败，请重试。');
+      }
+      return;
+    }
+    const position = tasks.filter((task) => task.status === status).length;
+    setTasks((current) => [...current, { id: `task-${Date.now()}`, title, note: '刚刚创建，补充一点上下文吧', tag: '产品', owner: demoUsers.you, status, position }]);
   }
+
+  if (!auth) {
+    return <main className="grid min-h-screen place-items-center bg-background"><LoaderCircle className="size-5 animate-spin text-ink-faint" /><span className="sr-only">正在加载</span></main>;
+  }
+  if (auth.configured && !auth.user) return <LoginScreen />;
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -185,7 +280,8 @@ export default function Home() {
             <div><div className="flex items-center gap-2"><span className="text-[15px] font-bold tracking-[-0.02em]">tinyship</span><span className="hidden text-ink-faint sm:inline">/</span><button className="hidden items-center gap-1 text-[13px] font-medium text-ink-subtle hover:text-ink sm:flex">Side Project <ArrowUpRight className="size-3" /></button></div><p className="text-[10px] font-medium uppercase tracking-[0.14em] text-ink-faint">Build less. Ship more.</p></div>
           </div>
           <div className="flex items-center gap-2 sm:gap-4">
-            <AvatarGroup>{(Object.keys(members) as MemberId[]).map((id) => <button key={id} onClick={() => setMemberFilter(memberFilter === id ? 'all' : id)} aria-label={`筛选 ${members[id].name}`}><Avatar size="sm" className={cn(memberFilter === id && 'ring-2 ring-ink')}><AvatarFallback className={cn('font-semibold', members[id].color)}>{members[id].initials}</AvatarFallback></Avatar></button>)}</AvatarGroup>
+            <AvatarGroup>{teamMembers.map((member) => <button key={member.id} onClick={() => setMemberFilter(memberFilter === member.id ? 'all' : member.id)} aria-label={`筛选 ${member.name}`}><span className={cn('block rounded-full', memberFilter === member.id && 'ring-2 ring-ink ring-offset-2 ring-offset-background')}><Owner user={member} /></span></button>)}</AvatarGroup>
+            {auth.user ? <form action="/api/auth/logout" method="post" className="hidden sm:block"><Button type="submit" variant="ghost" size="icon-sm" className="rounded-full text-ink-faint" aria-label="退出登录"><LogOut /></Button></form> : <Badge variant="outline" className="hidden border-ink/10 bg-card text-[10px] text-ink-faint sm:inline-flex">演示模式</Badge>}
             <span className="hidden h-5 w-px bg-ink/10 sm:block" /><Button className="rounded-full bg-ink px-4 text-background hover:bg-ink/80" onClick={() => setComposer('ideas')}><Plus /> 新任务</Button>
           </div>
         </header>
@@ -198,17 +294,19 @@ export default function Home() {
           </div>
         </div>
 
-        {memberFilter !== 'all' && <div className="mb-4 flex items-center gap-2 text-xs text-ink-subtle">正在看 <Owner id={memberFilter} label /> 的任务 <button onClick={() => setMemberFilter('all')} className="rounded-full p-1 hover:bg-ink/5" aria-label="清除筛选"><X className="size-3" /></button></div>}
+        {!auth.configured && <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-ink/10 bg-card px-4 py-3 text-xs text-ink-subtle"><span><GitBranch className="mr-2 inline size-3.5" />GitHub 登录尚未配置，当前修改仅保留在本页。</span><span className="hidden text-ink-faint sm:inline">设置 4 个环境变量后自动启用</span></div>}
+        {syncError && <button onClick={() => setSyncError('')} className="mb-4 flex w-full items-center justify-between rounded-2xl border border-[#c94032]/20 bg-[#c94032]/5 px-4 py-3 text-left text-xs text-[#9d3026]"><span>{syncError}</span><X className="size-3.5" /></button>}
+        {memberFilter !== 'all' && <div className="mb-4 flex items-center gap-2 text-xs text-ink-subtle">正在看 <Owner user={teamMembers.find((member) => member.id === memberFilter) ?? demoUsers.you} label /> 的任务 <button onClick={() => setMemberFilter('all')} className="rounded-full p-1 hover:bg-ink/5" aria-label="清除筛选"><X className="size-3" /></button></div>}
         <DndContext id="tinyship-board" sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
           <div className="-mx-2 flex snap-x gap-1 overflow-x-auto pb-6 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {columns.map((column) => <BoardColumn key={column.id} column={column} tasks={visibleTasks.filter((task) => task.status === column.id)} onAdd={setComposer} />)}
           </div>
           <DragOverlay>{activeTask ? <TaskCard task={activeTask} overlay /> : null}</DragOverlay>
         </DndContext>
-        <footer className="flex flex-col items-start justify-between gap-2 border-t border-ink/10 pt-4 text-[11px] text-ink-faint sm:flex-row sm:items-center"><p>拖动卡片来推进工作 · 按 Space 可用键盘移动</p><p>少开会，多交付。</p></footer>
+        <footer className="flex flex-col items-start justify-between gap-2 border-t border-ink/10 pt-4 text-[11px] text-ink-faint sm:flex-row sm:items-center"><p>拖动卡片来推进工作 · 按 Space 可用键盘移动</p><p>{auth.user ? `已登录为 @${auth.user.login} · D1 自动保存` : '演示模式 · 少开会，多交付。'}</p></footer>
       </div>
 
-      {composer && <div className="fixed inset-0 z-50 grid place-items-center bg-ink/20 p-4 backdrop-blur-[2px]" onMouseDown={(event) => event.currentTarget === event.target && setComposer(null)}><form onSubmit={addTask} className="w-full max-w-md rounded-[24px] border border-ink/10 bg-card p-5 shadow-[0_24px_80px_rgba(20,20,15,0.18)]"><div className="mb-5 flex items-center justify-between"><div><p className="text-xs text-ink-faint">添加到 · {columns.find((column) => column.id === composer)?.title}</p><h2 className="mt-1 text-xl font-semibold tracking-tight">下一件要做的事</h2></div><Button type="button" variant="ghost" size="icon" className="rounded-full" onClick={() => setComposer(null)} aria-label="关闭"><X /></Button></div><Input autoFocus value={newTitle} onChange={(event) => setNewTitle(event.target.value)} placeholder="例如：发布首个可用版本" className="h-12 rounded-xl border-ink/15 px-4 text-base focus-visible:border-ink/30 focus-visible:ring-0" /><div className="mt-4 flex items-center justify-between"><div className="flex items-center gap-2 text-xs text-ink-faint"><Owner id="you" /> 默认分配给你</div><Button type="submit" disabled={!newTitle.trim()} className="rounded-full bg-acid px-5 text-ink hover:bg-acid/80">创建任务 <ArrowUpRight /></Button></div></form></div>}
+      {composer && <div className="fixed inset-0 z-50 grid place-items-center bg-ink/20 p-4 backdrop-blur-[2px]"><form onSubmit={addTask} className="w-full max-w-md rounded-[24px] border border-ink/10 bg-card p-5 shadow-[0_24px_80px_rgba(20,20,15,0.18)]"><div className="mb-5 flex items-center justify-between"><div><p className="text-xs text-ink-faint">添加到 · {columns.find((column) => column.id === composer)?.title}</p><h2 className="mt-1 text-xl font-semibold tracking-tight">下一件要做的事</h2></div><Button type="button" variant="ghost" size="icon" className="rounded-full" onClick={() => setComposer(null)} aria-label="关闭"><X /></Button></div><Input value={newTitle} onChange={(event) => setNewTitle(event.target.value)} placeholder="例如：发布首个可用版本" className="h-12 rounded-xl border-ink/15 px-4 text-base focus-visible:border-ink/30 focus-visible:ring-0" /><div className="mt-4 flex items-center justify-between"><div className="flex items-center gap-2 text-xs text-ink-faint"><Owner user={auth.user ?? demoUsers.you} /> 默认分配给你</div><Button type="submit" disabled={!newTitle.trim()} className="rounded-full bg-acid px-5 text-ink hover:bg-acid/80">创建任务 <ArrowUpRight /></Button></div></form></div>}
     </main>
   );
 }

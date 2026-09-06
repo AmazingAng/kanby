@@ -12,15 +12,29 @@ const { d1, r2 } = hostingConfig;
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === 'seatbelt';
 
+const runtimeVars = Object.fromEntries(
+  [
+    'GITHUB_CLIENT_ID',
+    'GITHUB_CLIENT_SECRET',
+    'SESSION_SECRET',
+    'PUBLIC_APP_ORIGIN',
+    'ALLOWED_GITHUB_LOGINS',
+  ]
+    .map((key) => [key, process.env[key]] as const)
+    .filter((entry): entry is readonly [string, string] => Boolean(entry[1])),
+);
+
 const localBindingConfig = {
   main: 'vinext/server/fetch-handler',
   compatibility_flags: ['nodejs_compat'],
+  vars: runtimeVars,
   d1_databases: d1
     ? [
         {
           binding: d1,
           database_name: 'site-creator-d1',
-          database_id: SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
+          database_id:
+            process.env.CF_D1_DATABASE_ID ?? SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
         },
       ]
     : [],
