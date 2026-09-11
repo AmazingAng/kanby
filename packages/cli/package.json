@@ -1,0 +1,32 @@
+{
+  "name": "@kanby/cli",
+  "version": "0.2.0",
+  "description": "Kanby CLI for coding agents and small teams",
+  "keywords": [
+    "kanban",
+    "coding-agent",
+    "cli",
+    "codex-skill"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AmazingAng/kanby-cli.git"
+  },
+  "homepage": "https://github.com/AmazingAng/kanby-cli#readme",
+  "bugs": {
+    "url": "https://github.com/AmazingAng/kanby-cli/issues"
+  },
+  "type": "module",
+  "bin": {
+    "kanby": "./bin/kanby.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "files": [
+    "bin",
+    "README.md",
+    "LICENSE"
+  ]
+}

@@ -3,12 +3,14 @@ import { env } from 'cloudflare:workers';
 export const SESSION_COOKIE = 'tinyship_session';
 export const OAUTH_STATE_COOKIE = 'tinyship_oauth_state';
 export const OAUTH_VERIFIER_COOKIE = 'tinyship_oauth_verifier';
+export const OAUTH_RETURN_TO_COOKIE = 'tinyship_oauth_return_to';
 
 export type AuthUser = {
   id: string;
   login: string;
   name: string;
   avatarUrl: string | null;
+  githubAdminAccountIds?: string[];
 };
 
 type AuthBindings = {
@@ -17,6 +19,8 @@ type AuthBindings = {
   SESSION_SECRET?: string;
   PUBLIC_APP_ORIGIN?: string;
   ALLOWED_GITHUB_LOGINS?: string;
+  ALLOWED_GITHUB_ORGS?: string;
+  ALLOWED_GITHUB_TEAMS?: string;
 };
 
 export type AuthConfig = {
@@ -24,13 +28,24 @@ export type AuthConfig = {
   clientSecret: string;
   sessionSecret: string;
   origin: string;
-  allowedLogins: Set<string>;
+  allowedIdentities: Set<string>;
+  allowedOrganizations: Set<string>;
+  allowedTeams: Set<string>;
 };
 
 const encoder = new TextEncoder();
 
 function bindings(): AuthBindings {
   return env as unknown as AuthBindings;
+}
+
+function commaSeparatedSet(value?: string): Set<string> {
+  return new Set(
+    (value ?? '')
+      .split(',')
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean),
+  );
 }
 
 export function getAuthConfig(): AuthConfig | null {
@@ -55,13 +70,15 @@ export function getAuthConfig(): AuthConfig | null {
     clientSecret,
     sessionSecret,
     origin,
-    allowedLogins: new Set(
-      (runtime.ALLOWED_GITHUB_LOGINS ?? '')
-        .split(',')
-        .map((login) => login.trim().toLowerCase())
-        .filter(Boolean),
-    ),
+    allowedIdentities: commaSeparatedSet(runtime.ALLOWED_GITHUB_LOGINS),
+    allowedOrganizations: commaSeparatedSet(runtime.ALLOWED_GITHUB_ORGS),
+    allowedTeams: commaSeparatedSet(runtime.ALLOWED_GITHUB_TEAMS),
   };
+}
+
+export function githubOAuthScopes(config: AuthConfig): string[] {
+  void config;
+  return ['read:user', 'user:email', 'read:org'];
 }
 
 export function readCookie(request: Request, name: string): string | null {
@@ -98,14 +115,23 @@ export function clearCookieHeader(name: string, secure: boolean): string {
 function encodeBase64Url(bytes: Uint8Array): string {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  return btoa(binary)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
 }
 
 function decodeBase64Url(value: string): ArrayBuffer {
-  const base64 = value.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(value.length / 4) * 4, '=');
+  const base64 = value
+    .replace(/-/g, '+')
+    .replace(/_/g, '/')
+    .padEnd(Math.ceil(value.length / 4) * 4, '=');
   const binary = atob(base64);
   const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  return bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
+  ) as ArrayBuffer;
 }
 
 export function randomToken(bytes = 32): string {
@@ -120,10 +146,19 @@ export async function sha256Base64Url(value: string): Promise<string> {
 }
 
 async function hmacKey(secret: string) {
-  return crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
+  return crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign', 'verify'],
+  );
 }
 
-export async function createSessionToken(user: AuthUser, secret: string): Promise<string> {
+export async function createSessionToken(
+  user: AuthUser,
+  secret: string,
+): Promise<string> {
   const payload = encodeBase64Url(
     encoder.encode(
       JSON.stringify({
@@ -133,11 +168,17 @@ export async function createSessionToken(user: AuthUser, secret: string): Promis
       }),
     ),
   );
-  const signature = await crypto.subtle.sign('HMAC', await hmacKey(secret), encoder.encode(payload));
+  const signature = await crypto.subtle.sign(
+    'HMAC',
+    await hmacKey(secret),
+    encoder.encode(payload),
+  );
   return `${payload}.${encodeBase64Url(new Uint8Array(signature))}`;
 }
 
-export async function getSessionUser(request: Request): Promise<AuthUser | null> {
+export async function getSessionUser(
+  request: Request,
+): Promise<AuthUser | null> {
   const config = getAuthConfig();
   const token = readCookie(request, SESSION_COOKIE);
   if (!config || !token) return null;
@@ -152,14 +193,36 @@ export async function getSessionUser(request: Request): Promise<AuthUser | null>
       encoder.encode(payload),
     );
     if (!valid) return null;
-    const parsed = JSON.parse(new TextDecoder().decode(decodeBase64Url(payload))) as AuthUser & { exp: number };
-    if (!parsed.id || !parsed.login || !parsed.exp || parsed.exp <= Math.floor(Date.now() / 1000)) return null;
-    return { id: String(parsed.id), login: parsed.login, name: parsed.name || parsed.login, avatarUrl: parsed.avatarUrl || null };
+    const parsed = JSON.parse(
+      new TextDecoder().decode(decodeBase64Url(payload)),
+    ) as AuthUser & { exp: number };
+    if (
+      !parsed.id ||
+      !parsed.login ||
+      !parsed.exp ||
+      parsed.exp <= Math.floor(Date.now() / 1000)
+    )
+      return null;
+    const githubAdminAccountIds = Array.isArray(parsed.githubAdminAccountIds)
+      ? parsed.githubAdminAccountIds
+          .filter((value): value is string => typeof value === 'string')
+          .slice(0, 250)
+      : undefined;
+    return {
+      id: String(parsed.id),
+      login: parsed.login,
+      name: parsed.name || parsed.login,
+      avatarUrl: parsed.avatarUrl || null,
+      githubAdminAccountIds,
+    };
   } catch {
     return null;
   }
 }
 
-export function isSameOriginMutation(request: Request, config: AuthConfig): boolean {
+export function isSameOriginMutation(
+  request: Request,
+  config: AuthConfig,
+): boolean {
   return request.headers.get('origin') === config.origin;
 }

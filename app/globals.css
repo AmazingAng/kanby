@@ -29,6 +29,10 @@
   --color-canvas: var(--canvas);
   --color-acid: var(--acid);
   --color-acid-wash: var(--acid-wash);
+  --color-parent-surface: var(--parent-surface);
+  --color-child-surface: var(--child-surface);
+  --color-child-border: var(--child-border);
+  --color-child-accent: var(--child-accent);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --radius-sm: 8px;
@@ -49,6 +53,10 @@
   --ink-faint: #9a9b94;
   --acid: #c8f246;
   --acid-wash: #eff7d8;
+  --parent-surface: #f7f9ec;
+  --child-surface: #f1f6fc;
+  --child-border: #ccd9e9;
+  --child-accent: #7898c5;
 }
 
 .dark {
@@ -62,12 +70,41 @@
   --ink-faint: #74756d;
   --acid: #c8f246;
   --acid-wash: #28331a;
+  --parent-surface: #22261a;
+  --child-surface: #1c232c;
+  --child-border: #35465b;
+  --child-accent: #8aa9d3;
 }
 
 @layer base {
-  * { @apply border-border outline-ring/50; }
-  html { @apply font-sans; }
-  body { @apply bg-background text-foreground; }
-  button, [role='button'] { -webkit-tap-highlight-color: transparent; }
-  ::selection { background: var(--acid); color: #1d1e19; }
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+  }
+  body {
+    min-width: 320px;
+    overflow-x: clip;
+    @apply bg-background text-foreground;
+  }
+  button,
+  [role='button'] {
+    -webkit-tap-highlight-color: transparent;
+  }
+  ::selection {
+    background: var(--acid);
+    color: #1d1e19;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

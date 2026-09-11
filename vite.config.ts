@@ -2,7 +2,7 @@ import { sites } from '@openai/sites-vite-plugin';
 import tailwindcss from '@tailwindcss/postcss';
 import vinext from 'vinext';
 import { defineConfig } from 'vite';
-import hostingConfig from './.openai/hosting.json';
+import hostingConfig from './.openai/hosting.json' with { type: 'json' };
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
   '00000000-0000-4000-8000-000000000000';
@@ -10,7 +10,7 @@ const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
 const { d1, r2 } = hostingConfig;
 const isDirectCloudflareDeploy = Boolean(process.env.CF_D1_DATABASE_ID);
 const workerName = process.env.CF_WORKER_NAME ?? 'kanby';
-const customDomain = process.env.CF_CUSTOM_DOMAIN ?? 'kanby.dev';
+const customDomain = process.env.CF_CUSTOM_DOMAIN?.trim();
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === 'seatbelt';
@@ -18,8 +18,12 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === 'seatbelt';
 const runtimeVars = Object.fromEntries(
   [
     'GITHUB_CLIENT_ID',
+    'GITHUB_APP_ID',
+    'GITHUB_APP_SLUG',
     'PUBLIC_APP_ORIGIN',
     'ALLOWED_GITHUB_LOGINS',
+    'ALLOWED_GITHUB_ORGS',
+    'ALLOWED_GITHUB_TEAMS',
   ]
     .map((key) => [key, process.env[key]] as const)
     .filter((entry): entry is readonly [string, string] => Boolean(entry[1])),
@@ -30,17 +34,21 @@ const localBindingConfig = {
   main: 'vinext/server/fetch-handler',
   compatibility_flags: ['nodejs_compat'],
   vars: runtimeVars,
-  routes: isDirectCloudflareDeploy
-    ? [{ pattern: customDomain, custom_domain: true }]
-    : [],
+  routes:
+    isDirectCloudflareDeploy && customDomain
+      ? [{ pattern: customDomain, custom_domain: true }]
+      : [],
   d1_databases: d1
     ? [
         {
           binding: d1,
-          database_name:
-            process.env.CF_D1_DATABASE_NAME ?? 'site-creator-d1',
+          database_name: process.env.CF_D1_DATABASE_NAME ?? 'site-creator-d1',
           database_id:
-            process.env.CF_D1_DATABASE_ID ?? SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
+            process.env.CF_D1_DATABASE_ID ??
+            SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
+          // The Cloudflare Vite plugin rewrites this path relative to
+          // dist/server/wrangler.json during build.
+          migrations_dir: 'drizzle',
         },
       ]
     : [],
@@ -48,7 +56,7 @@ const localBindingConfig = {
     ? [
         {
           binding: r2,
-          bucket_name: 'site-creator-r2',
+          bucket_name: process.env.CF_R2_BUCKET_NAME ?? 'site-creator-r2',
         },
       ]
     : [],

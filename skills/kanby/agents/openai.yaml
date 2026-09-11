@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Kanby'
+  short_description: 'Operate Kanby tasks from coding agents'
+  default_prompt: 'Use $kanby to pick up and complete the next Kanby task.'

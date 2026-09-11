@@ -113,17 +113,12 @@
       "indexes": {
         "idx_tasks_status_position": {
           "name": "idx_tasks_status_position",
-          "columns": [
-            "status",
-            "position"
-          ],
+          "columns": ["status", "position"],
           "isUnique": false
         },
         "idx_tasks_owner_id": {
           "name": "idx_tasks_owner_id",
-          "columns": [
-            "owner_id"
-          ],
+          "columns": ["owner_id"],
           "isUnique": false
         }
       },

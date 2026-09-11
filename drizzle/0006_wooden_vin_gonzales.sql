@@ -1,0 +1,1 @@
+ALTER TABLE `github_repositories` ADD `active` integer DEFAULT 1 NOT NULL;
