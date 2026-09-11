@@ -4,23 +4,23 @@
 - Tier: 3
 - Spec approval: not obtained (autonomous run); confidence is downgraded and `public-release-spec.md` is the review artifact.
 - Branch: `codex/fix-kanby-reliability`
-- Validated source state: `1413bc4e9dfce2a047459f607ce0ef381fa148b9069dc2bfd927e8c21533f056` across 227 non-ignored, non-evidence files. `tools/source-state.mjs` excludes generated output and `*-evidence.md` reports.
+- Validated source state: `f6d6d9721d4cab1da67abb586532a597c044da3a168b7109a2f710ae3d23f253` across 227 non-ignored, non-evidence files. `tools/source-state.mjs` excludes generated output and `*-evidence.md` reports.
 - Entry point: `npm run gauntlet`
-- Result: **GAUNTLET PASS — 12/12 layers; publication intentionally held at the remote-safety boundary**
+- Result: **GAUNTLET PASS — 12/12 layers; clean public repository created without exposing or overwriting the legacy repository**
 
 ## Spec-to-test mapping
 
-| Scenario                            | Evidence                                                                                                                             | Status                                                                        |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| License consistency                 | `tests/public-release.test.ts` — root package and full AGPL text; `packages/cli/LICENSE` remains MIT                                 | Pass                                                                          |
-| Secret-safe source and history      | `tests/public-release.test.ts` — deleted historical secret, uncommitted private key, redacted output; `node tools/check-secrets.mjs` | Pass                                                                          |
-| Reproducible onboarding             | `tests/public-release.test.ts` — required README sections and tracked placeholder environment; Worker build and Drizzle check        | Pass                                                                          |
-| Public maintenance surface          | `tests/public-release.test.ts`; contribution, conduct, security, issue, and PR documents                                             | Pass                                                                          |
-| Release CI and build                | CI workflow invokes the same gauntlet from a full-history checkout; local gauntlet result below                                      | Pass                                                                          |
-| Exact publication target            | Read-only GitHub repository and reference inspection                                                                                 | **Blocked safely** — requested name already holds unrelated sensitive history |
-| Must not expose credentials         | Worktree plus reachable-history scan and three release-scanner mutants                                                               | Pass                                                                          |
-| Must not regress the product        | 24 test files, production build, types, lint, format, migration check                                                                | Pass                                                                          |
-| Must not overwrite the wrong remote | No remote added, no force push, visibility unchanged                                                                                 | Pass                                                                          |
+| Scenario                            | Evidence                                                                                                                             | Status |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------ |
+| License consistency                 | `tests/public-release.test.ts` — root package and full AGPL text; `packages/cli/LICENSE` remains MIT                                 | Pass   |
+| Secret-safe source and history      | `tests/public-release.test.ts` — deleted historical secret, uncommitted private key, redacted output; `node tools/check-secrets.mjs` | Pass   |
+| Reproducible onboarding             | `tests/public-release.test.ts` — required README sections and tracked placeholder environment; Worker build and Drizzle check        | Pass   |
+| Public maintenance surface          | `tests/public-release.test.ts`; contribution, conduct, security, issue, and PR documents                                             | Pass   |
+| Release CI and build                | CI workflow invokes the same gauntlet from a full-history checkout; local gauntlet result below                                      | Pass   |
+| Exact publication target            | GitHub repository metadata, remote reference inspection, and successful clean push                                                   | Pass   |
+| Must not expose credentials         | Worktree plus reachable-history scan and three release-scanner mutants                                                               | Pass   |
+| Must not regress the product        | 24 test files, production build, types, lint, format, migration check                                                                | Pass   |
+| Must not overwrite the wrong remote | Legacy repository renamed and kept private; new repository received a normal non-force push                                          | Pass   |
 
 ## RED evidence
 
@@ -52,14 +52,14 @@ The new scanner mutants prove that removing history inspection, leaking matching
 - `npx drizzle-kit check`: migration metadata reported consistent.
 - `git diff --check`: no whitespace errors.
 - License inventory from `package-lock.json`: MIT 775, ISC 36, Apache-2.0 31, MPL-2.0 27, LGPL-3.0-or-later 10, BSD variants 15, and smaller permissive/notice licenses. No proprietary dependency license was found. LGPL entries are optional Sharp/libvips platform packages; CC-BY-4.0 is caniuse data.
-- GitHub Actions use read-only repository permissions and immutable action commit SHAs.
+- GitHub Actions use read-only repository permissions and the current checkout/setup-node v7 releases pinned to immutable action commit SHAs. The initial v4 run passed but emitted a deprecated Node runtime annotation; the v7 follow-up removed that known warning before tagging.
 - Full `npm audit`: 0 critical, 0 high, 4 moderate findings, all under Drizzle Kit's development-only esbuild loader path. Production audit: 0.
 
 ## Publication safety finding
 
-`AmazingAng/kanby` already exists as a private repository with an unrelated 2025 Supabase/Vite/MCP implementation. Its reachable `main` history includes a tracked `.env`. Making that repository public would expose the old history; force-pushing this unrelated root would also destroy the repository's current branch lineage. The remote was therefore left private and unchanged, and no local remote was added.
+`AmazingAng/kanby` initially existed as a private repository with an unrelated 2025 Supabase/Vite/MCP implementation, and its reachable `main` history included a tracked `.env`. With explicit user approval, that repository was renamed to `AmazingAng/kanby-legacy-private` and verified to remain private. No history was rewritten or force-pushed.
 
-Safe options are to rename the old repository before creating a clean `AmazingAng/kanby`, or publish this implementation under a new repository name. The first option best preserves the intended canonical URL, but it requires an explicit repository-history decision.
+A new public `AmazingAng/kanby` repository was then created, and only this scanner-verified source lineage was pushed normally to `main`. The public repository has issues enabled, wiki disabled, private vulnerability reporting enabled, an explicit homepage and description, and focused project topics.
 
 ## Independent verification
 
@@ -87,4 +87,4 @@ The suite does not exercise a clean-room Cloudflare account from resource creati
 - Isolation was not possible without losing the current product because most completed Kanby functionality existed only as preserved dirty-worktree changes. No files were discarded.
 - An initial attempt to upgrade Wrangler alone failed peer resolution; Wrangler and Workers types were then upgraded together to their compatible versions without `--force` or `--legacy-peer-deps`.
 - The first complete gauntlet passed before the final scanner mutation additions. This report records only the fresh gauntlet executed after the final source and evidence edits.
-- Publication is not represented as complete: the existing canonical remote is a genuine safety blocker, not a test or build failure.
+- The canonical public repository was created only after the user explicitly selected the safe rename-and-recreate option; the legacy repository remains recoverable and private.
