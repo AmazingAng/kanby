@@ -167,4 +167,37 @@ describe('Agent mutation coordination', () => {
     expect((await PATCH(request())).status).toBe(400);
     expect((await PATCH(request())).status).toBe(400);
   });
+
+  it('rejects malformed and oversized JSON without creating a task', async () => {
+    const before = database.sqlite
+      .prepare('SELECT COUNT(*) AS count FROM tasks')
+      .get() as { count: number };
+    const request = (body: string) =>
+      new Request(`${origin}/api/v1/tasks`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenOne}`,
+          'Content-Type': 'application/json',
+        },
+        body,
+      });
+
+    const malformed = await POST(request('{'));
+    const oversized = await POST(
+      request(JSON.stringify({ title: 'x', padding: 'x'.repeat(65 * 1024) })),
+    );
+    const after = database.sqlite
+      .prepare('SELECT COUNT(*) AS count FROM tasks')
+      .get() as { count: number };
+
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toMatchObject({
+      error: { code: 'invalid_json' },
+    });
+    expect(oversized.status).toBe(413);
+    expect(await oversized.json()).toMatchObject({
+      error: { code: 'payload_too_large' },
+    });
+    expect(Number(after.count)).toBe(Number(before.count));
+  });
 });

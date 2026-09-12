@@ -10,6 +10,10 @@ import {
   registerUserAndAcceptInvitations,
   renameProject,
 } from '@/lib/db';
+import {
+  isJsonContentType,
+  readJsonObjectWithLimit,
+} from '@/lib/request-limits';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,9 +32,18 @@ export async function POST(request: Request) {
   const user = await getSessionUser(request);
   if (!config || !user || !isSameOriginMutation(request, config))
     return Response.json({ error: 'Forbidden' }, { status: 403 });
-  if (!request.headers.get('content-type')?.startsWith('application/json'))
+  if (!isJsonContentType(request))
     return Response.json({ error: 'JSON required' }, { status: 415 });
-  const body = (await request.json()) as { name?: unknown };
+  const parsed = await readJsonObjectWithLimit(request);
+  if (!parsed.ok)
+    return Response.json(
+      {
+        error:
+          parsed.reason === 'too_large' ? 'Payload too large' : 'Invalid JSON',
+      },
+      { status: parsed.reason === 'too_large' ? 413 : 400 },
+    );
+  const body = parsed.body;
   const name = typeof body.name === 'string' ? body.name.trim() : '';
   if (!name || name.length > 80)
     return Response.json({ error: 'Invalid project' }, { status: 400 });
@@ -45,12 +58,18 @@ export async function PATCH(request: Request) {
   const user = await getSessionUser(request);
   if (!config || !user || !isSameOriginMutation(request, config))
     return Response.json({ error: 'Forbidden' }, { status: 403 });
-  if (!request.headers.get('content-type')?.startsWith('application/json'))
+  if (!isJsonContentType(request))
     return Response.json({ error: 'JSON required' }, { status: 415 });
-  const body = (await request.json()) as {
-    projectId?: unknown;
-    name?: unknown;
-  };
+  const parsed = await readJsonObjectWithLimit(request);
+  if (!parsed.ok)
+    return Response.json(
+      {
+        error:
+          parsed.reason === 'too_large' ? 'Payload too large' : 'Invalid JSON',
+      },
+      { status: parsed.reason === 'too_large' ? 413 : 400 },
+    );
+  const body = parsed.body;
   const projectId = typeof body.projectId === 'string' ? body.projectId : '';
   const name = typeof body.name === 'string' ? body.name.trim() : '';
   if (!projectId || !name || name.length > 80)

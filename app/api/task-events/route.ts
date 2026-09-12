@@ -4,7 +4,10 @@ import {
   isSameOriginMutation,
 } from '@/lib/auth';
 import { getProjectRole, taskBelongsToProject } from '@/lib/db';
-import { readTextBodyWithLimit } from '@/lib/request-limits';
+import {
+  isJsonContentType,
+  readJsonObjectWithLimit,
+} from '@/lib/request-limits';
 import {
   appendTaskActivity,
   listProjectAgentStates,
@@ -59,22 +62,21 @@ export async function POST(request: Request) {
   const user = await getSessionUser(request);
   if (!config || !user || !isSameOriginMutation(request, config))
     return Response.json({ error: 'Forbidden' }, { status: 403 });
-  if (!request.headers.get('content-type')?.startsWith('application/json'))
+  if (!isJsonContentType(request))
     return Response.json({ error: 'JSON required' }, { status: 415 });
-  const raw = await readTextBodyWithLimit(request, MAX_COMMENT_REQUEST_BODY);
-  if (!raw.ok)
+  const parsed = await readJsonObjectWithLimit(
+    request,
+    MAX_COMMENT_REQUEST_BODY,
+  );
+  if (!parsed.ok)
     return Response.json(
       {
-        error: raw.reason === 'too_large' ? 'Payload too large' : 'Bad request',
+        error:
+          parsed.reason === 'too_large' ? 'Payload too large' : 'Invalid JSON',
       },
-      { status: raw.reason === 'too_large' ? 413 : 400 },
+      { status: parsed.reason === 'too_large' ? 413 : 400 },
     );
-  let body: Record<string, unknown>;
-  try {
-    body = JSON.parse(raw.text) as Record<string, unknown>;
-  } catch {
-    return Response.json({ error: 'Invalid JSON' }, { status: 400 });
-  }
+  const body = parsed.body;
   const projectId = typeof body.projectId === 'string' ? body.projectId : '';
   const taskId = typeof body.taskId === 'string' ? body.taskId : '';
   const comment = typeof body.body === 'string' ? body.body.trim() : '';

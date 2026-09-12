@@ -7,6 +7,7 @@ import {
   OAUTH_STATE_COOKIE,
   OAUTH_VERIFIER_COOKIE,
   readCookie,
+  safeReturnTo,
   SESSION_COOKIE,
   type AuthUser,
 } from '@/lib/auth';
@@ -41,6 +42,7 @@ const githubHeaders = (accessToken: string) => ({
 async function githubList<T>(path: string, accessToken: string): Promise<T[]> {
   const response = await fetch(`https://api.github.com${path}`, {
     headers: githubHeaders(accessToken),
+    redirect: 'error',
   });
   if (!response.ok) return [];
   const payload = await response.json();
@@ -132,10 +134,7 @@ export async function GET(request: Request) {
   const expectedState = readCookie(request, OAUTH_STATE_COOKIE);
   const verifier = readCookie(request, OAUTH_VERIFIER_COOKIE);
   const requestedReturnTo = readCookie(request, OAUTH_RETURN_TO_COOKIE) ?? '/';
-  const returnTo =
-    requestedReturnTo.startsWith('/') && !requestedReturnTo.startsWith('//')
-      ? requestedReturnTo
-      : '/';
+  const returnTo = safeReturnTo(requestedReturnTo);
   if (
     !code ||
     !state ||
@@ -161,6 +160,7 @@ export async function GET(request: Request) {
         redirect_uri: `${config.origin}/api/auth/github/callback`,
         code_verifier: verifier,
       }),
+      redirect: 'error',
     },
   );
   const tokenPayload = (await tokenResponse.json()) as {
@@ -176,6 +176,7 @@ export async function GET(request: Request) {
 
   const profileResponse = await fetch('https://api.github.com/user', {
     headers: githubHeaders(tokenPayload.access_token),
+    redirect: 'error',
   });
   const profile = (await profileResponse.json()) as GitHubUser;
   if (!profileResponse.ok || !profile.id || !profile.login) {

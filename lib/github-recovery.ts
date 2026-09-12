@@ -20,8 +20,11 @@ import {
 } from '@/lib/github';
 import { processGitHubWebhook } from '@/lib/github-webhook';
 
-export async function retryLocalGitHubDeliveries(limit = 10) {
-  const deliveries = await claimDueGitHubDeliveries(limit);
+export async function retryLocalGitHubDeliveries(
+  limit = 10,
+  projectId?: string,
+) {
+  const deliveries = await claimDueGitHubDeliveries(limit, projectId);
   let recovered = 0;
   for (const delivery of deliveries) {
     try {
@@ -72,6 +75,10 @@ export async function runGitHubRecovery() {
         : 'GitHub recovery failed';
   }
   return { local, remote, remoteError };
+}
+
+export async function runGitHubProjectRecovery(projectId: string) {
+  return { local: await retryLocalGitHubDeliveries(10, projectId) };
 }
 
 export async function diagnoseGitHubProject(projectId: string) {

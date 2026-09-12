@@ -36,6 +36,10 @@ import {
   getGitHubLinkedItem,
   parseGitHubItemUrl,
 } from '@/lib/github';
+import {
+  isJsonContentType,
+  readJsonObjectWithLimit,
+} from '@/lib/request-limits';
 
 export const dynamic = 'force-dynamic';
 
@@ -50,6 +54,33 @@ const checklistActions = new Set([
 
 function fail(code: string, message: string, status: number) {
   return Response.json({ ok: false, error: { code, message } }, { status });
+}
+
+async function agentJsonBody(request: Request) {
+  if (!isJsonContentType(request))
+    return {
+      ok: false as const,
+      response: fail(
+        'json_required',
+        'Content-Type must be application/json',
+        415,
+      ),
+    };
+  const parsed = await readJsonObjectWithLimit(request);
+  if (!parsed.ok) {
+    const tooLarge = parsed.reason === 'too_large';
+    return {
+      ok: false as const,
+      response: fail(
+        tooLarge ? 'payload_too_large' : 'invalid_json',
+        tooLarge
+          ? 'Request body is too large'
+          : 'Request body must be a JSON object',
+        tooLarge ? 413 : 400,
+      ),
+    };
+  }
+  return { ok: true as const, body: parsed.body, text: parsed.text };
 }
 
 async function authenticated(
@@ -152,10 +183,10 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const auth = await authenticated(request, 'task:write');
   if (auth instanceof Response) return auth;
-  if (!request.headers.get('content-type')?.startsWith('application/json'))
-    return fail('json_required', 'Content-Type must be application/json', 415);
-  const requestBody = await request.clone().text();
-  const body = (await request.json()) as Record<string, unknown>;
+  const parsed = await agentJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const requestBody = parsed.text;
+  const body = parsed.body;
   const title = typeof body.title === 'string' ? body.title.trim() : '';
   const status = validColumn(body.status) ? body.status : 'ideas';
   if (!title || title.length > 160)
@@ -209,10 +240,10 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   const auth = await authenticated(request, 'task:write');
   if (auth instanceof Response) return auth;
-  if (!request.headers.get('content-type')?.startsWith('application/json'))
-    return fail('json_required', 'Content-Type must be application/json', 415);
-  const requestBody = await request.clone().text();
-  const body = (await request.json()) as Record<string, unknown>;
+  const parsed = await agentJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const requestBody = parsed.text;
+  const body = parsed.body;
   const action = typeof body.action === 'string' ? body.action : 'update';
   const reference = typeof body.id === 'string' ? body.id.trim() : '';
   if (!reference)

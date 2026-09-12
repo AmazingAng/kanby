@@ -121,6 +121,56 @@ describe('Kanby CLI credential contract', () => {
     });
   });
 
+  it('does not send an Agent Token to an insecure non-loopback origin', () => {
+    const token = `kby_${'s'.repeat(48)}`;
+    const result = spawnSync(
+      process.execPath,
+      [cli, 'task', 'list', '--json'],
+      {
+        env: {
+          ...process.env,
+          XDG_CONFIG_HOME: temporaryConfigRoot(),
+          KANBY_TOKEN: token,
+          KANBY_URL: 'http://kanby.example',
+        },
+        encoding: 'utf8',
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('HTTPS origin');
+    expect(result.stderr).not.toContain(token);
+  });
+
+  it('does not follow an authenticated API redirect', async () => {
+    let requests = 0;
+    let server: Server | undefined;
+    const port = await new Promise<number>((resolve) => {
+      server = createServer((_request, response) => {
+        requests += 1;
+        response.writeHead(302, { Location: '/redirected' });
+        response.end();
+      }).listen(0, '127.0.0.1', () => {
+        const address = server!.address();
+        resolve(typeof address === 'object' && address ? address.port : 0);
+      });
+    });
+    const token = `kby_${'s'.repeat(48)}`;
+    const result = await runCli(['task', 'list'], {
+      ...process.env,
+      XDG_CONFIG_HOME: temporaryConfigRoot(),
+      KANBY_TOKEN: token,
+      KANBY_URL: `http://127.0.0.1:${port}`,
+    });
+    await new Promise<void>((resolve, reject) =>
+      server!.close((error) => (error ? reject(error) : resolve())),
+    );
+
+    expect(result.status).toBe(1);
+    expect(requests).toBe(1);
+    expect(result.stderr).not.toContain(token);
+  });
+
   it('sends one quoted positional argument per child for task split', async () => {
     let receivedBody: unknown;
     let server: Server | undefined;

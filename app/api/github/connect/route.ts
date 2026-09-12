@@ -2,6 +2,7 @@ import {
   cookieHeader,
   getAuthConfig,
   getSessionUser,
+  hasFreshAuthorizationClaims,
   randomToken,
 } from '@/lib/auth';
 import { getProjectRole } from '@/lib/db';
@@ -27,6 +28,15 @@ export async function GET(request: Request) {
     });
   if (!projectId || (await getProjectRole(projectId, user.id)) !== 'owner')
     return Response.json({ error: 'Owner required' }, { status: 403 });
+  if (!hasFreshAuthorizationClaims(user)) {
+    const returnTo = `/api/github/connect?projectId=${encodeURIComponent(projectId)}`;
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: `/api/auth/github?returnTo=${encodeURIComponent(returnTo)}`,
+      },
+    });
+  }
 
   const state = randomToken(32);
   await createGitHubConnectionState(projectId, user.id, state);

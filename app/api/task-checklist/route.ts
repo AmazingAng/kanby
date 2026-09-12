@@ -12,7 +12,10 @@ import {
   TaskRevisionConflictError,
   updateAcceptanceCriterion,
 } from '@/lib/db';
-import { readTextBodyWithLimit } from '@/lib/request-limits';
+import {
+  isJsonContentType,
+  readJsonObjectWithLimit,
+} from '@/lib/request-limits';
 import { userActivityActor } from '@/lib/task-activity';
 
 export const dynamic = 'force-dynamic';
@@ -27,34 +30,28 @@ async function authorizedJsonBody(request: Request) {
       ok: false as const,
       response: Response.json({ error: 'Forbidden' }, { status: 403 }),
     };
-  if (!request.headers.get('content-type')?.startsWith('application/json'))
+  if (!isJsonContentType(request))
     return {
       ok: false as const,
       response: Response.json({ error: 'JSON required' }, { status: 415 }),
     };
-  const raw = await readTextBodyWithLimit(request, MAX_REQUEST_BODY);
-  if (!raw.ok)
+  const parsed = await readJsonObjectWithLimit(request, MAX_REQUEST_BODY);
+  if (!parsed.ok)
     return {
       ok: false as const,
       response: Response.json(
         {
           error:
-            raw.reason === 'too_large' ? 'Payload too large' : 'Bad request',
+            parsed.reason === 'too_large'
+              ? 'Payload too large'
+              : parsed.reason === 'unreadable'
+                ? 'Bad request'
+                : 'Invalid JSON',
         },
-        { status: raw.reason === 'too_large' ? 413 : 400 },
+        { status: parsed.reason === 'too_large' ? 413 : 400 },
       ),
     };
-  try {
-    const body = JSON.parse(raw.text) as unknown;
-    if (!body || typeof body !== 'object' || Array.isArray(body))
-      throw new Error('invalid');
-    return { ok: true as const, user, body: body as Record<string, unknown> };
-  } catch {
-    return {
-      ok: false as const,
-      response: Response.json({ error: 'Invalid JSON' }, { status: 400 }),
-    };
-  }
+  return { ok: true as const, user, body: parsed.body };
 }
 
 function identity(body: Record<string, unknown>) {

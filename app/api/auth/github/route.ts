@@ -6,6 +6,7 @@ import {
   OAUTH_STATE_COOKIE,
   OAUTH_VERIFIER_COOKIE,
   randomToken,
+  safeReturnTo,
   sha256Base64Url,
 } from '@/lib/auth';
 
@@ -20,10 +21,7 @@ export async function GET(request: Request) {
   const challenge = await sha256Base64Url(verifier);
   const requestedReturnTo =
     new URL(request.url).searchParams.get('returnTo') ?? '/';
-  const returnTo =
-    requestedReturnTo.startsWith('/') && !requestedReturnTo.startsWith('//')
-      ? requestedReturnTo
-      : '/';
+  const returnTo = safeReturnTo(requestedReturnTo);
   const secure = config.origin.startsWith('https://');
   const authorize = new URL('https://github.com/login/oauth/authorize');
   authorize.searchParams.set('client_id', config.clientId);

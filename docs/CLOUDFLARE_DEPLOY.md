@@ -43,6 +43,12 @@ npx wrangler secret put GITHUB_CLIENT_SECRET --name kanby
 npx wrangler secret put SESSION_SECRET --name kanby
 ```
 
+Generate `SESSION_SECRET` from at least 32 random bytes (for example,
+`openssl rand -base64 32`). Kanby rejects shorter values. Production
+`PUBLIC_APP_ORIGIN` values must use HTTPS and contain only the origin—no
+credentials, path, query, or fragment. Plain HTTP is accepted only on loopback
+hosts for local development.
+
 Set `GITHUB_CLIENT_ID`, `PUBLIC_APP_ORIGIN`, and optional access rules as Worker
 variables. `ALLOWED_GITHUB_LOGINS` accepts comma-separated GitHub usernames or
 verified email addresses. `ALLOWED_GITHUB_ORGS` accepts organization names, and
@@ -97,6 +103,11 @@ Before publishing a new revision, run `npm run gauntlet`. After deployment,
 verify the home page, `/demo`, GitHub sign-in, project creation, one attachment,
 and the GitHub App diagnostic in project settings. Apply every new D1 migration
 before sending production traffic to code that expects it.
+
+GitHub App connection is a sensitive action. If the browser session is older
+than 15 minutes, Kanby asks the owner to authenticate with GitHub again before
+starting installation. This refreshes organization-administrator claims rather
+than trusting a month-old membership snapshot.
 
 To roll back application code, deploy a previously known-good commit. D1
 migrations are append-only; create a forward repair migration instead of

@@ -103,6 +103,51 @@ describe('GitHub automation reliability', () => {
     ).toMatchObject({ status: 'complete', payload: null });
   });
 
+  it('limits a project-triggered retry claim to that project repositories', async () => {
+    const now = Date.now();
+    database.sqlite.exec(`
+      INSERT INTO github_installations
+        (id, account_id, account_login, account_type, repository_selection, created_at, updated_at)
+      VALUES
+        ('installation-one', '11', 'one', 'Organization', 'selected', ${now}, ${now}),
+        ('installation-two', '22', 'two', 'Organization', 'selected', ${now}, ${now});
+      INSERT INTO github_project_installations
+        (project_id, installation_id, connected_by, created_at)
+      VALUES ('project-1', 'installation-one', 'user-1', ${now});
+      INSERT INTO github_repositories
+        (id, installation_id, name, full_name, html_url, default_branch, private, active, updated_at)
+      VALUES
+        ('repository-one', 'installation-one', 'one', 'one/repo', 'https://github.com/one/repo', 'main', 1, 1, ${now}),
+        ('repository-two', 'installation-two', 'two', 'two/repo', 'https://github.com/two/repo', 'main', 1, 1, ${now});
+      INSERT INTO github_project_repositories (project_id, repository_id, created_at)
+      VALUES ('project-1', 'repository-one', ${now});
+    `);
+    await startGitHubDelivery('project-delivery', 'push', '{}', {
+      installationId: 'installation-one',
+      repositoryId: 'repository-one',
+    });
+    await startGitHubDelivery('foreign-delivery', 'push', '{}', {
+      installationId: 'installation-two',
+      repositoryId: 'repository-two',
+    });
+    await failGitHubDelivery('project-delivery', 'retry');
+    await failGitHubDelivery('foreign-delivery', 'retry');
+    database.sqlite
+      .prepare(
+        "UPDATE github_deliveries SET next_retry_at = 0 WHERE id IN ('project-delivery', 'foreign-delivery')",
+      )
+      .run();
+
+    expect(await claimDueGitHubDeliveries(10, 'project-1')).toEqual([
+      { id: 'project-delivery', event: 'push', payload: '{}' },
+    ]);
+    expect(
+      database.sqlite
+        .prepare('SELECT status FROM github_deliveries WHERE id = ?')
+        .get('foreign-delivery'),
+    ).toEqual({ status: 'failed' });
+  });
+
   it('uses bounded exponential retry delays', () => {
     expect(githubRetryDelay(1)).toBe(30_000);
     expect(githubRetryDelay(2)).toBe(60_000);

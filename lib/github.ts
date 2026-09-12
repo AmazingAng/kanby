@@ -166,20 +166,31 @@ async function githubAppJwt(config: GitHubAppConfig) {
   return `${header}.${payload}.${base64Url(new Uint8Array(signature))}`;
 }
 
-async function githubFetch<T>(
+export function githubApiRequest(
   path: string,
   token: string,
   init: RequestInit = {},
-): Promise<T> {
+) {
+  if (!path.startsWith('/') || path.startsWith('//') || path.includes('\\'))
+    throw new Error('Invalid GitHub API path');
   const headers = new Headers(init.headers);
   headers.set('Accept', 'application/vnd.github+json');
   headers.set('Authorization', `Bearer ${token}`);
   headers.set('User-Agent', 'kanby-github-app');
   headers.set('X-GitHub-Api-Version', '2022-11-28');
-  const response = await fetch(`https://api.github.com${path}`, {
+  return new Request(new URL(path, 'https://api.github.com'), {
     ...init,
     headers,
+    redirect: 'error',
   });
+}
+
+async function githubFetch<T>(
+  path: string,
+  token: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const response = await fetch(githubApiRequest(path, token, init));
   if (!response.ok) throw new Error(`GitHub API ${response.status}`);
   return response.json() as Promise<T>;
 }

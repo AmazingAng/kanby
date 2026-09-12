@@ -539,19 +539,34 @@ export type RetryableGitHubDelivery = {
   payload: string;
 };
 
-export async function claimDueGitHubDeliveries(limit = 10) {
+export async function claimDueGitHubDeliveries(limit = 10, projectId?: string) {
   await ensureSchema();
   const db = database();
   const now = Date.now();
+  const projectScope = projectId
+    ? `AND EXISTS (
+         SELECT 1 FROM github_project_installations gpi
+         JOIN github_project_repositories gpr ON gpr.project_id = gpi.project_id
+         WHERE gpi.project_id = ?
+           AND gpi.installation_id = gd.installation_id
+           AND gpr.repository_id = gd.repository_id
+       )`
+    : '';
   const candidates = await db
     .prepare(
-      `SELECT id FROM github_deliveries
+      `SELECT id FROM github_deliveries gd
        WHERE processed_at IS NULL AND payload IS NOT NULL
          AND (status = 'failed' AND next_retry_at <= ?
               OR status = 'processing' AND lease_expires_at < ?)
+         ${projectScope}
        ORDER BY COALESCE(next_retry_at, received_at), received_at LIMIT ?`,
     )
-    .bind(now, now, Math.min(Math.max(limit, 1), 25))
+    .bind(
+      now,
+      now,
+      ...(projectId ? [projectId] : []),
+      Math.min(Math.max(limit, 1), 25),
+    )
     .all<{ id: string }>();
   const claimed: RetryableGitHubDelivery[] = [];
   for (const candidate of candidates.results) {

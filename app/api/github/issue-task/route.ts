@@ -5,6 +5,10 @@ import {
 } from '@/lib/auth';
 import { getProjectRole } from '@/lib/db';
 import { importGitHubIssueTask } from '@/lib/github-automation';
+import {
+  isJsonContentType,
+  readJsonObjectWithLimit,
+} from '@/lib/request-limits';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,9 +17,18 @@ export async function POST(request: Request) {
   const user = await getSessionUser(request);
   if (!config || !user || !isSameOriginMutation(request, config))
     return Response.json({ error: 'Forbidden' }, { status: 403 });
-  if (!request.headers.get('content-type')?.startsWith('application/json'))
+  if (!isJsonContentType(request))
     return Response.json({ error: 'JSON required' }, { status: 415 });
-  const body = (await request.json()) as Record<string, unknown>;
+  const parsed = await readJsonObjectWithLimit(request);
+  if (!parsed.ok)
+    return Response.json(
+      {
+        error:
+          parsed.reason === 'too_large' ? 'Payload too large' : 'Invalid JSON',
+      },
+      { status: parsed.reason === 'too_large' ? 413 : 400 },
+    );
+  const body = parsed.body;
   const projectId = typeof body.projectId === 'string' ? body.projectId : '';
   const eventId = typeof body.eventId === 'string' ? body.eventId : '';
   if (!projectId || projectId.length > 80 || !eventId || eventId.length > 180)

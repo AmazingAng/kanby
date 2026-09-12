@@ -2,6 +2,20 @@ export type LimitedTextBody =
   | { ok: true; text: string }
   | { ok: false; reason: 'too_large' | 'unreadable' };
 
+export type LimitedJsonObject =
+  | { ok: true; body: Record<string, unknown>; text: string }
+  | {
+      ok: false;
+      reason: 'too_large' | 'unreadable' | 'invalid_json' | 'invalid_shape';
+    };
+
+export const DEFAULT_JSON_BODY_LIMIT = 64 * 1024;
+
+export function isJsonContentType(request: Request): boolean {
+  const value = request.headers.get('content-type');
+  return Boolean(value && /^application\/json(?:\s*;|\s*$)/i.test(value));
+}
+
 export function parseContentLength(value: string | null): number | null {
   if (!value || !/^\d+$/.test(value)) return null;
   const parsed = Number(value);
@@ -41,5 +55,29 @@ export async function readTextBodyWithLimit(
     body.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return { ok: true, text: new TextDecoder().decode(body) };
+  try {
+    return {
+      ok: true,
+      text: new TextDecoder('utf-8', { fatal: true }).decode(body),
+    };
+  } catch {
+    return { ok: false, reason: 'unreadable' };
+  }
+}
+
+export async function readJsonObjectWithLimit(
+  request: Request,
+  maximumBytes = DEFAULT_JSON_BODY_LIMIT,
+): Promise<LimitedJsonObject> {
+  const raw = await readTextBodyWithLimit(request, maximumBytes);
+  if (!raw.ok) return raw;
+  let body: unknown;
+  try {
+    body = JSON.parse(raw.text) as unknown;
+  } catch {
+    return { ok: false, reason: 'invalid_json' };
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body))
+    return { ok: false, reason: 'invalid_shape' };
+  return { ok: true, body: body as Record<string, unknown>, text: raw.text };
 }

@@ -17,11 +17,38 @@ import {
 } from '@/lib/db';
 import { attachmentStorage } from '@/lib/storage';
 import { userActivityActor } from '@/lib/task-activity';
+import {
+  isJsonContentType,
+  readJsonObjectWithLimit,
+} from '@/lib/request-limits';
 
 export const dynamic = 'force-dynamic';
 
 const statuses = new Set<ColumnId>(['ideas', 'building', 'shipped']);
 const tags = new Set<TaskTag>(['产品', '设计', '代码', '增长']);
+
+async function taskJsonBody(request: Request) {
+  if (!isJsonContentType(request))
+    return {
+      ok: false as const,
+      response: Response.json({ error: 'JSON required' }, { status: 415 }),
+    };
+  const parsed = await readJsonObjectWithLimit(request);
+  if (!parsed.ok)
+    return {
+      ok: false as const,
+      response: Response.json(
+        {
+          error:
+            parsed.reason === 'too_large'
+              ? 'Payload too large'
+              : 'Invalid JSON',
+        },
+        { status: parsed.reason === 'too_large' ? 413 : 400 },
+      ),
+    };
+  return { ok: true as const, body: parsed.body };
+}
 
 export async function GET(request: Request) {
   const user = await getSessionUser(request);
@@ -45,13 +72,9 @@ export async function POST(request: Request) {
   const user = await getSessionUser(request);
   if (!config || !user || !isSameOriginMutation(request, config))
     return Response.json({ error: 'Forbidden' }, { status: 403 });
-  if (!request.headers.get('content-type')?.startsWith('application/json'))
-    return Response.json({ error: 'JSON required' }, { status: 415 });
-  const body = (await request.json()) as {
-    projectId?: unknown;
-    title?: unknown;
-    status?: unknown;
-  };
+  const parsed = await taskJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
   const projectId = typeof body.projectId === 'string' ? body.projectId : '';
   const title = typeof body.title === 'string' ? body.title.trim() : '';
   const status =
@@ -80,9 +103,9 @@ export async function PUT(request: Request) {
   const user = await getSessionUser(request);
   if (!config || !user || !isSameOriginMutation(request, config))
     return Response.json({ error: 'Forbidden' }, { status: 403 });
-  if (!request.headers.get('content-type')?.startsWith('application/json'))
-    return Response.json({ error: 'JSON required' }, { status: 415 });
-  const body = (await request.json()) as Record<string, unknown>;
+  const parsed = await taskJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
   const projectId = typeof body.projectId === 'string' ? body.projectId : '';
   const id = typeof body.id === 'string' ? body.id : '';
   const title = typeof body.title === 'string' ? body.title.trim() : '';
@@ -172,9 +195,9 @@ export async function PATCH(request: Request) {
   const user = await getSessionUser(request);
   if (!config || !user || !isSameOriginMutation(request, config))
     return Response.json({ error: 'Forbidden' }, { status: 403 });
-  if (!request.headers.get('content-type')?.startsWith('application/json'))
-    return Response.json({ error: 'JSON required' }, { status: 415 });
-  const body = (await request.json()) as Record<string, unknown>;
+  const parsed = await taskJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
   const projectId = typeof body.projectId === 'string' ? body.projectId : '';
   if (!projectId || !(await getProjectRole(projectId, user.id)))
     return Response.json({ error: 'Forbidden' }, { status: 403 });
@@ -259,9 +282,9 @@ export async function DELETE(request: Request) {
   const user = await getSessionUser(request);
   if (!config || !user || !isSameOriginMutation(request, config))
     return Response.json({ error: 'Forbidden' }, { status: 403 });
-  if (!request.headers.get('content-type')?.startsWith('application/json'))
-    return Response.json({ error: 'JSON required' }, { status: 415 });
-  const body = (await request.json()) as Record<string, unknown>;
+  const parsed = await taskJsonBody(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
   const projectId = typeof body.projectId === 'string' ? body.projectId : '';
   const id = typeof body.id === 'string' ? body.id : '';
   const expectedUpdatedAt = Number(body.updatedAt);

@@ -15,6 +15,10 @@ import {
   getGitHubLinkedItem,
   parseGitHubItemUrl,
 } from '@/lib/github';
+import {
+  isJsonContentType,
+  readJsonObjectWithLimit,
+} from '@/lib/request-limits';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,13 +51,20 @@ export async function POST(request: Request) {
   const user = await getSessionUser(request);
   if (!auth || !app || !user || !isSameOriginMutation(request, auth))
     return Response.json({ error: 'Forbidden' }, { status: 403 });
-  if (!request.headers.get('content-type')?.startsWith('application/json'))
+  if (!isJsonContentType(request))
     return Response.json({ error: 'JSON required' }, { status: 415 });
-  const body = (await request.json()) as {
-    projectId?: unknown;
-    taskId?: unknown;
-    url?: unknown;
-  };
+  const bodyResult = await readJsonObjectWithLimit(request);
+  if (!bodyResult.ok)
+    return Response.json(
+      {
+        error:
+          bodyResult.reason === 'too_large'
+            ? 'Payload too large'
+            : 'Invalid JSON',
+      },
+      { status: bodyResult.reason === 'too_large' ? 413 : 400 },
+    );
+  const body = bodyResult.body;
   const projectId = typeof body.projectId === 'string' ? body.projectId : '';
   const taskId = typeof body.taskId === 'string' ? body.taskId : '';
   const parsed =
@@ -99,12 +110,20 @@ export async function DELETE(request: Request) {
   const user = await getSessionUser(request);
   if (!auth || !user || !isSameOriginMutation(request, auth))
     return Response.json({ error: 'Forbidden' }, { status: 403 });
-  if (!request.headers.get('content-type')?.startsWith('application/json'))
+  if (!isJsonContentType(request))
     return Response.json({ error: 'JSON required' }, { status: 415 });
-  const body = (await request.json()) as {
-    projectId?: unknown;
-    taskId?: unknown;
-  };
+  const bodyResult = await readJsonObjectWithLimit(request);
+  if (!bodyResult.ok)
+    return Response.json(
+      {
+        error:
+          bodyResult.reason === 'too_large'
+            ? 'Payload too large'
+            : 'Invalid JSON',
+      },
+      { status: bodyResult.reason === 'too_large' ? 413 : 400 },
+    );
+  const body = bodyResult.body;
   const projectId = typeof body.projectId === 'string' ? body.projectId : '';
   const taskId = typeof body.taskId === 'string' ? body.taskId : '';
   if (

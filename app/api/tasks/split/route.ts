@@ -9,7 +9,10 @@ import {
   TaskHierarchyError,
   TaskRevisionConflictError,
 } from '@/lib/db';
-import { readTextBodyWithLimit } from '@/lib/request-limits';
+import {
+  isJsonContentType,
+  readJsonObjectWithLimit,
+} from '@/lib/request-limits';
 import { userActivityActor } from '@/lib/task-activity';
 
 export const dynamic = 'force-dynamic';
@@ -21,21 +24,21 @@ export async function POST(request: Request) {
   const user = await getSessionUser(request);
   if (!config || !user || !isSameOriginMutation(request, config))
     return Response.json({ error: 'Forbidden' }, { status: 403 });
-  if (!request.headers.get('content-type')?.startsWith('application/json'))
+  if (!isJsonContentType(request))
     return Response.json({ error: 'JSON required' }, { status: 415 });
 
-  const requestBody = await readTextBodyWithLimit(request, MAX_SPLIT_BODY);
-  if (!requestBody.ok)
+  const parsed = await readJsonObjectWithLimit(request, MAX_SPLIT_BODY);
+  if (!parsed.ok)
     return Response.json(
-      { error: 'Invalid split request' },
-      { status: requestBody.reason === 'too_large' ? 413 : 400 },
+      {
+        error:
+          parsed.reason === 'too_large'
+            ? 'Payload too large'
+            : 'Invalid split request',
+      },
+      { status: parsed.reason === 'too_large' ? 413 : 400 },
     );
-  let body: Record<string, unknown>;
-  try {
-    body = JSON.parse(requestBody.text) as Record<string, unknown>;
-  } catch {
-    return Response.json({ error: 'Invalid JSON' }, { status: 400 });
-  }
+  const body = parsed.body;
 
   const projectId = typeof body.projectId === 'string' ? body.projectId : '';
   const parentTaskId =

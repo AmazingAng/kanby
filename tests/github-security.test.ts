@@ -9,6 +9,7 @@ import {
   updateLinkedTasksFromGitHub,
 } from '@/lib/github-db';
 import { canUserManageGitHubInstallation } from '@/lib/github-access';
+import { githubApiRequest } from '@/lib/github';
 
 import { createMigratedDatabase, type TestD1Database } from './support/d1';
 import { configureEnvironment, seedProject } from './support/fixtures';
@@ -81,6 +82,24 @@ describe('GitHub installation boundaries', () => {
     expect(
       canUserManageGitHubInstallation(user, installation(99, 'Organization')),
     ).toBe(false);
+  });
+
+  it('refuses to forward GitHub credentials across redirects or origins', () => {
+    const request = githubApiRequest('/user', 'installation-token');
+    expect(request.url).toBe('https://api.github.com/user');
+    expect(request.redirect).toBe('error');
+    expect(request.headers.get('authorization')).toBe(
+      'Bearer installation-token',
+    );
+    for (const path of [
+      'https://evil.test/user',
+      '//evil.test/user',
+      '/\\evil',
+    ]) {
+      expect(() => githubApiRequest(path, 'installation-token')).toThrow(
+        'Invalid GitHub API path',
+      );
+    }
   });
 
   it('lets only the first webhook delivery execute', async () => {

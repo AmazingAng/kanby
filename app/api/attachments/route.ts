@@ -12,12 +12,24 @@ import {
   taskBelongsToProject,
 } from '@/lib/db';
 import { attachmentStorage } from '@/lib/storage';
-import { parseContentLength } from '@/lib/request-limits';
+import {
+  isJsonContentType,
+  parseContentLength,
+  readJsonObjectWithLimit,
+} from '@/lib/request-limits';
 
 export const dynamic = 'force-dynamic';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_ATTACHMENTS_PER_TASK = 10;
+
+function normalizedContentType(value: string) {
+  const contentType = value.trim().toLowerCase();
+  return contentType.length <= 120 &&
+    /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/.test(contentType)
+    ? contentType
+    : 'application/octet-stream';
+}
 
 function contentDisposition(fileName: string, contentType: string) {
   const fallback =
@@ -68,6 +80,12 @@ export async function POST(request: Request) {
   const user = await getSessionUser(request);
   if (!config || !user || !isSameOriginMutation(request, config))
     return Response.json({ error: 'Forbidden' }, { status: 403 });
+  if (
+    !/^multipart\/form-data(?:\s*;|\s*$)/i.test(
+      request.headers.get('content-type') ?? '',
+    )
+  )
+    return Response.json({ error: 'Form data required' }, { status: 415 });
   const contentLength = parseContentLength(
     request.headers.get('content-length'),
   );
@@ -75,7 +93,12 @@ export async function POST(request: Request) {
     return Response.json({ error: 'Content-Length required' }, { status: 411 });
   if (contentLength > MAX_FILE_SIZE + 1024 * 1024)
     return Response.json({ error: 'File too large' }, { status: 413 });
-  const form = await request.formData();
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return Response.json({ error: 'Invalid form data' }, { status: 400 });
+  }
   const projectValue = form.get('projectId');
   const taskValue = form.get('taskId');
   const projectId = typeof projectValue === 'string' ? projectValue.trim() : '';
@@ -108,7 +131,7 @@ export async function POST(request: Request) {
     );
 
   const objectKey = `${projectId}/${taskId}/${crypto.randomUUID()}`;
-  const contentType = file.type || 'application/octet-stream';
+  const contentType = normalizedContentType(file.type);
   const bucket = attachmentStorage();
   await bucket.put(objectKey, file.stream(), {
     httpMetadata: { contentType },
@@ -143,9 +166,18 @@ export async function DELETE(request: Request) {
   const user = await getSessionUser(request);
   if (!config || !user || !isSameOriginMutation(request, config))
     return Response.json({ error: 'Forbidden' }, { status: 403 });
-  if (!request.headers.get('content-type')?.startsWith('application/json'))
+  if (!isJsonContentType(request))
     return Response.json({ error: 'JSON required' }, { status: 415 });
-  const body = (await request.json()) as { projectId?: unknown; id?: unknown };
+  const parsed = await readJsonObjectWithLimit(request);
+  if (!parsed.ok)
+    return Response.json(
+      {
+        error:
+          parsed.reason === 'too_large' ? 'Payload too large' : 'Invalid JSON',
+      },
+      { status: parsed.reason === 'too_large' ? 413 : 400 },
+    );
+  const body = parsed.body;
   const projectId = typeof body.projectId === 'string' ? body.projectId : '';
   const id = typeof body.id === 'string' ? body.id : '';
   if (!projectId || !id || !(await getProjectRole(projectId, user.id)))

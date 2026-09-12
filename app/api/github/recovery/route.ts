@@ -8,8 +8,13 @@ import { getGitHubAppConfig, verifyGitHubWebhook } from '@/lib/github';
 import {
   backfillGitHubProject,
   diagnoseGitHubProject,
+  runGitHubProjectRecovery,
   runGitHubRecovery,
 } from '@/lib/github-recovery';
+import {
+  isJsonContentType,
+  readJsonObjectWithLimit,
+} from '@/lib/request-limits';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,9 +47,18 @@ export async function POST(request: Request) {
   const user = await getSessionUser(request);
   if (!auth || !user || !isSameOriginMutation(request, auth))
     return Response.json({ error: 'Forbidden' }, { status: 403 });
-  if (!request.headers.get('content-type')?.startsWith('application/json'))
+  if (!isJsonContentType(request))
     return Response.json({ error: 'JSON required' }, { status: 415 });
-  const body = (await request.json()) as Record<string, unknown>;
+  const parsed = await readJsonObjectWithLimit(request);
+  if (!parsed.ok)
+    return Response.json(
+      {
+        error:
+          parsed.reason === 'too_large' ? 'Payload too large' : 'Invalid JSON',
+      },
+      { status: parsed.reason === 'too_large' ? 413 : 400 },
+    );
+  const body = parsed.body;
   const projectId = typeof body.projectId === 'string' ? body.projectId : '';
   const action = body.action;
   if (!projectId || !['recover', 'backfill'].includes(String(action)))
@@ -57,6 +71,6 @@ export async function POST(request: Request) {
   const result =
     action === 'backfill'
       ? await backfillGitHubProject(projectId)
-      : await runGitHubRecovery();
+      : await runGitHubProjectRecovery(projectId);
   return Response.json({ ok: true, result });
 }

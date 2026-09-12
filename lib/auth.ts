@@ -13,6 +13,10 @@ export type AuthUser = {
   githubAdminAccountIds?: string[];
 };
 
+export type SessionUser = AuthUser & {
+  authenticatedAt: number;
+};
+
 type AuthBindings = {
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
@@ -34,6 +38,9 @@ export type AuthConfig = {
 };
 
 const encoder = new TextEncoder();
+const SESSION_LIFETIME_SECONDS = 60 * 60 * 24 * 30;
+const MAX_CLOCK_SKEW_SECONDS = 5 * 60;
+export const SENSITIVE_AUTH_MAX_AGE_SECONDS = 15 * 60;
 
 function bindings(): AuthBindings {
   return env as unknown as AuthBindings;
@@ -54,12 +61,32 @@ export function getAuthConfig(): AuthConfig | null {
   const clientSecret = runtime.GITHUB_CLIENT_SECRET?.trim();
   const sessionSecret = runtime.SESSION_SECRET?.trim();
   const rawOrigin = runtime.PUBLIC_APP_ORIGIN?.trim();
-  if (!clientId || !clientSecret || !sessionSecret || !rawOrigin) return null;
+  if (
+    !clientId ||
+    !clientSecret ||
+    !sessionSecret ||
+    encoder.encode(sessionSecret).byteLength < 32 ||
+    !rawOrigin
+  )
+    return null;
 
   let origin: string;
   try {
     const parsed = new URL(rawOrigin);
     if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+    const loopback =
+      parsed.hostname === 'localhost' ||
+      parsed.hostname === '127.0.0.1' ||
+      parsed.hostname === '[::1]';
+    if (parsed.protocol !== 'https:' && !loopback) return null;
+    if (
+      parsed.username ||
+      parsed.password ||
+      (parsed.pathname !== '/' && parsed.pathname !== '') ||
+      parsed.search ||
+      parsed.hash
+    )
+      return null;
     origin = parsed.origin;
   } catch {
     return null;
@@ -86,9 +113,49 @@ export function readCookie(request: Request, name: string): string | null {
   if (!cookie) return null;
   for (const item of cookie.split(';')) {
     const [key, ...parts] = item.trim().split('=');
-    if (key === name) return decodeURIComponent(parts.join('='));
+    if (key === name) {
+      try {
+        return decodeURIComponent(parts.join('='));
+      } catch {
+        return null;
+      }
+    }
   }
   return null;
+}
+
+export function safeReturnTo(value: string | null | undefined): string {
+  if (!value || value.includes('\\')) return '/';
+  try {
+    const base = new URL('https://kanby-return.invalid');
+    const target = new URL(value, base);
+    if (target.origin !== base.origin) return '/';
+    return `${target.pathname}${target.search}${target.hash}`;
+  } catch {
+    return '/';
+  }
+}
+
+export function publicAuthUser(
+  user: AuthUser,
+): Omit<AuthUser, 'githubAdminAccountIds'> {
+  return {
+    id: user.id,
+    login: user.login,
+    name: user.name,
+    avatarUrl: user.avatarUrl,
+  };
+}
+
+export function hasFreshAuthorizationClaims(
+  user: Pick<SessionUser, 'authenticatedAt'>,
+  now = Date.now(),
+) {
+  const ageSeconds = Math.floor(now / 1000) - user.authenticatedAt;
+  return (
+    ageSeconds >= -MAX_CLOCK_SKEW_SECONDS &&
+    ageSeconds <= SENSITIVE_AUTH_MAX_AGE_SECONDS
+  );
 }
 
 export function cookieHeader(
@@ -164,7 +231,7 @@ export async function createSessionToken(
       JSON.stringify({
         ...user,
         iat: Math.floor(Date.now() / 1000),
-        exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 30,
+        exp: Math.floor(Date.now() / 1000) + SESSION_LIFETIME_SECONDS,
       }),
     ),
   );
@@ -178,11 +245,13 @@ export async function createSessionToken(
 
 export async function getSessionUser(
   request: Request,
-): Promise<AuthUser | null> {
+): Promise<SessionUser | null> {
   const config = getAuthConfig();
   const token = readCookie(request, SESSION_COOKIE);
   if (!config || !token) return null;
-  const [payload, signature] = token.split('.');
+  const segments = token.split('.');
+  if (segments.length !== 2) return null;
+  const [payload, signature] = segments;
   if (!payload || !signature) return null;
 
   try {
@@ -195,12 +264,20 @@ export async function getSessionUser(
     if (!valid) return null;
     const parsed = JSON.parse(
       new TextDecoder().decode(decodeBase64Url(payload)),
-    ) as AuthUser & { exp: number };
+    ) as AuthUser & { iat: number; exp: number };
+    const now = Math.floor(Date.now() / 1000);
     if (
+      typeof parsed.id !== 'string' ||
       !parsed.id ||
+      typeof parsed.login !== 'string' ||
       !parsed.login ||
+      !Number.isSafeInteger(parsed.iat) ||
+      parsed.iat < 1 ||
+      parsed.iat > now + MAX_CLOCK_SKEW_SECONDS ||
+      !Number.isSafeInteger(parsed.exp) ||
+      parsed.exp > parsed.iat + SESSION_LIFETIME_SECONDS ||
       !parsed.exp ||
-      parsed.exp <= Math.floor(Date.now() / 1000)
+      parsed.exp <= now
     )
       return null;
     const githubAdminAccountIds = Array.isArray(parsed.githubAdminAccountIds)
@@ -209,11 +286,18 @@ export async function getSessionUser(
           .slice(0, 250)
       : undefined;
     return {
-      id: String(parsed.id),
+      id: parsed.id,
       login: parsed.login,
-      name: parsed.name || parsed.login,
-      avatarUrl: parsed.avatarUrl || null,
+      name:
+        typeof parsed.name === 'string' && parsed.name
+          ? parsed.name
+          : parsed.login,
+      avatarUrl:
+        typeof parsed.avatarUrl === 'string' && parsed.avatarUrl
+          ? parsed.avatarUrl
+          : null,
       githubAdminAccountIds,
+      authenticatedAt: parsed.iat,
     };
   } catch {
     return null;

@@ -14,6 +14,31 @@ const configPath = join(
 );
 const args = process.argv.slice(2);
 
+function normalizeServerUrl(value) {
+  let url;
+  try {
+    url = new URL(String(value));
+  } catch {
+    throw new Error('Kanby URL must be an absolute HTTPS origin');
+  }
+  const loopback =
+    url.hostname === 'localhost' ||
+    url.hostname === '127.0.0.1' ||
+    url.hostname === '[::1]';
+  if (
+    (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) ||
+    url.username ||
+    url.password ||
+    (url.pathname !== '/' && url.pathname !== '') ||
+    url.search ||
+    url.hash
+  )
+    throw new Error(
+      'Kanby URL must be an HTTPS origin (HTTP is allowed only on loopback)',
+    );
+  return url.origin;
+}
+
 function option(name, fallback) {
   const index = args.indexOf(`--${name}`);
   if (index === -1) return fallback;
@@ -56,10 +81,7 @@ async function saveConfig(config) {
 async function credentials() {
   const config = await readConfig();
   return {
-    url: String(process.env.KANBY_URL || config.url || DEFAULT_URL).replace(
-      /\/$/,
-      '',
-    ),
+    url: normalizeServerUrl(process.env.KANBY_URL || config.url || DEFAULT_URL),
     token: process.env.KANBY_TOKEN || config.token || '',
   };
 }
@@ -76,7 +98,11 @@ async function api(path, init = {}, credentialOverride) {
   const headers = new Headers(init.headers);
   headers.set('Authorization', `Bearer ${token}`);
   if (init.body) headers.set('Content-Type', 'application/json');
-  const response = await fetch(`${url}${path}`, { ...init, headers });
+  const response = await fetch(`${url}${path}`, {
+    ...init,
+    headers,
+    redirect: 'error',
+  });
   const payload = await response.json().catch(() => null);
   if (!response.ok || payload?.ok === false) {
     const message =
@@ -189,9 +215,9 @@ async function main() {
 
   if (group === 'auth' && command === 'login') {
     const token = String(option('token', process.env.KANBY_TOKEN || ''));
-    const url = String(
+    const url = normalizeServerUrl(
       option('url', process.env.KANBY_URL || DEFAULT_URL),
-    ).replace(/\/$/, '');
+    );
     if (!token.startsWith('kby_'))
       throw new Error('Pass a Kanby Agent Token with --token or KANBY_TOKEN');
     const project = (await api('/api/v1/projects', {}, { token, url }))[0];
