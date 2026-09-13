@@ -48,6 +48,30 @@ describe('public release contract', () => {
     expect(license).toContain('Version 3, 19 November 2007');
   });
 
+  it('keeps the CLI as a canonical workspace package in this repository', () => {
+    const rootPackage = JSON.parse(
+      readFileSync(join(repositoryRoot, 'package.json'), 'utf8'),
+    ) as { workspaces?: string[] };
+    const cliPackage = JSON.parse(
+      readFileSync(join(repositoryRoot, 'packages/cli/package.json'), 'utf8'),
+    ) as {
+      name?: string;
+      publishConfig?: { access?: string };
+      repository?: { url?: string; directory?: string };
+    };
+    const readme = readFileSync(join(repositoryRoot, 'README.md'), 'utf8');
+
+    expect(rootPackage.workspaces).toContain('packages/*');
+    expect(cliPackage.name).toBe('@kanby/cli');
+    expect(cliPackage.repository).toEqual({
+      type: 'git',
+      url: 'git+https://github.com/AmazingAng/kanby.git',
+      directory: 'packages/cli',
+    });
+    expect(cliPackage.publishConfig?.access).toBe('public');
+    expect(readme).not.toContain('AmazingAng/kanby-cli');
+  });
+
   it('ships the contributor-facing release documents and CI workflow', () => {
     const readme = readFileSync(join(repositoryRoot, 'README.md'), 'utf8');
     const contributing = readFileSync(

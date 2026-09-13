@@ -7,6 +7,9 @@ import { spawn, spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const cli = join(process.cwd(), 'packages/cli/bin/kanby.js');
+const cliPackage = JSON.parse(
+  readFileSync(join(process.cwd(), 'packages/cli/package.json'), 'utf8'),
+) as { version: string };
 const temporaryDirectories: string[] = [];
 
 function runCli(arguments_: string[], environment: NodeJS.ProcessEnv) {
@@ -47,7 +50,7 @@ describe('Kanby CLI credential contract', () => {
     });
 
     expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe('0.2.0');
+    expect(result.stdout.trim()).toBe(cliPackage.version);
   });
 
   it('uses exit code 2 when no credential is configured', () => {

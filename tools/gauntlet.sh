@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-EXPECTED_LAYERS=12
+EXPECTED_LAYERS=13
 COMPLETED_LAYERS=0
 
 check_cli_contract() {
@@ -34,6 +34,7 @@ run_layer "mutation testing" npm run test:mutations
 run_layer "production dependency audit" npm audit --omit=dev --audit-level=high
 run_layer "secret scan with negative control" node tools/check-secrets.mjs
 run_layer "CLI unauthenticated exit contract" check_cli_contract
+run_layer "CLI package contents" npm run cli:pack:check
 run_layer "randomized suite order" npx vitest run --sequence.shuffle --sequence.seed=9082026
 run_layer "Worker production build" npm run build
 run_layer "Worker recovery schedule" node tools/check-worker-schedule.mjs

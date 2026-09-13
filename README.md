@@ -4,7 +4,7 @@ Kanby is a minimal, agent-native kanban board for one-to-three-person software t
 
 > **Project status:** early beta. Kanby is running in production, but the self-hosting interface and database migrations may still evolve between releases.
 
-[Live service](https://kanby.dev) · [Demo](https://kanby.dev/demo) · [Kanby CLI](https://github.com/AmazingAng/kanby-cli)
+[Live service](https://kanby.dev) · [Demo](https://kanby.dev/demo) · [Kanby CLI](#kanby-cli-and-agent-skill)
 
 ## Features
 
@@ -15,7 +15,7 @@ Kanby is a minimal, agent-native kanban board for one-to-three-person software t
 - Issue import, task/PR linking, status automation, CI failure signals, webhook deduplication, retry, and recovery sync
 - Task activity timeline for people, coding agents, and GitHub events
 - Agent Tokens plus a JSON API for claim, progress, checklist, link, and completion workflows
-- A zero-dependency CLI and Codex skill maintained in the separate [`kanby-cli`](https://github.com/AmazingAng/kanby-cli) repository
+- A zero-dependency CLI and Codex skill maintained in this repository
 
 ## Architecture
 
@@ -44,8 +44,8 @@ Important directories:
 | `components/`        | Kanban, gateway, settings, and shared UI                       |
 | `db/` and `drizzle/` | D1 schema and migrations                                       |
 | `lib/`               | Authentication, persistence, GitHub automation, and task rules |
-| `packages/cli/`      | In-tree CLI copy used by integration tests                     |
-| `skills/kanby/`      | In-tree coding-agent skill copy                                |
+| `packages/cli/`      | Canonical `@kanby/cli` package                                 |
+| `skills/kanby/`      | Canonical Kanby coding-agent skill                             |
 | `tests/`             | Unit, integration, property, and concurrency tests             |
 | `tools/`             | Build hooks and the release gauntlet                           |
 
@@ -63,6 +63,12 @@ Install the pinned dependency tree:
 
 ```bash
 npm ci
+```
+
+The repository is an npm workspace. Run the CLI directly from the checkout with:
+
+```bash
+npm run cli -- --help
 ```
 
 Create a local Worker variables file. `.dev.vars` and every `.env*` file are ignored by Git.
@@ -124,9 +130,21 @@ Kanby targets Cloudflare Workers with a `DB` D1 binding and an `ATTACHMENTS` R2 
 
 Follow [docs/CLOUDFLARE_DEPLOY.md](docs/CLOUDFLARE_DEPLOY.md) to create resources, apply migrations, configure secrets, and deploy. Never commit a generated PEM private key or paste credentials into an issue, pull request, build log, or support discussion.
 
-## Agent and CLI API
+## Kanby CLI and Agent skill
 
-Project members can create named, revocable Agent Tokens from Kanby settings. The token is shown once and is stored only as a hash. See [docs/AGENT_API.md](docs/AGENT_API.md) for the HTTP contract, or install the supported CLI and skill from [`AmazingAng/kanby-cli`](https://github.com/AmazingAng/kanby-cli).
+Project members can create named, revocable Agent Tokens from Kanby settings. The token is shown once and is stored only as a hash. See [docs/AGENT_API.md](docs/AGENT_API.md) for the HTTP contract.
+
+The CLI and coding-agent skill use this repository as their single source of truth. From a checkout, install the CLI globally with:
+
+```bash
+npm install --global ./packages/cli
+```
+
+Install the skill directly from the repository with:
+
+```bash
+npx skills add https://github.com/AmazingAng/kanby --skill kanby
+```
 
 ## Contributing
 
@@ -134,4 +152,4 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) before sending a change. Security issues
 
 ## License
 
-Kanby’s server and web application are licensed under the [GNU Affero General Public License v3.0 only](LICENSE). The separately distributed Kanby CLI is MIT licensed; its license is included in `packages/cli/LICENSE` and in the standalone CLI repository.
+Kanby’s server and web application are licensed under the [GNU Affero General Public License v3.0 only](LICENSE). The `@kanby/cli` workspace package remains MIT licensed under [`packages/cli/LICENSE`](packages/cli/LICENSE).

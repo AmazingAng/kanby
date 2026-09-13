@@ -1,11 +1,14 @@
 # Kanby CLI + Codex Skill
 
-Use Kanby from a terminal, CI job, or coding agent. The public repository ships both the zero-dependency Node.js CLI and the Kanby Codex skill.
+Use Kanby from a terminal, CI job, or coding agent. The CLI and Kanby coding-agent skill are maintained in the Kanby monorepo so application API changes, CLI behavior, and integration tests ship together.
 
 ## Install the CLI
 
+From a Kanby repository checkout:
+
 ```bash
-npm install -g github:AmazingAng/kanby-cli#v0.2.0
+npm install
+npm install --global ./packages/cli
 ```
 
 Create a project Agent Token in **Kanby → Settings → CLI 与 Coding Agent**. For agents and CI, expose it through the environment:
@@ -22,7 +25,7 @@ To store a validated token in the local CLI config instead, run `kanby auth logi
 ## Install the skill
 
 ```bash
-npx skills add https://github.com/AmazingAng/kanby-cli --skill kanby
+npx skills add https://github.com/AmazingAng/kanby --skill kanby
 ```
 
 The skill guides coding agents through listing work, claiming a task, reporting meaningful progress, associating a GitHub PR, and completing or releasing the task safely.

@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "An agent-native kanban board for small software teams",
   "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
@@ -35,7 +38,8 @@
     "format": "oxfmt",
     "format:check": "oxfmt --check README.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md .github app components/gateway-app.tsx components/home-page.tsx components/kanban-app.tsx components/kanby-shell.tsx components/settings-app.tsx db docs drizzle lib proxy.ts packages tests tools vite.config.ts vitest.config.ts package.json",
     "gauntlet": "bash tools/gauntlet.sh",
-    "cli": "node packages/cli/bin/kanby.js"
+    "cli": "kanby",
+    "cli:pack:check": "npm pack --workspace @kanby/cli --dry-run"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",

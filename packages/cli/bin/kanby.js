@@ -6,7 +6,9 @@ import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 const DEFAULT_URL = 'https://kanby.0xaa.workers.dev';
-const VERSION = '0.2.0';
+const VERSION = JSON.parse(
+  await readFile(new URL('../package.json', import.meta.url), 'utf8'),
+).version;
 const configPath = join(
   process.env.XDG_CONFIG_HOME || join(homedir(), '.config'),
   'kanby',

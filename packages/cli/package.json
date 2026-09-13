@@ -1,6 +1,6 @@
 {
   "name": "@kanby/cli",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Kanby CLI for coding agents and small teams",
   "keywords": [
     "kanban",
@@ -10,11 +10,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/AmazingAng/kanby-cli.git"
+    "url": "git+https://github.com/AmazingAng/kanby.git",
+    "directory": "packages/cli"
   },
-  "homepage": "https://github.com/AmazingAng/kanby-cli#readme",
+  "homepage": "https://github.com/AmazingAng/kanby/tree/main/packages/cli#readme",
   "bugs": {
-    "url": "https://github.com/AmazingAng/kanby-cli/issues"
+    "url": "https://github.com/AmazingAng/kanby/issues"
   },
   "type": "module",
   "bin": {
@@ -22,6 +23,9 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "license": "MIT",
   "files": [

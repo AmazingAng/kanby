@@ -24,7 +24,7 @@ The gauntlet must finish with every declared layer complete. Do not bypass tests
 
 A pull request should explain the problem, the chosen behavior, security or migration impact, and the commands used to verify it. Include screenshots or a short recording for visible UI changes. Keep generated output, local Worker state, credentials, and personal data out of commits.
 
-By contributing, you agree that your contribution is licensed under the repository’s AGPL-3.0-only license.
+By contributing, you agree that contributions to the server and web application are licensed under AGPL-3.0-only. Contributions contained entirely in `packages/cli/` are licensed under that package's MIT license.
 
 ## Reporting security issues
 
