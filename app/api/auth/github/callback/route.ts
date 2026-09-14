@@ -157,7 +157,7 @@ export async function GET(request: Request) {
         client_id: config.clientId,
         client_secret: config.clientSecret,
         code,
-        redirect_uri: `${config.origin}/api/auth/github/callback`,
+        redirect_uri: `${config.publicBaseUrl}/api/auth/github/callback`,
         code_verifier: verifier,
       }),
       redirect: 'manual',
@@ -206,7 +206,7 @@ export async function GET(request: Request) {
   const session = await createSessionToken(user, config.sessionSecret);
   const secure = config.origin.startsWith('https://');
   const headers = new Headers({
-    Location: `${config.origin}${returnTo === '/' ? '' : returnTo}`,
+    Location: `${config.publicBaseUrl}${returnTo === '/' ? '' : returnTo}`,
     'Cache-Control': 'no-store',
   });
   headers.append(
@@ -214,16 +214,20 @@ export async function GET(request: Request) {
     cookieHeader(SESSION_COOKIE, session, {
       maxAge: 60 * 60 * 24 * 30,
       secure,
+      path: config.basePath,
     }),
   );
-  headers.append('Set-Cookie', clearCookieHeader(OAUTH_STATE_COOKIE, secure));
   headers.append(
     'Set-Cookie',
-    clearCookieHeader(OAUTH_VERIFIER_COOKIE, secure),
+    clearCookieHeader(OAUTH_STATE_COOKIE, secure, config.basePath),
   );
   headers.append(
     'Set-Cookie',
-    clearCookieHeader(OAUTH_RETURN_TO_COOKIE, secure),
+    clearCookieHeader(OAUTH_VERIFIER_COOKIE, secure, config.basePath),
+  );
+  headers.append(
+    'Set-Cookie',
+    clearCookieHeader(OAUTH_RETURN_TO_COOKIE, secure, config.basePath),
   );
   return new Response(null, { status: 302, headers });
 }

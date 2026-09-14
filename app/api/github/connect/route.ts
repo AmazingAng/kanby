@@ -19,12 +19,18 @@ export async function GET(request: Request) {
   if (!user || !auth)
     return new Response(null, {
       status: 302,
-      headers: { Location: '/api/auth/github?returnTo=%2Fsettings' },
+      headers: {
+        Location: auth
+          ? `${auth.publicBaseUrl}/api/auth/github?returnTo=%2Fsettings`
+          : '/api/auth/github?returnTo=%2Fsettings',
+      },
     });
   if (!app)
     return new Response(null, {
       status: 302,
-      headers: { Location: '/settings?github=not-configured' },
+      headers: {
+        Location: `${auth.publicBaseUrl}/settings?github=not-configured`,
+      },
     });
   if (!projectId || (await getProjectRole(projectId, user.id)) !== 'owner')
     return Response.json({ error: 'Owner required' }, { status: 403 });
@@ -33,7 +39,7 @@ export async function GET(request: Request) {
     return new Response(null, {
       status: 302,
       headers: {
-        Location: `/api/auth/github?returnTo=${encodeURIComponent(returnTo)}`,
+        Location: `${auth.publicBaseUrl}/api/auth/github?returnTo=${encodeURIComponent(returnTo)}`,
       },
     });
   }
@@ -48,6 +54,7 @@ export async function GET(request: Request) {
       'Set-Cookie': cookieHeader(GITHUB_APP_STATE_COOKIE, state, {
         maxAge: 10 * 60,
         secure,
+        path: auth.basePath,
       }),
     },
   });

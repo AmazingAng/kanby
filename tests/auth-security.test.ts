@@ -11,6 +11,7 @@ import {
   readCookie,
   safeReturnTo,
   SESSION_COOKIE,
+  cookieHeader,
 } from '@/lib/auth';
 
 const runtime = env as Record<string, unknown>;
@@ -22,6 +23,7 @@ function configureAuth(overrides: Record<string, string> = {}) {
     GITHUB_CLIENT_SECRET: 'client-secret',
     SESSION_SECRET: strongSecret,
     PUBLIC_APP_ORIGIN: 'https://kanby.test',
+    PUBLIC_APP_BASE_PATH: '',
     ALLOWED_GITHUB_LOGINS: '',
     ALLOWED_GITHUB_ORGS: '',
     ALLOWED_GITHUB_TEAMS: '',
@@ -97,6 +99,35 @@ describe('OAuth and session security boundaries', () => {
     expect(getAuthConfig()?.origin).toBe('http://localhost:3000');
     configureAuth({ PUBLIC_APP_ORIGIN: 'https://kanby.test/' });
     expect(getAuthConfig()?.origin).toBe('https://kanby.test');
+  });
+
+  it('builds a canonical public URL for path-routed deployments', () => {
+    configureAuth({ PUBLIC_APP_BASE_PATH: '/w/702a5b1647a3/preview/' });
+    expect(getAuthConfig()).toMatchObject({
+      origin: 'https://kanby.test',
+      basePath: '/w/702a5b1647a3/preview',
+      publicBaseUrl: 'https://kanby.test/w/702a5b1647a3/preview',
+    });
+    expect(
+      cookieHeader('state', 'value', {
+        maxAge: 600,
+        secure: true,
+        path: getAuthConfig()?.basePath,
+      }),
+    ).toContain('Path=/w/702a5b1647a3/preview');
+  });
+
+  it('rejects malformed public base paths', () => {
+    for (const invalidBasePath of [
+      'w/preview',
+      '//evil.test',
+      '/w\\evil',
+      '/w/preview?debug=1',
+      '/w/preview#debug',
+    ]) {
+      configureAuth({ PUBLIC_APP_BASE_PATH: invalidBasePath });
+      expect(getAuthConfig()).toBeNull();
+    }
   });
 
   it('never serializes server-only GitHub administration claims', async () => {

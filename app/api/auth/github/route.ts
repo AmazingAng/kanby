@@ -27,7 +27,7 @@ export async function GET(request: Request) {
   authorize.searchParams.set('client_id', config.clientId);
   authorize.searchParams.set(
     'redirect_uri',
-    `${config.origin}/api/auth/github/callback`,
+    `${config.publicBaseUrl}/api/auth/github/callback`,
   );
   authorize.searchParams.set('state', state);
   authorize.searchParams.set('scope', githubOAuthScopes(config).join(' '));
@@ -40,15 +40,27 @@ export async function GET(request: Request) {
   });
   headers.append(
     'Set-Cookie',
-    cookieHeader(OAUTH_STATE_COOKIE, state, { maxAge: 600, secure }),
+    cookieHeader(OAUTH_STATE_COOKIE, state, {
+      maxAge: 600,
+      secure,
+      path: config.basePath,
+    }),
   );
   headers.append(
     'Set-Cookie',
-    cookieHeader(OAUTH_VERIFIER_COOKIE, verifier, { maxAge: 600, secure }),
+    cookieHeader(OAUTH_VERIFIER_COOKIE, verifier, {
+      maxAge: 600,
+      secure,
+      path: config.basePath,
+    }),
   );
   headers.append(
     'Set-Cookie',
-    cookieHeader(OAUTH_RETURN_TO_COOKIE, returnTo, { maxAge: 600, secure }),
+    cookieHeader(OAUTH_RETURN_TO_COOKIE, returnTo, {
+      maxAge: 600,
+      secure,
+      path: config.basePath,
+    }),
   );
   return new Response(null, { status: 302, headers });
 }

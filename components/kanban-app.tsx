@@ -65,6 +65,7 @@ import {
   X,
 } from 'lucide-react';
 
+import { appPath, appRelativePath } from '@/lib/app-path';
 import {
   Avatar,
   AvatarFallback,
@@ -308,7 +309,7 @@ type Project = {
 };
 
 function projectBoardPath(project: Pick<Project, 'slug'>) {
-  return `/${encodeURIComponent(project.slug)}/board`;
+  return appPath(`/${encodeURIComponent(project.slug)}/board`);
 }
 
 type ProjectMember = AuthUser & {
@@ -1031,7 +1032,9 @@ function LoginScreen({ returnTo = '/' }: { returnTo?: string }) {
           使用 GitHub 登录。Kanby 只读取你的公开身份，不会访问代码仓库。
         </p>
         <a
-          href={`/api/auth/github?returnTo=${encodeURIComponent(returnTo)}`}
+          href={appPath(
+            `/api/auth/github?returnTo=${encodeURIComponent(returnTo)}`,
+          )}
           className={cn(
             buttonVariants(),
             'mt-8 h-12 w-full rounded-full bg-ink text-background hover:bg-ink/85',
@@ -1223,7 +1226,7 @@ export function KanbanApp({
   useEffect(() => {
     if (isDemo) return;
     let cancelled = false;
-    fetch('/api/auth/session', { cache: 'no-store' })
+    fetch(appPath('/api/auth/session'), { cache: 'no-store' })
       .then(async (response) => {
         if (!response.ok) throw new Error('session');
         return response.json() as Promise<{
@@ -1235,7 +1238,9 @@ export function KanbanApp({
         if (cancelled) return;
         setAuth(session);
         if (!session.user) return;
-        const response = await fetch('/api/projects', { cache: 'no-store' });
+        const response = await fetch(appPath('/api/projects'), {
+          cache: 'no-store',
+        });
         if (!response.ok) throw new Error('projects');
         const payload = (await response.json()) as { projects: Project[] };
         if (!cancelled) {
@@ -1254,7 +1259,7 @@ export function KanbanApp({
           } else if (
             !initialProjectSlug &&
             selectedProject &&
-            window.location.pathname === '/'
+            appRelativePath(window.location.pathname) === '/'
           ) {
             window.history.replaceState(
               null,
@@ -1279,7 +1284,9 @@ export function KanbanApp({
     if (isDemo || projects.length === 0) return;
     const selectFromLocation = () => {
       const slug = decodeURIComponent(
-        window.location.pathname.split('/').filter(Boolean)[0] ?? '',
+        appRelativePath(window.location.pathname)
+          .split('/')
+          .filter(Boolean)[0] ?? '',
       );
       const project = projects.find((candidate) => candidate.slug === slug);
       if (project) {
@@ -1312,15 +1319,26 @@ export function KanbanApp({
       try {
         const [taskResponse, memberResponse, githubResponse] =
           await Promise.all([
-            fetch(`/api/tasks?projectId=${encodeURIComponent(projectId)}`, {
-              cache: 'no-store',
-            }),
-            fetch(`/api/members?projectId=${encodeURIComponent(projectId)}`, {
-              cache: 'no-store',
-            }),
-            fetch(`/api/github?projectId=${encodeURIComponent(projectId)}`, {
-              cache: 'no-store',
-            }),
+            fetch(
+              appPath(`/api/tasks?projectId=${encodeURIComponent(projectId)}`),
+              {
+                cache: 'no-store',
+              },
+            ),
+            fetch(
+              appPath(
+                `/api/members?projectId=${encodeURIComponent(projectId)}`,
+              ),
+              {
+                cache: 'no-store',
+              },
+            ),
+            fetch(
+              appPath(`/api/github?projectId=${encodeURIComponent(projectId)}`),
+              {
+                cache: 'no-store',
+              },
+            ),
           ]);
         if (!taskResponse.ok || !memberResponse.ok || !githubResponse.ok)
           throw new Error('workspace');
@@ -1416,7 +1434,9 @@ export function KanbanApp({
       inFlight = true;
       try {
         const response = await fetch(
-          `/api/task-events?projectId=${encodeURIComponent(projectId)}&taskId=${encodeURIComponent(taskId)}`,
+          appPath(
+            `/api/task-events?projectId=${encodeURIComponent(projectId)}&taskId=${encodeURIComponent(taskId)}`,
+          ),
           { cache: 'no-store' },
         );
         if (!response.ok) throw new Error('activity');
@@ -1535,7 +1555,7 @@ export function KanbanApp({
     setTasks(nextTasks);
     if (!isDemo && auth?.user && activeProjectId) {
       mutationInFlight.current = true;
-      void fetch('/api/tasks', {
+      void fetch(appPath('/api/tasks'), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1566,7 +1586,7 @@ export function KanbanApp({
     if (!isDemo && auth?.user && activeProjectId) {
       mutationInFlight.current = true;
       try {
-        const response = await fetch('/api/tasks', {
+        const response = await fetch(appPath('/api/tasks'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ projectId: activeProjectId, title, status }),
@@ -1613,7 +1633,7 @@ export function KanbanApp({
     const name = newProjectName.trim();
     if (!name) return;
     try {
-      const response = await fetch('/api/projects', {
+      const response = await fetch(appPath('/api/projects'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
@@ -1636,7 +1656,9 @@ export function KanbanApp({
     setMemberManagerOpen(true);
     try {
       const response = await fetch(
-        `/api/members?projectId=${encodeURIComponent(activeProjectId)}`,
+        appPath(
+          `/api/members?projectId=${encodeURIComponent(activeProjectId)}`,
+        ),
         { cache: 'no-store' },
       );
       if (!response.ok) throw new Error('members');
@@ -1653,7 +1675,7 @@ export function KanbanApp({
     if (!identity || !activeProjectId) return;
     mutationInFlight.current = true;
     try {
-      const response = await fetch('/api/members', {
+      const response = await fetch(appPath('/api/members'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: activeProjectId, identity }),
@@ -1680,7 +1702,7 @@ export function KanbanApp({
     if (!activeProjectId) return;
     mutationInFlight.current = true;
     try {
-      const response = await fetch('/api/members', {
+      const response = await fetch(appPath('/api/members'), {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: activeProjectId, memberId }),
@@ -1795,7 +1817,7 @@ export function KanbanApp({
         });
       } else {
         if (!activeProjectId) throw new Error('project');
-        const response = await fetch('/api/task-checklist', {
+        const response = await fetch(appPath('/api/task-checklist'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1867,7 +1889,7 @@ export function KanbanApp({
         });
       } else {
         if (!activeProjectId) throw new Error('project');
-        const response = await fetch('/api/task-checklist', {
+        const response = await fetch(appPath('/api/task-checklist'), {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1922,7 +1944,7 @@ export function KanbanApp({
         });
       } else {
         if (!activeProjectId) throw new Error('project');
-        const response = await fetch('/api/task-checklist', {
+        const response = await fetch(appPath('/api/task-checklist'), {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2020,7 +2042,7 @@ export function KanbanApp({
         );
       } else {
         if (!activeProjectId) throw new Error('project');
-        const response = await fetch('/api/tasks/split', {
+        const response = await fetch(appPath('/api/tasks/split'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2095,7 +2117,7 @@ export function KanbanApp({
         latestTaskRevision.current.set(task.id, now);
       } else {
         if (!activeProjectId) throw new Error('project');
-        const response = await fetch('/api/tasks', {
+        const response = await fetch(appPath('/api/tasks'), {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2148,7 +2170,9 @@ export function KanbanApp({
     setTaskActivityLoading(true);
     try {
       const response = await fetch(
-        `/api/task-events?projectId=${encodeURIComponent(activeProjectId)}&taskId=${encodeURIComponent(taskDraft.id)}&cursor=${encodeURIComponent(cursor)}`,
+        appPath(
+          `/api/task-events?projectId=${encodeURIComponent(activeProjectId)}&taskId=${encodeURIComponent(taskDraft.id)}&cursor=${encodeURIComponent(cursor)}`,
+        ),
         { cache: 'no-store' },
       );
       if (!response.ok) throw new Error('activity');
@@ -2196,7 +2220,7 @@ export function KanbanApp({
     if (!activeProjectId) return;
     setTaskCommentSaving(true);
     try {
-      const response = await fetch('/api/task-events', {
+      const response = await fetch(appPath('/api/task-events'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2221,7 +2245,9 @@ export function KanbanApp({
     if (isDemo || !activeProjectId) return;
     try {
       const response = await fetch(
-        `/api/tasks?projectId=${encodeURIComponent(activeProjectId)}&archived=1`,
+        appPath(
+          `/api/tasks?projectId=${encodeURIComponent(activeProjectId)}&archived=1`,
+        ),
         { cache: 'no-store' },
       );
       if (!response.ok) throw new Error('archive');
@@ -2246,7 +2272,7 @@ export function KanbanApp({
         archivedTask = { ...current, archivedAt: now, updatedAt: now };
       } else {
         if (!activeProjectId) throw new Error('project');
-        const response = await fetch('/api/tasks', {
+        const response = await fetch(appPath('/api/tasks'), {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2300,7 +2326,7 @@ export function KanbanApp({
         archivedTask = { ...task, archivedAt: now, updatedAt: now };
       } else {
         if (!activeProjectId) throw new Error('project');
-        const response = await fetch('/api/tasks', {
+        const response = await fetch(appPath('/api/tasks'), {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2352,7 +2378,7 @@ export function KanbanApp({
         restored = { ...activeTask, updatedAt: task.updatedAt + 1 };
       } else {
         if (!activeProjectId) throw new Error('project');
-        const response = await fetch('/api/tasks', {
+        const response = await fetch(appPath('/api/tasks'), {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2418,7 +2444,7 @@ export function KanbanApp({
       let promotedTasks: Task[] = [];
       if (!isDemo) {
         if (!activeProjectId) throw new Error('project');
-        const response = await fetch('/api/tasks', {
+        const response = await fetch(appPath('/api/tasks'), {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2482,7 +2508,7 @@ export function KanbanApp({
     setGithubIssueImporting(activity.id);
     mutationInFlight.current = true;
     try {
-      const response = await fetch('/api/github/issue-task', {
+      const response = await fetch(appPath('/api/github/issue-task'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2520,7 +2546,7 @@ export function KanbanApp({
       return;
     setGithubLinkSaving(true);
     try {
-      const response = await fetch('/api/github/task-link', {
+      const response = await fetch(appPath('/api/github/task-link'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2554,7 +2580,7 @@ export function KanbanApp({
     if (!taskDraft || !activeProjectId || isDemo) return;
     setGithubLinkSaving(true);
     try {
-      const response = await fetch('/api/github/task-link', {
+      const response = await fetch(appPath('/api/github/task-link'), {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2654,7 +2680,7 @@ export function KanbanApp({
         }
 
         if (!activeProjectId) throw new Error('project');
-        const response = await fetch('/api/tasks', {
+        const response = await fetch(appPath('/api/tasks'), {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -2798,7 +2824,7 @@ export function KanbanApp({
           form.set('projectId', activeProjectId);
           form.set('taskId', taskDraft.id);
           form.set('file', file);
-          const response = await fetch('/api/attachments', {
+          const response = await fetch(appPath('/api/attachments'), {
             method: 'POST',
             body: form,
           });
@@ -2840,7 +2866,7 @@ export function KanbanApp({
     try {
       if (!isDemo) {
         if (!activeProjectId) throw new Error('project');
-        const response = await fetch('/api/attachments', {
+        const response = await fetch(appPath('/api/attachments'), {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -3005,7 +3031,7 @@ export function KanbanApp({
             </div>
             {auth.user ? (
               <form
-                action="/api/auth/logout"
+                action={appPath('/api/auth/logout')}
                 method="post"
                 className="hidden sm:block"
               >
