@@ -41,3 +41,4 @@
 - Initial autonomous specification based on the approved fixes.
 - Added explicit own-claim cleanup and cross-project non-resolution checks after implementation review exposed those lifecycle boundaries.
 - Made claim cleanup part of the archive database batch so a response failure cannot leave an archived task with a live Agent claim.
+- Updated the pre-existing split-claim mutation target after the new archive action changed the guarded action list; the gauntlet correctly failed closed instead of silently skipping it.

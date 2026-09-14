@@ -237,8 +237,8 @@ const mutations = [
   {
     name: 'Agent split claim ownership enforcement',
     file: 'app/api/v1/tasks/route.ts',
-    from: "['update', 'progress', 'link', 'complete', 'split']",
-    to: "['update', 'progress', 'link', 'complete']",
+    from: "['update', 'progress', 'link', 'complete', 'split', 'archive']",
+    to: "['update', 'progress', 'link', 'complete', 'archive']",
     test: 'tests/task-subtasks.test.ts',
   },
   {
