@@ -369,8 +369,8 @@ const demoUsers: Record<'lin' | 'mika' | 'you', AuthUser> = {
 
 const columns: { id: ColumnId; title: string; hint: string }[] = [
   { id: 'ideas', title: '待开始', hint: '下一步做什么' },
-  { id: 'building', title: '进行中', hint: '保持专注，≤ 3' },
-  { id: 'shipped', title: '已完成', hint: '这周交付的' },
+  { id: 'building', title: '进行中', hint: '专注正在推进的工作' },
+  { id: 'shipped', title: '已完成', hint: '每一次交付都算数' },
 ];
 
 const taskTags: TaskTag[] = ['产品', '设计', '代码', '增长'];
@@ -624,7 +624,7 @@ function TaskCardBody({
   const cardNote = clearStarterTaskNote(task.note);
   return (
     <>
-      <div className="mb-3 flex min-w-0 items-center gap-1.5">
+      <div className="mb-2.5 flex min-w-0 flex-wrap items-center gap-1.5 pr-7">
         <Badge
           variant="outline"
           className="border-ink/10 bg-canvas text-[10px] font-medium text-ink-subtle"
@@ -633,7 +633,7 @@ function TaskCardBody({
         </Badge>
         {hierarchy === 'parent' && (
           <span className="inline-flex min-w-0 items-center gap-1 rounded-full border border-acid/50 bg-acid/20 px-2 py-1 text-[10px] font-semibold text-ink">
-            <span aria-hidden="true">👨</span>
+            <ListTree aria-hidden="true" className="size-3" />
             <span>父任务</span>
           </span>
         )}
@@ -644,16 +644,13 @@ function TaskCardBody({
           </span>
         )}
       </div>
-      <h3 className="pr-5 text-[15px] font-semibold leading-5 tracking-[-0.01em]">
+      <h3 className="break-words text-[15px] font-semibold leading-5 tracking-[-0.01em]">
         {task.title}
       </h3>
       {task.parent && (
-        <p className="mt-2 flex items-center gap-1.5 rounded-lg border border-child-border/80 bg-card/65 px-2 py-1.5 text-[10px] font-medium text-ink-subtle">
+        <p className="mt-2 flex items-center gap-1.5 text-[11px] font-medium text-ink-subtle">
           <span className="shrink-0 text-xs" aria-hidden="true">
             ↳
-          </span>
-          <span className="shrink-0" aria-hidden="true">
-            👨
           </span>
           <span className="truncate">
             {task.parent.archived ? '父任务已归档 · ' : ''}
@@ -669,10 +666,8 @@ function TaskCardBody({
       {acceptance.total > 0 && (
         <div
           className={cn(
-            'mt-3 flex items-center justify-between gap-3 rounded-xl border px-2.5 py-2 text-[10px] font-semibold',
-            acceptance.complete
-              ? 'border-acid/45 bg-acid/15 text-ink'
-              : 'border-ink/10 bg-canvas text-ink-subtle',
+            'mt-3 flex items-center justify-between gap-3 text-[11px] font-medium',
+            acceptance.complete ? 'text-ink' : 'text-ink-subtle',
           )}
           aria-label={`验收清单 ${acceptance.done}/${acceptance.total}`}
         >
@@ -690,10 +685,10 @@ function TaskCardBody({
         </div>
       )}
       {progress && progress.total > 0 && (
-        <div className="mt-3 rounded-xl border border-acid/35 bg-acid/10 px-2.5 py-2.5">
+        <div className="mt-3 border-t border-ink/[0.06] pt-3">
           <div className="flex items-center justify-between text-[10px] font-medium text-ink-subtle">
             <span className="flex items-center gap-1.5">
-              <span aria-hidden="true">👨</span> 子任务进度
+              <ListTree aria-hidden="true" className="size-3" /> 子任务进度
             </span>
             <span>
               {progress.done}/{progress.total} · {progress.percent}%
@@ -708,7 +703,7 @@ function TaskCardBody({
         </div>
       )}
       {task.agentState && (
-        <div className="mt-3 rounded-xl bg-acid/15 px-2.5 py-2">
+        <div className="mt-3 rounded-lg bg-acid/15 px-2.5 py-2">
           <p className="flex items-center gap-1.5 truncate text-[11px] font-medium text-ink">
             <span className="size-1.5 shrink-0 rounded-full bg-acid ring-2 ring-acid/25" />
             <Bot className="size-3 shrink-0" />
@@ -732,7 +727,7 @@ function TaskCardBody({
           </span>
         </div>
       )}
-      <div className="mt-4 flex items-center justify-between gap-2">
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
         <TaskOwnerGroup task={task} />
         <div className="flex items-center gap-2">
           {task.number && (
@@ -755,9 +750,7 @@ function TaskCardBody({
             <span className="flex items-center gap-1 text-[11px] text-ink-subtle">
               <Clock3 className="size-3" /> {task.due}
             </span>
-          ) : (
-            <span className="text-[11px] text-ink-faint">无截止日</span>
-          )}
+          ) : null}
         </div>
       </div>
     </>
@@ -803,12 +796,11 @@ function SortableTaskCard({
       ref={setNodeRef}
       style={style}
       className={cn(
-        'group relative touch-pan-y cursor-pointer overflow-hidden rounded-[18px] border bg-card outline-none transition-[box-shadow,border-color,opacity]',
+        'group relative touch-pan-y cursor-pointer overflow-hidden rounded-xl border bg-card outline-none transition-[box-shadow,border-color,opacity]',
         'hover:border-ink/25 hover:shadow-[0_10px_30px_rgba(30,30,24,0.06)] focus-visible:ring-2 focus-visible:ring-acid',
-        hierarchy === 'parent' &&
-          'border-acid/55 border-l-[3px] border-l-acid bg-parent-surface',
+        hierarchy === 'parent' && 'border-ink/10 border-l-[3px] border-l-acid',
         hierarchy === 'subtask' &&
-          'border-child-border border-l-[3px] border-l-child-accent bg-child-surface',
+          'border-ink/10 border-l-[3px] border-l-child-accent',
         isDragging && 'opacity-0',
         dropEdge === 'before' &&
           'before:absolute before:inset-x-4 before:top-0 before:z-20 before:h-1 before:rounded-full before:bg-acid',
@@ -821,7 +813,7 @@ function SortableTaskCard({
         {...attributes}
         {...listeners}
         type="button"
-        className="absolute inset-0 z-[1] touch-pan-y cursor-grab rounded-[18px] outline-none active:cursor-grabbing focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-acid"
+        className="absolute inset-0 z-[1] touch-pan-y cursor-grab rounded-xl outline-none active:cursor-grabbing focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-acid"
         onClick={() => onOpen(task)}
         aria-label={`打开或拖动任务：${task.title}`}
       />
@@ -829,15 +821,13 @@ function SortableTaskCard({
         type="button"
         disabled={archiveDisabled || isDragging}
         onClick={() => onArchive(task)}
-        className="absolute right-1.5 top-1.5 z-30 grid size-10 place-items-center rounded-full bg-card/85 text-ink-faint backdrop-blur-sm transition-colors hover:bg-canvas hover:text-ink disabled:pointer-events-none disabled:opacity-40 sm:right-1 sm:top-1 sm:size-9"
+        className="absolute right-1.5 top-1.5 z-30 grid size-10 place-items-center rounded-full bg-card/85 text-ink-faint backdrop-blur-sm transition-colors hover:bg-canvas hover:text-ink disabled:pointer-events-none disabled:opacity-40 sm:right-1 sm:top-1 sm:size-8 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100"
         aria-label={`归档 ${task.title}`}
       >
         <Archive className="size-4" />
       </button>
       <div className={cn(cover && 'grid grid-cols-[minmax(0,1fr)_42%]')}>
-        <div
-          className={cn('p-3.5 pr-12 sm:p-4 sm:pr-11', cover && 'pr-3 sm:pr-3')}
-        >
+        <div className={cn('p-3.5 sm:p-4', cover && 'pr-3 sm:pr-3')}>
           <TaskCardBody task={task} progress={progress} />
         </div>
         {cover && (
@@ -868,18 +858,15 @@ function TaskCardOverlay({
   return (
     <article
       className={cn(
-        'group relative cursor-grabbing overflow-hidden rounded-[18px] border border-ink/20 bg-card shadow-[0_20px_50px_rgba(20,20,15,0.16)] ring-1 ring-ink/5',
-        hierarchy === 'parent' &&
-          'border-acid/55 border-l-[3px] border-l-acid bg-parent-surface',
+        'group relative cursor-grabbing overflow-hidden rounded-xl border border-ink/20 bg-card shadow-[0_20px_50px_rgba(20,20,15,0.16)] ring-1 ring-ink/5',
+        hierarchy === 'parent' && 'border-ink/10 border-l-[3px] border-l-acid',
         hierarchy === 'subtask' &&
-          'border-child-border border-l-[3px] border-l-child-accent bg-child-surface',
+          'border-ink/10 border-l-[3px] border-l-child-accent',
       )}
     >
       <GripVertical className="absolute right-4 top-4 z-10 size-4 text-ink-faint" />
       <div className={cn(cover && 'grid grid-cols-[minmax(0,1fr)_42%]')}>
-        <div
-          className={cn('p-3.5 pr-12 sm:p-4 sm:pr-11', cover && 'pr-3 sm:pr-3')}
-        >
+        <div className={cn('p-3.5 sm:p-4', cover && 'pr-3 sm:pr-3')}>
           <TaskCardBody task={task} progress={progress} />
         </div>
         {cover && (
@@ -907,6 +894,7 @@ function BoardColumn({
   archiveDisabled,
   indicator,
   progressByParent,
+  filtered,
 }: {
   column: (typeof columns)[number];
   tasks: Task[];
@@ -915,6 +903,7 @@ function BoardColumn({
   onArchiveTask: (task: Task) => void;
   archiveDisabled: boolean;
   indicator?: DropIndicator;
+  filtered: boolean;
   progressByParent: Map<
     string,
     { done: number; total: number; percent: number }
@@ -929,14 +918,29 @@ function BoardColumn({
       id={`column-${column.id}`}
       ref={setNodeRef}
       className={cn(
-        'flex min-h-[420px] w-[calc(100vw-2.5rem)] min-w-[calc(100vw-2.5rem)] max-w-[calc(100vw-2.5rem)] flex-none snap-start scroll-mt-20 flex-col rounded-[22px] border border-transparent p-2 transition-colors sm:min-h-[520px] sm:w-auto sm:min-w-[288px] sm:max-w-none sm:flex-1',
+        'flex min-h-[360px] w-[calc(100vw-2.5rem)] min-w-[calc(100vw-2.5rem)] max-w-[calc(100vw-2.5rem)] flex-none snap-start scroll-mt-20 flex-col rounded-2xl border border-ink/[0.05] bg-canvas/60 p-2.5 transition-colors sm:min-h-[480px] sm:w-auto sm:min-w-[288px] sm:max-w-none sm:flex-1',
         isOver && 'border-acid/70 bg-acid-wash',
       )}
       aria-labelledby={`${column.id}-title`}
     >
-      <div className="mb-3 flex items-start justify-between px-2 pt-1">
+      <div className="mb-4 flex items-start justify-between px-1 pt-1">
         <div>
           <div className="flex items-center gap-2">
+            <span
+              aria-hidden="true"
+              className={cn(
+                'grid size-4 place-items-center rounded-full',
+                column.id === 'ideas'
+                  ? 'border-2 border-ink/25'
+                  : column.id === 'building'
+                    ? 'border-[3px] border-ink bg-acid'
+                    : 'bg-ink text-background',
+              )}
+            >
+              {column.id === 'shipped' && (
+                <Check className="size-2.5" strokeWidth={3} />
+              )}
+            </span>
             <h2 id={`${column.id}-title`} className="text-sm font-semibold">
               {column.title}
             </h2>
@@ -944,7 +948,11 @@ function BoardColumn({
               {tasks.length}
             </span>
           </div>
-          <p className="mt-1 text-[11px] text-ink-faint">{column.hint}</p>
+          <p className="mt-1 text-[11px] text-ink-subtle">
+            {column.id === 'building' && tasks.length > 3
+              ? '进行中的任务较多，试着先完成一项'
+              : column.hint}
+          </p>
         </div>
         <Button
           variant="ghost"
@@ -987,13 +995,19 @@ function BoardColumn({
               />
             </div>
           ))}
-          {tasks.length === 0 && (
-            <button
-              onClick={() => onAdd(column.id)}
-              className="flex min-h-28 items-center justify-center rounded-[18px] border border-dashed border-ink/15 text-xs text-ink-faint transition-colors hover:border-ink/30 hover:text-ink-subtle"
-            >
-              <Plus className="mr-1.5 size-3.5" /> 添加第一项
-            </button>
+          {tasks.length === 0 && filtered ? (
+            <div className="grid min-h-28 place-items-center rounded-xl border border-dashed border-ink/10 px-4 text-center text-xs text-ink-subtle">
+              这一列没有匹配的任务
+            </div>
+          ) : (
+            tasks.length === 0 && (
+              <button
+                onClick={() => onAdd(column.id)}
+                className="flex min-h-28 items-center justify-center rounded-xl border border-dashed border-ink/15 text-xs text-ink-faint transition-colors hover:border-ink/30 hover:text-ink-subtle"
+              >
+                <Plus className="mr-1.5 size-3.5" /> 添加第一项
+              </button>
+            )
           )}
         </div>
       </SortableContext>
@@ -1077,6 +1091,7 @@ export function KanbanApp({
   const [syncError, setSyncError] = useState('');
   const [activeId, setActiveId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [mobileColumn, setMobileColumn] = useState<ColumnId>('ideas');
   const [memberFilter, setMemberFilter] = useState('all');
   const [composer, setComposer] = useState<ColumnId | null>(null);
   const [newTitle, setNewTitle] = useState('');
@@ -1208,6 +1223,10 @@ export function KanbanApp({
         : null,
     [editedTask, tasks],
   );
+  const hasFilters = Boolean(search.trim()) || memberFilter !== 'all';
+  const buildingCount = tasks.filter(
+    (task) => task.status === 'building',
+  ).length;
   const doneCount = tasks.filter((task) => task.status === 'shipped').length;
   const progress = tasks.length
     ? Math.round((doneCount / tasks.length) * 100)
@@ -2889,7 +2908,7 @@ export function KanbanApp({
   return (
     <main className="min-h-dvh bg-background text-foreground">
       <div className="mx-auto max-w-[1480px] px-4 pb-[max(2.5rem,env(safe-area-inset-bottom))] sm:px-6 lg:px-8">
-        <header className="sticky top-0 z-30 -mx-4 flex h-16 items-center justify-between border-b border-ink/10 bg-background/90 px-4 backdrop-blur-md sm:static sm:mx-0 sm:h-20 sm:bg-transparent sm:px-0 sm:backdrop-blur-none">
+        <header className="sticky top-0 z-30 -mx-4 flex h-16 items-center justify-between border-b border-ink/10 bg-background/90 px-4 backdrop-blur-md sm:static sm:mx-0 sm:h-16 sm:bg-transparent sm:px-0 sm:backdrop-blur-none">
           <div className="flex items-center gap-3">
             <Link
               href={isDemo ? '/' : '/app'}
@@ -2989,6 +3008,8 @@ export function KanbanApp({
                       )
                     }
                     aria-label={`筛选 ${member.name}`}
+                    aria-pressed={memberFilter === member.id}
+                    title={`筛选 ${member.name} 的任务`}
                   >
                     <span
                       className={cn(
@@ -3041,7 +3062,7 @@ export function KanbanApp({
               </Button>
             )}
             <Button
-              className="size-10 rounded-full bg-ink p-0 text-background hover:bg-ink/80 sm:h-8 sm:w-auto sm:px-4"
+              className="h-10 rounded-xl bg-ink px-3 text-background hover:bg-ink/80 sm:px-4"
               onClick={() =>
                 activeProject || isDemo
                   ? setComposer('ideas')
@@ -3050,9 +3071,7 @@ export function KanbanApp({
               aria-label={activeProject || isDemo ? '新任务' : '新建项目'}
             >
               {activeProject || isDemo ? <Plus /> : <FolderPlus />}
-              <span className="hidden sm:inline">
-                {activeProject || isDemo ? '新任务' : '新建项目'}
-              </span>
+              <span>{activeProject || isDemo ? '新任务' : '新建项目'}</span>
             </Button>
           </div>
         </header>
@@ -3091,58 +3110,111 @@ export function KanbanApp({
           </section>
         ) : (
           <>
-            <div className="flex flex-col gap-4 py-5 sm:gap-5 sm:py-7 lg:flex-row lg:items-end lg:justify-between">
-              <div>
-                <div className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-faint">
-                  <Circle className="size-2.5 fill-acid text-acid" /> 2026 · 第
-                  36 周
-                </div>
-                <h1 className="text-[clamp(2rem,4vw,3.4rem)] font-semibold leading-none tracking-[-0.055em]">
-                  这周，做成什么？
+            <div className="flex flex-wrap items-center justify-between gap-4 py-4 sm:py-6">
+              <div className="min-w-0">
+                <p className="mb-2 hidden items-center gap-2 text-xs font-medium text-ink-subtle sm:flex">
+                  <LayoutGrid className="size-3.5" /> 项目看板
+                  {isDemo && (
+                    <span className="rounded-md bg-acid/25 px-1.5 py-0.5 text-[10px] text-ink">
+                      Demo
+                    </span>
+                  )}
+                </p>
+                <h1 className="break-words text-2xl font-semibold leading-tight tracking-[-0.04em] sm:text-3xl">
+                  {isDemo ? '把想法，变成交付。' : activeProject?.name}
                 </h1>
+                <p className="mt-2 text-xs text-ink-subtle">
+                  {tasks.length} 项任务
+                  <span className="mx-2 text-ink/20">/</span>
+                  {buildingCount} 项进行中
+                  <span className="mx-2 text-ink/20">/</span>
+                  {doneCount} 项已完成
+                </p>
               </div>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <div className="relative w-full sm:w-56">
-                  <Search className="absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-ink-faint" />
-                  <Input
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    placeholder="搜索任务..."
-                    className="h-10 rounded-full border-ink/10 bg-card pl-9 shadow-none focus-visible:border-ink/20 focus-visible:ring-0 sm:h-9"
-                  />
+              <div
+                className="hidden w-48 shrink-0 sm:block"
+                aria-label={`项目完成度 ${progress}%`}
+              >
+                <div className="mb-2 flex justify-between text-xs text-ink-subtle">
+                  <span>项目完成度</span>
+                  <span className="font-mono text-ink">{progress}%</span>
                 </div>
-                <div className="flex w-full items-center gap-3 rounded-full border border-ink/10 bg-card px-4 py-2 sm:min-w-52">
-                  <div className="flex-1">
-                    <div className="mb-1 flex justify-between text-[10px] font-medium text-ink-subtle">
-                      <span>本周进度</span>
-                      <span>{progress}%</span>
-                    </div>
-                    <div className="h-1 overflow-hidden rounded-full bg-ink/10">
-                      <div
-                        className="h-full rounded-full bg-acid transition-all"
-                        style={{ width: `${progress}%` }}
-                      />
-                    </div>
-                  </div>
-                  <Check className="size-4 text-ink-subtle" />
+                <div className="h-1.5 overflow-hidden rounded-full bg-ink/10">
+                  <div
+                    className="h-full rounded-full bg-acid transition-[width]"
+                    style={{ width: `${progress}%` }}
+                  />
                 </div>
               </div>
             </div>
 
             {isDemo && (
-              <div className="mb-4 flex items-center justify-between gap-3 rounded-2xl border border-ink/10 bg-card px-4 py-3 text-xs text-ink-subtle">
-                <span>
-                  <Sparkles className="mr-2 inline size-3.5" />
-                  这是可自由拖拽的示例项目，刷新后会重置。
-                </span>
+              <div className="mb-4 flex items-center justify-between gap-3 border-l-2 border-acid pl-3 text-xs text-ink-subtle">
+                <span>自由体验拖拽与编辑，刷新后重置。</span>
                 <Link
                   href="/"
-                  className="shrink-0 font-semibold text-ink hover:underline"
+                  className="shrink-0 font-medium text-ink hover:underline"
                 >
-                  登录使用
+                  登录使用 <ArrowUpRight className="inline size-3" />
                 </Link>
               </div>
             )}
+            <div className="mb-4 flex flex-wrap items-center gap-2 border-y border-ink/10 py-3">
+              <div className="relative min-w-0 flex-1 sm:max-w-72">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-subtle" />
+                <Input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  aria-label="搜索任务"
+                  placeholder="搜索任务…"
+                  className="h-10 rounded-xl border-ink/10 bg-card pl-9 pr-9 text-sm shadow-none"
+                />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => setSearch('')}
+                    aria-label="清除搜索"
+                    className="absolute right-0 top-0 grid size-10 place-items-center rounded-xl text-ink-subtle hover:text-ink"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                )}
+              </div>
+              <div className="relative shrink-0">
+                <Users className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-ink-subtle" />
+                <select
+                  value={memberFilter}
+                  onChange={(event) => setMemberFilter(event.target.value)}
+                  aria-label="按负责人筛选"
+                  className="h-10 max-w-40 appearance-none rounded-xl border border-ink/10 bg-card pl-9 pr-8 text-xs font-medium text-ink"
+                >
+                  <option value="all">所有成员</option>
+                  {teamMembers.map((member) => (
+                    <option key={member.id} value={member.id}>
+                      {member.name}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 size-3 -translate-y-1/2 text-ink-subtle" />
+              </div>
+              {hasFilters && (
+                <div className="flex w-full items-center gap-3 text-xs sm:ml-auto sm:w-auto">
+                  <output className="text-ink-subtle">
+                    显示 {visibleTasks.length} / {tasks.length} 项任务
+                  </output>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearch('');
+                      setMemberFilter('all');
+                    }}
+                    className="rounded-lg px-2 py-2 font-medium text-ink hover:bg-ink/5"
+                  >
+                    重置筛选
+                  </button>
+                </div>
+              )}
+            </div>
             {syncError && (
               <button
                 onClick={() => setSyncError('')}
@@ -3222,43 +3294,34 @@ export function KanbanApp({
                 </Link>
               </section>
             )}
-            {memberFilter !== 'all' && (
-              <div className="mb-4 flex items-center gap-2 text-xs text-ink-subtle">
-                正在看{' '}
-                <Owner
-                  user={
-                    teamMembers.find((member) => member.id === memberFilter) ??
-                    demoUsers.you
-                  }
-                  label
-                />{' '}
-                的任务{' '}
-                <button
-                  onClick={() => setMemberFilter('all')}
-                  className="rounded-full p-1 hover:bg-ink/5"
-                  aria-label="清除筛选"
-                >
-                  <X className="size-3" />
-                </button>
-              </div>
-            )}
             <nav
-              className="mb-2 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] sm:hidden [&::-webkit-scrollbar]:hidden"
+              className="mb-3 grid grid-cols-3 gap-1 rounded-xl bg-ink/[0.05] p-1 sm:hidden"
               aria-label="看板列快捷导航"
             >
               {columns.map((column) => (
                 <button
                   key={column.id}
-                  onClick={() =>
+                  onClick={() => {
+                    setMobileColumn(column.id);
                     document
                       .getElementById(`column-${column.id}`)
                       ?.scrollIntoView({
-                        behavior: 'smooth',
+                        behavior: window.matchMedia(
+                          '(prefers-reduced-motion: reduce)',
+                        ).matches
+                          ? 'auto'
+                          : 'smooth',
                         block: 'nearest',
                         inline: 'start',
-                      })
-                  }
-                  className="flex min-h-10 shrink-0 items-center gap-2 rounded-full border border-ink/10 bg-card px-4 text-xs font-medium text-ink-subtle active:bg-ink/5"
+                      });
+                  }}
+                  className={cn(
+                    'flex min-h-10 items-center justify-center gap-2 rounded-lg text-xs font-medium transition-colors',
+                    mobileColumn === column.id
+                      ? 'bg-card text-ink shadow-sm'
+                      : 'text-ink-subtle hover:text-ink',
+                  )}
+                  aria-current={mobileColumn === column.id ? 'true' : undefined}
                   aria-controls={`column-${column.id}`}
                 >
                   {column.title}
@@ -3282,8 +3345,28 @@ export function KanbanApp({
             >
               <section
                 aria-label="任务看板"
+                onScroll={(event) => {
+                  const board = event.currentTarget;
+                  const left = board.getBoundingClientRect().left;
+                  const closest = columns.reduce(
+                    (best, column) => {
+                      const distance = Math.abs(
+                        (document
+                          .getElementById(`column-${column.id}`)
+                          ?.getBoundingClientRect().left ?? Infinity) -
+                          left -
+                          16,
+                      );
+                      return distance < best.distance
+                        ? { id: column.id, distance }
+                        : best;
+                    },
+                    { id: mobileColumn, distance: Infinity },
+                  );
+                  setMobileColumn(closest.id);
+                }}
                 className={cn(
-                  '-mx-4 flex gap-2 overflow-x-auto px-4 pb-5 scroll-px-4 overscroll-x-contain [scrollbar-width:none] sm:-mx-2 sm:gap-1 sm:px-2 sm:pb-6 sm:scroll-px-2 [&::-webkit-scrollbar]:hidden',
+                  '-mx-4 flex gap-2 overflow-x-auto px-4 pb-5 scroll-px-4 overscroll-x-contain [scrollbar-width:none] sm:-mx-2 sm:gap-3 sm:px-2 sm:pb-6 sm:scroll-px-2 [&::-webkit-scrollbar]:hidden',
                   activeId ? 'snap-none' : 'snap-x snap-mandatory',
                 )}
               >
@@ -3299,6 +3382,7 @@ export function KanbanApp({
                     onOpenTask={openTask}
                     onArchiveTask={(task) => void archiveTaskFromCard(task)}
                     archiveDisabled={taskLifecycleSaving}
+                    filtered={hasFilters}
                     progressByParent={progressByParent}
                     indicator={
                       dropIndicator?.status === column.id
@@ -3360,6 +3444,7 @@ export function KanbanApp({
             <Input
               value={newProjectName}
               onChange={(event) => setNewProjectName(event.target.value)}
+              aria-label="项目名称"
               placeholder="例如：Kanby v1"
               maxLength={80}
               className="h-12 rounded-xl border-ink/15 px-4 text-base focus-visible:border-ink/30 focus-visible:ring-0"
@@ -3622,13 +3707,11 @@ export function KanbanApp({
                     <ListTree className="size-3 shrink-0" />
                     <span className="shrink-0">子任务</span>
                     <span className="text-child-accent">·</span>
-                    <span className="truncate">
-                      👨 {editedTask.parent.title}
-                    </span>
+                    <span className="truncate">{editedTask.parent.title}</span>
                   </span>
                 ) : progressByParent.get(taskDraft.id) ? (
                   <span className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-acid/50 bg-acid/15 px-2.5 py-1 text-[10px] font-semibold text-ink">
-                    <span aria-hidden="true">👨</span>
+                    <ListTree aria-hidden="true" className="size-3" />
                     父任务 · {progressByParent.get(taskDraft.id)?.total}{' '}
                     个子任务
                   </span>
@@ -3720,7 +3803,7 @@ export function KanbanApp({
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-2">
-                    <Label>状态</Label>
+                    <Label htmlFor="task-status">状态</Label>
                     <Select
                       value={taskDraft.status}
                       onValueChange={(value) =>
@@ -3732,8 +3815,17 @@ export function KanbanApp({
                         )
                       }
                     >
-                      <SelectTrigger className="h-11 w-full rounded-xl border-ink/15">
-                        <SelectValue />
+                      <SelectTrigger
+                        id="task-status"
+                        className="h-11 w-full rounded-xl border-ink/15"
+                      >
+                        <SelectValue>
+                          {
+                            columns.find(
+                              (column) => column.id === taskDraft.status,
+                            )?.title
+                          }
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {columns.map((column) => (
@@ -3745,7 +3837,7 @@ export function KanbanApp({
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label>标签</Label>
+                    <Label htmlFor="task-tag">标签</Label>
                     <Select
                       value={taskDraft.tag}
                       onValueChange={(value) =>
@@ -3757,7 +3849,10 @@ export function KanbanApp({
                         )
                       }
                     >
-                      <SelectTrigger className="h-11 w-full rounded-xl border-ink/15">
+                      <SelectTrigger
+                        id="task-tag"
+                        className="h-11 w-full rounded-xl border-ink/15"
+                      >
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -4057,7 +4152,8 @@ export function KanbanApp({
                 {editedTask?.parent ? (
                   <section className="rounded-2xl border border-child-border bg-child-surface p-4">
                     <div className="flex items-center gap-2 text-xs font-medium text-ink-subtle">
-                      <span aria-hidden="true">👨</span> 所属父任务
+                      <ListTree aria-hidden="true" className="size-3" />{' '}
+                      所属父任务
                     </div>
                     <button
                       type="button"
@@ -4093,7 +4189,8 @@ export function KanbanApp({
                           id="subtasks-title"
                           className="flex items-center gap-2"
                         >
-                          <span aria-hidden="true">👨</span> 子任务
+                          <ListTree aria-hidden="true" className="size-3" />{' '}
+                          子任务
                         </Label>
                         <p className="mt-1 text-[10px] text-ink-faint">
                           子任务是看板上可独立推进的卡片
@@ -4670,6 +4767,7 @@ export function KanbanApp({
             <Input
               value={newTitle}
               onChange={(event) => setNewTitle(event.target.value)}
+              aria-label="任务标题"
               placeholder="例如：发布首个可用版本"
               className="h-12 rounded-xl border-ink/15 px-4 text-base focus-visible:border-ink/30 focus-visible:ring-0"
             />

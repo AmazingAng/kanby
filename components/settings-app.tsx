@@ -578,7 +578,7 @@ export function SettingsApp() {
         )}
 
         <div className="mt-8 grid gap-5 lg:grid-cols-[280px_1fr]">
-          <aside className="space-y-3">
+          <aside className="space-y-3 lg:sticky lg:top-20 lg:self-start">
             <section className="rounded-[22px] border border-ink/10 bg-card p-5">
               <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-faint">
                 GitHub 账号
@@ -645,12 +645,36 @@ export function SettingsApp() {
                 <p className="px-2 py-4 text-xs text-ink-faint">还没有项目。</p>
               )}
             </section>
+            {selectedProject && (
+              <nav
+                aria-label="设置章节"
+                className="flex flex-wrap gap-1 rounded-2xl border border-ink/10 bg-card p-2 lg:flex-col"
+              >
+                {[
+                  ['project-info', '项目信息'],
+                  ['github-integration', 'GitHub 仓库'],
+                  ['agent-access', 'Agent Token'],
+                  ['team-members', '团队成员'],
+                ].map(([id, label]) => (
+                  <a
+                    key={id}
+                    href={`#${id}`}
+                    className="rounded-xl px-3 py-2.5 text-xs font-medium text-ink-subtle transition-colors hover:bg-ink/5 hover:text-ink"
+                  >
+                    {label}
+                  </a>
+                ))}
+              </nav>
+            )}
           </aside>
 
           <div className="space-y-5">
             {selectedProject ? (
               <>
-                <section className="rounded-[22px] border border-ink/10 bg-card p-5 sm:p-6">
+                <section
+                  id="project-info"
+                  className="scroll-mt-20 rounded-[22px] border border-ink/10 bg-card p-5 sm:p-6"
+                >
                   <div className="flex items-start justify-between">
                     <div>
                       <p className="text-xs text-ink-faint">项目信息</p>
@@ -727,7 +751,10 @@ export function SettingsApp() {
                   </div>
                 </section>
 
-                <section className="rounded-[22px] border border-ink/10 bg-card p-5 sm:p-6">
+                <section
+                  id="github-integration"
+                  className="scroll-mt-20 rounded-[22px] border border-ink/10 bg-card p-5 sm:p-6"
+                >
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <p className="text-xs text-ink-faint">
@@ -1190,7 +1217,10 @@ export function SettingsApp() {
                   )}
                 </section>
 
-                <section className="rounded-[22px] border border-ink/10 bg-card p-5 sm:p-6">
+                <section
+                  id="agent-access"
+                  className="scroll-mt-20 rounded-[22px] border border-ink/10 bg-card p-5 sm:p-6"
+                >
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <p className="text-xs text-ink-faint">Agent access</p>
@@ -1338,7 +1368,10 @@ export function SettingsApp() {
                   </div>
                 </section>
 
-                <section className="rounded-[22px] border border-ink/10 bg-card p-5 sm:p-6">
+                <section
+                  id="team-members"
+                  className="scroll-mt-20 rounded-[22px] border border-ink/10 bg-card p-5 sm:p-6"
+                >
                   <div>
                     <p className="text-xs text-ink-faint">Collaborators</p>
                     <h2 className="mt-1 text-xl font-semibold">团队成员</h2>

@@ -5,7 +5,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
-  CheckCircle2,
   FolderKanban,
   FolderPlus,
   LoaderCircle,
@@ -150,9 +149,9 @@ export function GatewayApp() {
         <section className="flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-faint">
-              Workspace gateway
+              我的工作区
             </p>
-            <h1 className="mt-2 text-4xl font-semibold tracking-[-0.05em] sm:text-5xl">
+            <h1 className="mt-2 break-words text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">
               欢迎回来，{user.name.split(' ')[0]}。
             </h1>
             <p className="mt-3 text-sm text-ink-subtle">
@@ -284,25 +283,6 @@ export function GatewayApp() {
             </div>
           )}
         </section>
-
-        <section className="mt-10 grid gap-3 sm:grid-cols-2">
-          <div className="rounded-[22px] border border-ink/10 bg-card p-5">
-            <CheckCircle2 className="size-5 text-ink-subtle" />
-            <h3 className="mt-4 text-sm font-semibold">累计交付</h3>
-            <p className="mt-1 text-3xl font-semibold tracking-tight">
-              {totals.shipped}
-            </p>
-            <p className="mt-2 text-xs text-ink-faint">所有项目已完成任务</p>
-          </div>
-          <div className="rounded-[22px] border border-ink/10 bg-card p-5">
-            <Users className="size-5 text-ink-subtle" />
-            <h3 className="mt-4 text-sm font-semibold">协作规模</h3>
-            <p className="mt-1 text-3xl font-semibold tracking-tight">
-              {Math.max(1, totals.members)}
-            </p>
-            <p className="mt-2 text-xs text-ink-faint">当前最大项目成员数</p>
-          </div>
-        </section>
       </div>
 
       {composerOpen && (
@@ -337,6 +317,7 @@ export function GatewayApp() {
                 size="icon"
                 className="rounded-full"
                 onClick={() => setComposerOpen(false)}
+                aria-label="关闭创建项目"
               >
                 <X />
               </Button>
@@ -345,6 +326,7 @@ export function GatewayApp() {
               value={projectName}
               onChange={(event) => setProjectName(event.target.value)}
               maxLength={80}
+              aria-label="项目名称"
               placeholder="例如：Kanby v1"
               className="h-12 rounded-xl border-ink/15 px-4 text-base focus-visible:ring-0"
             />

@@ -111,12 +111,6 @@ export function TaskMarkdown({
       >
         {children}
       </ReactMarkdown>
-      {compact && (
-        <span
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-5 bg-gradient-to-t from-card to-transparent"
-        />
-      )}
     </div>
   );
 }

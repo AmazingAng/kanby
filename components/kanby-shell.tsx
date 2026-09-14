@@ -47,6 +47,8 @@ export function AppHeader({
         >
           <a
             href="/app"
+            aria-label="项目"
+            aria-current={active === 'gateway' ? 'page' : undefined}
             className={cn(
               'flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-medium text-ink-subtle transition-colors hover:text-ink',
               active === 'gateway' &&
@@ -58,6 +60,8 @@ export function AppHeader({
           </a>
           <a
             href="/settings"
+            aria-label="设置"
+            aria-current={active === 'settings' ? 'page' : undefined}
             className={cn(
               'flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-medium text-ink-subtle transition-colors hover:text-ink',
               active === 'settings' &&
