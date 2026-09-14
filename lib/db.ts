@@ -1743,6 +1743,19 @@ export async function setTaskArchived(
     );
   const statements: D1PreparedStatement[] = [
     updateStatement,
+    ...(archived
+      ? [
+          db
+            .prepare(
+              `DELETE FROM task_agent_claims WHERE task_id = ? AND project_id = ?
+               AND EXISTS (
+                 SELECT 1 FROM tasks WHERE id = ? AND project_id = ?
+                   AND archived_at = ? AND updated_at = ?
+               )`,
+            )
+            .bind(taskId, projectId, taskId, projectId, now, now),
+        ]
+      : []),
     db
       .prepare(
         `UPDATE projects SET updated_at = ? WHERE id = ? AND EXISTS (
@@ -1760,7 +1773,7 @@ export async function setTaskArchived(
         {
           projectId,
           taskId,
-          source: 'user',
+          source: activityActor.source ?? 'user',
           kind: archived ? 'task.archived' : 'task.restored',
           ...activityActor,
           summary: `${activityActor.actorName}${archived ? '归档' : '恢复'}了任务`,

@@ -21,6 +21,7 @@ import {
   createTask,
   deleteAcceptanceCriterion,
   listTasks,
+  setTaskArchived,
   splitTask,
   TaskClaimConflictError,
   TaskHierarchyError,
@@ -98,10 +99,18 @@ async function authenticated(
   );
 }
 
-async function taskByReference(projectId: string, reference: string) {
+async function taskByReference(
+  projectId: string,
+  reference: string,
+  includeArchived = false,
+) {
   const id = await resolveAgentTask(projectId, reference);
   if (!id) return null;
-  return (await listTasks(projectId)).find((task) => task.id === id) ?? null;
+  const active = (await listTasks(projectId)).find((task) => task.id === id);
+  if (active || !includeArchived) return active ?? null;
+  return (
+    (await listTasks(projectId, true)).find((task) => task.id === id) ?? null
+  );
 }
 
 function idempotencyKey(request: Request) {
@@ -248,7 +257,11 @@ export async function PATCH(request: Request) {
   const reference = typeof body.id === 'string' ? body.id.trim() : '';
   if (!reference)
     return fail('invalid_task', 'Task id or ref is required', 400);
-  const task = await taskByReference(auth.projectId, reference);
+  const task = await taskByReference(
+    auth.projectId,
+    reference,
+    action === 'archive',
+  );
   if (!task)
     return fail(
       'not_found',
@@ -256,7 +269,9 @@ export async function PATCH(request: Request) {
       404,
     );
   if (
-    (['update', 'progress', 'link', 'complete', 'split'].includes(action) ||
+    (['update', 'progress', 'link', 'complete', 'split', 'archive'].includes(
+      action,
+    ) ||
       checklistActions.has(action)) &&
     !(await canMutateTask(auth, task.id))
   ) {
@@ -517,6 +532,22 @@ export async function PATCH(request: Request) {
           : 'Completed task',
       );
       response = { ok: true, data: publicTask(updated) };
+    } else if (action === 'archive') {
+      const archived = await setTaskArchived(
+        auth.projectId,
+        task.id,
+        true,
+        task.updatedAt,
+        {
+          source: 'agent',
+          actorId: auth.tokenId,
+          actorName: auth.agentName,
+          actorLogin: auth.userLogin,
+          actorAvatarUrl: auth.userAvatarUrl,
+        },
+      );
+      if (!archived) return reject('not_found', 'Task no longer exists', 404);
+      response = { ok: true, data: publicTask(archived) };
     } else if (action === 'link') {
       const url = typeof body.url === 'string' ? body.url : '';
       const parsed = parseGitHubItemUrl(url);
@@ -624,7 +655,7 @@ export async function PATCH(request: Request) {
     } else {
       return reject(
         'invalid_action',
-        'Action must be update, split, claim, heartbeat, progress, release, link, complete, or checklist.*',
+        'Action must be update, split, claim, heartbeat, progress, release, link, complete, archive, or checklist.*',
         400,
       );
     }

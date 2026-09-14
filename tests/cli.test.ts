@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 
+import fc from 'fast-check';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const cli = join(process.cwd(), 'packages/cli/bin/kanby.js');
@@ -51,6 +52,15 @@ describe('Kanby CLI credential contract', () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe(cliPackage.version);
+  });
+
+  it('documents the accepted task tags', () => {
+    const result = spawnSync(process.execPath, [cli, '--help'], {
+      encoding: 'utf8',
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('--tag 产品|设计|代码|增长');
   });
 
   it('uses exit code 2 when no credential is configured', () => {
@@ -172,6 +182,166 @@ describe('Kanby CLI credential contract', () => {
     expect(result.status).toBe(1);
     expect(requests).toBe(1);
     expect(result.stderr).not.toContain(token);
+  });
+
+  it('rejects an invalid task tag before sending the Agent Token', async () => {
+    let requests = 0;
+    let server: Server | undefined;
+    const port = await new Promise<number>((resolve) => {
+      server = createServer((_request, response) => {
+        requests += 1;
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ ok: true, data: {} }));
+      }).listen(0, '127.0.0.1', () => {
+        const address = server!.address();
+        resolve(typeof address === 'object' && address ? address.port : 0);
+      });
+    });
+    const token = `kby_${'s'.repeat(48)}`;
+
+    const result = await runCli(
+      ['task', 'update', 'task-ref', '--tag', 'cli-smoke'],
+      {
+        ...process.env,
+        XDG_CONFIG_HOME: temporaryConfigRoot(),
+        KANBY_TOKEN: token,
+        KANBY_URL: `http://127.0.0.1:${port}`,
+      },
+    );
+    await new Promise<void>((resolve, reject) =>
+      server!.close((error) => (error ? reject(error) : resolve())),
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      'Tag must be one of: 产品, 设计, 代码, 增长',
+    );
+    expect(result.stderr).not.toContain(token);
+    expect(requests).toBe(0);
+  });
+
+  it('rejects arbitrary non-enum task tags locally', async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc
+          .string({ minLength: 1, maxLength: 24 })
+          .filter((tag) => !['产品', '设计', '代码', '增长'].includes(tag)),
+        async (tag) => {
+          const token = `kby_${'s'.repeat(48)}`;
+          const result = await runCli(
+            ['task', 'update', 'task-ref', '--tag', tag],
+            {
+              ...process.env,
+              XDG_CONFIG_HOME: temporaryConfigRoot(),
+              KANBY_TOKEN: token,
+              KANBY_URL: 'http://127.0.0.1:9',
+            },
+          );
+          expect(result.status).toBe(1);
+          expect(result.stderr).toContain(
+            'Tag must be one of: 产品, 设计, 代码, 增长',
+          );
+          expect(result.stderr).not.toContain(token);
+        },
+      ),
+      { numRuns: 20 },
+    );
+  });
+
+  it('sends a valid task tag in an update', async () => {
+    let receivedBody: unknown;
+    let server: Server | undefined;
+    const port = await new Promise<number>((resolve) => {
+      server = createServer((request, response) => {
+        let body = '';
+        request.setEncoding('utf8');
+        request.on('data', (chunk) => (body += chunk));
+        request.on('end', () => {
+          receivedBody = JSON.parse(body);
+          response.writeHead(200, { 'Content-Type': 'application/json' });
+          response.end(
+            JSON.stringify({
+              ok: true,
+              data: {
+                ref: 'KANBY-1',
+                status: 'ideas',
+                owner: { login: 'alice' },
+                title: 'Tagged task',
+                tag: '代码',
+              },
+            }),
+          );
+        });
+      }).listen(0, '127.0.0.1', () => {
+        const address = server!.address();
+        resolve(typeof address === 'object' && address ? address.port : 0);
+      });
+    });
+
+    const result = await runCli(
+      ['task', 'update', 'KANBY-1', '--tag', '代码'],
+      {
+        ...process.env,
+        XDG_CONFIG_HOME: temporaryConfigRoot(),
+        KANBY_TOKEN: `kby_${'s'.repeat(48)}`,
+        KANBY_URL: `http://127.0.0.1:${port}`,
+      },
+    );
+    await new Promise<void>((resolve, reject) =>
+      server!.close((error) => (error ? reject(error) : resolve())),
+    );
+
+    expect(result.status).toBe(0);
+    expect(receivedBody).toEqual({
+      id: 'KANBY-1',
+      action: 'update',
+      tag: '代码',
+    });
+  });
+
+  it('archives a task through the Agent API', async () => {
+    let receivedBody: unknown;
+    let server: Server | undefined;
+    const port = await new Promise<number>((resolve) => {
+      server = createServer((request, response) => {
+        let body = '';
+        request.setEncoding('utf8');
+        request.on('data', (chunk) => (body += chunk));
+        request.on('end', () => {
+          receivedBody = JSON.parse(body);
+          response.writeHead(200, { 'Content-Type': 'application/json' });
+          response.end(
+            JSON.stringify({
+              ok: true,
+              data: {
+                ref: 'KANBY-1',
+                status: 'shipped',
+                owner: { login: 'alice' },
+                title: 'Archived task',
+                archivedAt: 1_700_000_000_001,
+              },
+            }),
+          );
+        });
+      }).listen(0, '127.0.0.1', () => {
+        const address = server!.address();
+        resolve(typeof address === 'object' && address ? address.port : 0);
+      });
+    });
+
+    const result = await runCli(['task', 'archive', 'KANBY-1'], {
+      ...process.env,
+      XDG_CONFIG_HOME: temporaryConfigRoot(),
+      KANBY_TOKEN: `kby_${'s'.repeat(48)}`,
+      KANBY_URL: `http://127.0.0.1:${port}`,
+    });
+    await new Promise<void>((resolve, reject) =>
+      server!.close((error) => (error ? reject(error) : resolve())),
+    );
+
+    expect(result.status).toBe(0);
+    expect(receivedBody).toEqual({ id: 'KANBY-1', action: 'archive' });
+    expect(result.stdout).toContain('Archived KANBY-1');
   });
 
   it('sends one quoted positional argument per child for task split', async () => {

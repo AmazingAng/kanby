@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 const DEFAULT_URL = 'https://kanby.0xaa.workers.dev';
+const TASK_TAGS = ['产品', '设计', '代码', '增长'];
 const VERSION = JSON.parse(
   await readFile(new URL('../package.json', import.meta.url), 'utf8'),
 ).version;
@@ -180,13 +181,14 @@ Usage:
   kanby task checklist edit <ref> <item-number-or-id> <criterion>
   kanby task checklist check|uncheck|remove <ref> <item-number-or-id>
   kanby task create <title> [--status <status>] [--note <text>]
-  kanby task update <ref> [--title <title>] [--note <text>] [--status <status>] [--due <date>] [--tag <tag>]
+  kanby task update <ref> [--title <title>] [--note <text>] [--status <status>] [--due <date>] [--tag 产品|设计|代码|增长]
   kanby task split <ref> <title> [<title> ...]
   kanby task claim <ref> [--lease 15]
   kanby task heartbeat <ref> [--lease 15]
   kanby task progress <ref> <message>
   kanby task link <ref> <github-issue-or-pr-url>
   kanby task complete <ref> [--message <summary>]
+  kanby task archive <ref>
   kanby task release <ref>
 
 Environment: KANBY_TOKEN, KANBY_URL`;
@@ -351,6 +353,8 @@ async function main() {
     }
     if (!Object.keys(fields).length)
       throw new Error('Pass at least one field to update');
+    if (fields.tag !== undefined && !TASK_TAGS.includes(fields.tag))
+      throw new Error(`Tag must be one of: ${TASK_TAGS.join(', ')}`);
     const data = await mutate(first, 'update', fields);
     out(data, (item) => `Updated ${taskLine(item)}`);
     return;
@@ -404,6 +408,11 @@ async function main() {
       message: option('message', ''),
     });
     out(data, (item) => `Completed ${taskLine(item)}`);
+    return;
+  }
+  if (command === 'archive') {
+    const data = await mutate(first, 'archive');
+    out(data, (item) => `Archived ${taskLine(item)}`);
     return;
   }
   if (command === 'release') {

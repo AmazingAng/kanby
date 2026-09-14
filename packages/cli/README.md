@@ -40,7 +40,12 @@ kanby task checklist add <ref> "Tests pass"
 kanby task checklist check <ref> 1
 kanby task progress <ref> "Implemented the first working slice"
 kanby task complete <ref> --message "Tests pass and PR is ready"
+kanby task archive <ref>
 ```
+
+Task tags are `产品`, `设计`, `代码`, or `增长`. Archiving is recoverable from
+the Kanby archive; permanent deletion is intentionally unavailable to Agent
+Tokens.
 
 Task mutations support `--idempotency-key <stable-key>` for safe retries. Never commit or print an Agent Token.
 
