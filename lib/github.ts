@@ -181,7 +181,7 @@ export function githubApiRequest(
   return new Request(new URL(path, 'https://api.github.com'), {
     ...init,
     headers,
-    redirect: 'error',
+    redirect: 'manual',
   });
 }
 

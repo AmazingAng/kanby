@@ -87,7 +87,7 @@ describe('GitHub installation boundaries', () => {
   it('refuses to forward GitHub credentials across redirects or origins', () => {
     const request = githubApiRequest('/user', 'installation-token');
     expect(request.url).toBe('https://api.github.com/user');
-    expect(request.redirect).toBe('error');
+    expect(request.redirect).toBe('manual');
     expect(request.headers.get('authorization')).toBe(
       'Bearer installation-token',
     );

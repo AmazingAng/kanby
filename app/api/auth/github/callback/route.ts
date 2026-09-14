@@ -42,10 +42,10 @@ const githubHeaders = (accessToken: string) => ({
 async function githubList<T>(path: string, accessToken: string): Promise<T[]> {
   const response = await fetch(`https://api.github.com${path}`, {
     headers: githubHeaders(accessToken),
-    redirect: 'error',
+    redirect: 'manual',
   });
   if (!response.ok) return [];
-  const payload = await response.json();
+  const payload = await response.json().catch(() => null);
   return Array.isArray(payload) ? (payload as T[]) : [];
 }
 
@@ -160,10 +160,10 @@ export async function GET(request: Request) {
         redirect_uri: `${config.origin}/api/auth/github/callback`,
         code_verifier: verifier,
       }),
-      redirect: 'error',
+      redirect: 'manual',
     },
   );
-  const tokenPayload = (await tokenResponse.json()) as {
+  const tokenPayload = (await tokenResponse.json().catch(() => ({}))) as {
     access_token?: string;
     error?: string;
   };
@@ -176,9 +176,11 @@ export async function GET(request: Request) {
 
   const profileResponse = await fetch('https://api.github.com/user', {
     headers: githubHeaders(tokenPayload.access_token),
-    redirect: 'error',
+    redirect: 'manual',
   });
-  const profile = (await profileResponse.json()) as GitHubUser;
+  const profile = (await profileResponse
+    .json()
+    .catch(() => ({}))) as GitHubUser;
   if (!profileResponse.ok || !profile.id || !profile.login) {
     return new Response('无法读取 GitHub 用户资料。', { status: 400 });
   }

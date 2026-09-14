@@ -41,9 +41,23 @@ const mutations = [
   {
     name: 'GitHub API redirect rejection',
     file: 'lib/github.ts',
-    from: "redirect: 'error',",
+    from: "redirect: 'manual',",
     to: "redirect: 'follow',",
     test: 'tests/github-security.test.ts',
+  },
+  {
+    name: 'OAuth token exchange redirect rejection',
+    file: 'app/api/auth/github/callback/route.ts',
+    from: "redirect: 'manual',\n    },\n  );\n  const tokenPayload",
+    to: "redirect: 'follow',\n    },\n  );\n  const tokenPayload",
+    test: 'tests/github-oauth-callback.test.ts',
+  },
+  {
+    name: 'OAuth redirect non-JSON response handling',
+    file: 'app/api/auth/github/callback/route.ts',
+    from: 'tokenResponse.json().catch(() => ({}))',
+    to: 'tokenResponse.json()',
+    test: 'tests/github-oauth-callback.test.ts',
   },
   {
     name: 'project-scoped GitHub retry selection',
