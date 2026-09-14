@@ -60,6 +60,13 @@ const mutations = [
     test: 'tests/github-oauth-callback.test.ts',
   },
   {
+    name: 'OAuth profile redirect non-JSON response handling',
+    file: 'app/api/auth/github/callback/route.ts',
+    from: 'profileResponse\n    .json()\n    .catch(() => ({}))',
+    to: 'profileResponse.json()',
+    test: 'tests/github-oauth-callback.test.ts',
+  },
+  {
     name: 'project-scoped GitHub retry selection',
     file: 'lib/github-db.ts',
     from: 'const projectScope = projectId\n    ?',

@@ -100,4 +100,26 @@ describe('GitHub OAuth callback on Cloudflare Workers', () => {
     expect(await response.text()).toContain('GitHub 授权失败');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it('turns a profile endpoint redirect into a safe OAuth error', async () => {
+    const fetchMock = vi.fn(
+      async (_input: string | URL | Request, init?: RequestInit) => {
+        expect(init?.redirect).toBe('manual');
+        if (fetchMock.mock.calls.length === 1) {
+          return Response.json({ access_token: 'test-access-token' });
+        }
+        return new Response(null, {
+          status: 302,
+          headers: { Location: 'https://example.invalid/intercept' },
+        });
+      },
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const response = await githubCallback(callbackRequest());
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe('无法读取 GitHub 用户资料。');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });
