@@ -42,3 +42,4 @@
 - Added explicit own-claim cleanup and cross-project non-resolution checks after implementation review exposed those lifecycle boundaries.
 - Made claim cleanup part of the archive database batch so a response failure cannot leave an archived task with a live Agent claim.
 - Updated the pre-existing split-claim mutation target after the new archive action changed the guarded action list; the gauntlet correctly failed closed instead of silently skipping it.
+- Removed a redundant activity-source assignment after mutation testing identified an equivalent mutant caused by object-spread overwrite; Agent source now has one auditable assignment point.

@@ -1765,6 +1765,7 @@ export async function setTaskArchived(
       .bind(now, projectId, taskId, projectId, now),
   ];
   if (activityActor) {
+    const { source = 'user', ...actor } = activityActor;
     const { prepareTaskActivityStatement } =
       await import('@/lib/task-activity');
     statements.push(
@@ -1773,9 +1774,9 @@ export async function setTaskArchived(
         {
           projectId,
           taskId,
-          source: activityActor.source ?? 'user',
+          source,
           kind: archived ? 'task.archived' : 'task.restored',
-          ...activityActor,
+          ...actor,
           summary: `${activityActor.actorName}${archived ? '归档' : '恢复'}了任务`,
           createdAt: now,
         },

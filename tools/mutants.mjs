@@ -363,8 +363,8 @@ const mutations = [
   {
     name: 'Agent archive activity source',
     file: 'lib/db.ts',
-    from: "source: activityActor.source ?? 'user',",
-    to: "source: 'user',",
+    from: "source,\n          kind: archived ? 'task.archived' : 'task.restored',",
+    to: "source: 'user',\n          kind: archived ? 'task.archived' : 'task.restored',",
     test: 'tests/agent-archive.test.ts',
   },
   {
