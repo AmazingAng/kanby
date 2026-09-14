@@ -302,6 +302,17 @@ export async function hasPendingProjectInvitation(
   return Boolean(row?.found);
 }
 
+export async function hasActiveProjectMembership(
+  userId: string,
+): Promise<boolean> {
+  await ensureSchema();
+  const row = await database()
+    .prepare('SELECT 1 AS found FROM project_members WHERE user_id = ? LIMIT 1')
+    .bind(userId)
+    .first<{ found: number }>();
+  return Boolean(row?.found);
+}
+
 export async function registerUserAndAcceptInvitations(
   user: AuthUser,
   emails: string[] = [],

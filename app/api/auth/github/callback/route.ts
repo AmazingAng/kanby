@@ -12,6 +12,7 @@ import {
   type AuthUser,
 } from '@/lib/auth';
 import {
+  hasActiveProjectMembership,
   hasPendingProjectInvitation,
   registerUserAndAcceptInvitations,
 } from '@/lib/db';
@@ -59,7 +60,7 @@ async function githubUserAccess(
   githubAdminAccountIds: string[];
 }> {
   const username = profile.login?.toLowerCase();
-  if (!username)
+  if (!username || !profile.id)
     return { allowed: false, verifiedEmails: [], githubAdminAccountIds: [] };
 
   const hasRules =
@@ -69,7 +70,7 @@ async function githubUserAccess(
   const allowedEmails = new Set(
     [...config.allowedIdentities].filter((identity) => identity.includes('@')),
   );
-  const [emails, memberships, teams] = await Promise.all([
+  const [emails, memberships, teams, existingMember] = await Promise.all([
     githubList<GitHubEmail>('/user/emails?per_page=100', accessToken),
     githubList<GitHubOrganizationMembership>(
       '/user/memberships/orgs?state=active&per_page=100',
@@ -78,6 +79,7 @@ async function githubUserAccess(
     config.allowedTeams.size > 0
       ? githubList<GitHubTeam>('/user/teams?per_page=100', accessToken)
       : Promise.resolve([]),
+    hasActiveProjectMembership(String(profile.id)),
   ]);
   const verifiedEmails = emails
     .filter((entry) => entry.verified && entry.email)
@@ -119,6 +121,7 @@ async function githubUserAccess(
       matchesEmail ||
       matchesOrganization ||
       matchesTeam ||
+      existingMember ||
       invited,
     verifiedEmails,
     githubAdminAccountIds,
