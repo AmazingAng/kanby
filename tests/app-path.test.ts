@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { withAppBasePath, withoutAppBasePath } from '@/lib/app-path';
+import {
+  appResourceUrl,
+  withAppBasePath,
+  withoutAppBasePath,
+} from '@/lib/app-path';
 
 const previewBasePath = '/w/702a5b1647a3/preview';
 
@@ -28,5 +32,14 @@ describe('application base path', () => {
       withoutAppBasePath('/w/702a5b1647a3/preview/11/board', previewBasePath),
     ).toBe('/11/board');
     expect(withoutAppBasePath('/11/board', '')).toBe('/11/board');
+  });
+
+  it('keeps browser-owned and absolute resource URLs unchanged', () => {
+    expect(appResourceUrl('blob:https://example.test/file')).toBe(
+      'blob:https://example.test/file',
+    );
+    expect(appResourceUrl('https://cdn.example.test/file.png')).toBe(
+      'https://cdn.example.test/file.png',
+    );
   });
 });

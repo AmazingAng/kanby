@@ -65,7 +65,7 @@ import {
   X,
 } from 'lucide-react';
 
-import { appPath, appRelativePath } from '@/lib/app-path';
+import { appPath, appRelativePath, appResourceUrl } from '@/lib/app-path';
 import {
   Avatar,
   AvatarFallback,
@@ -843,7 +843,7 @@ function SortableTaskCard({
         </div>
         {cover && (
           <Image
-            src={cover.url}
+            src={appResourceUrl(cover.url)}
             alt=""
             width={480}
             height={480}
@@ -885,7 +885,7 @@ function TaskCardOverlay({
         </div>
         {cover && (
           <Image
-            src={cover.url}
+            src={appResourceUrl(cover.url)}
             alt=""
             width={480}
             height={480}
@@ -4321,14 +4321,14 @@ export function KanbanApp({
                             className="group/attachment relative overflow-hidden rounded-xl border border-ink/10 bg-canvas"
                           >
                             <a
-                              href={attachment.url}
+                              href={appResourceUrl(attachment.url)}
                               target="_blank"
                               rel="noreferrer"
                               className="block"
                               aria-label={`打开图片 ${attachment.name}`}
                             >
                               <Image
-                                src={attachment.url}
+                                src={appResourceUrl(attachment.url)}
                                 alt={attachment.name}
                                 width={640}
                                 height={360}
@@ -4364,7 +4364,7 @@ export function KanbanApp({
                               <FileText className="size-4" />
                             </div>
                             <a
-                              href={attachment.url}
+                              href={appResourceUrl(attachment.url)}
                               target="_blank"
                               rel="noreferrer"
                               className="min-w-0 flex-1"

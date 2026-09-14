@@ -27,6 +27,10 @@ export function appPath(path: string): string {
   return withAppBasePath(path, appBasePath);
 }
 
+export function appResourceUrl(url: string): string {
+  return url.startsWith('/') ? appPath(url) : url;
+}
+
 export function appRelativePath(pathname: string): string {
   return withoutAppBasePath(pathname, appBasePath);
 }
