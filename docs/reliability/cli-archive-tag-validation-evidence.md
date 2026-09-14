@@ -1,7 +1,7 @@
 # Evidence Report — CLI archive and tag validation (Tier 3)
 
 - Spec approval: not obtained (autonomous run after feature-level approval); confidence is downgraded at the specification boundary.
-- Source state tested: `8385d42` (`Make Agent archive attribution auditable`).
+- Source state tested: `2d58711` (`Record CLI archive reliability evidence`); the later evidence-only commit does not change executable code.
 - Toolchain: versions pinned in `package.json` and `package-lock.json`; Node.js 22.22.1.
 - Entry point: `npm run gauntlet`.
 - Independent verification: not performed.
@@ -34,10 +34,11 @@
 | Mutation         | `npm run test:mutations`                                    | 58/58 mutants killed, including five archive/tag mutants                                         |
 | Property-based   | `npm test`                                                  | 1 new fast-check property, 20 generated invalid tags                                             |
 | Dependency audit | `npm audit --omit=dev --audit-level=high`                   | 0 production vulnerabilities                                                                     |
-| Secret scan      | `node tools/check-secrets.mjs`                              | 242 files plus reachable history clean; negative control detected                                |
+| Secret scan      | `node tools/check-secrets.mjs`                              | 243 files plus reachable history clean; negative control detected                                |
 | CLI package      | `npm run cli:pack:check`                                    | `@kanby/cli@0.2.2`, 4 intended files, 6.2 kB tarball                                             |
 | Suite health     | `npx vitest run --sequence.shuffle --sequence.seed=9082026` | 150 tests passed with seed 9082026                                                               |
 | Worker build     | `npm run build`                                             | production build completed; recovery schedule verified                                           |
+| Real execution   | packed CLI against production Worker                        | `@kanby/cli@0.2.2` archived `KANBY-34`; replay matched and active lookup returned 404            |
 
 ## Layers not run as specified
 
@@ -52,6 +53,7 @@
 - First gauntlet run failed closed because the pre-existing split-claim mutant no longer matched the extended action list. The target was updated to keep split and archive boundaries independently mutated.
 - Second gauntlet run rejected an equivalent activity-source mutant. The redundant object-spread overwrite was removed so Agent attribution has one auditable assignment point.
 - An initial production smoke update used an unsupported tag value and received generic HTTP 400. The valid retry succeeded; this directly motivated the local enum validation and precise help text.
+- The first deploy attempt used the generated placeholder D1 ID and Cloudflare rejected the version before traffic changed. The application was rebuilt with the verified production `kanby-db` and `kanby-attachments` bindings and deployed successfully; the empty `site-creator-r2` bucket provisioned by the failed attempt was deleted.
 
 ## Structural blind spot
 
@@ -61,4 +63,4 @@
 
 - Archive is recoverable and intentionally does not expose permanent deletion to Agent Tokens.
 - Archive and claim cleanup run in the same D1 batch; idempotent replay returns the original response without a duplicate activity event.
-- Production deployment and packaged-CLI smoke result are appended after deployment; until then, real production execution of the new archive command is pending.
+- Production Worker version `411c23ac-82b2-47a5-a9dc-01c522f23af9` serves HTTP 200, retains the production D1/R2 bindings and GitHub secrets, and the GitHub login endpoint redirects to GitHub with its callback.
