@@ -46,10 +46,8 @@ import {
   GitBranch,
   ImageIcon,
   LoaderCircle,
-  LayoutGrid,
   ListChecks,
   ListTree,
-  LogOut,
   MessageCircle,
   Paperclip,
   Plus,
@@ -1224,13 +1222,6 @@ export function KanbanApp({
     [editedTask, tasks],
   );
   const hasFilters = Boolean(search.trim()) || memberFilter !== 'all';
-  const buildingCount = tasks.filter(
-    (task) => task.status === 'building',
-  ).length;
-  const doneCount = tasks.filter((task) => task.status === 'shipped').length;
-  const progress = tasks.length
-    ? Math.round((doneCount / tasks.length) * 100)
-    : 0;
   const taskHasUnsavedChanges = taskDraft
     ? taskDraftFingerprint(taskDraft) !== lastSavedFingerprint
     : false;
@@ -2919,22 +2910,19 @@ export function KanbanApp({
             </Link>
             <div className="relative">
               <div className="flex items-center gap-2">
-                <span className="text-[15px] font-bold tracking-[-0.02em]">
+                <span className="hidden text-[15px] font-bold tracking-[-0.02em] sm:inline">
                   kanby
                 </span>
                 <span className="hidden text-ink-faint sm:inline">/</span>
                 <button
                   onClick={() => !isDemo && setProjectMenuOpen((open) => !open)}
-                  className="flex max-w-36 items-center gap-1 truncate text-[12px] font-medium text-ink-subtle hover:text-ink sm:max-w-52 sm:text-[13px]"
+                  className="flex max-w-24 items-center gap-1 truncate text-[12px] font-medium text-ink-subtle hover:text-ink sm:max-w-52 sm:text-[13px]"
                   aria-expanded={projectMenuOpen}
                 >
                   {isDemo ? 'Demo' : (activeProject?.name ?? '项目')}{' '}
                   {!isDemo && <ChevronDown className="size-3" />}
                 </button>
               </div>
-              <p className="hidden text-[10px] font-medium uppercase tracking-[0.14em] text-ink-faint sm:block">
-                Build less. Ship more.
-              </p>
               {projectMenuOpen && !isDemo && (
                 <div className="absolute left-12 top-9 z-50 w-64 rounded-2xl border border-ink/10 bg-card p-2 shadow-[0_18px_60px_rgba(20,20,15,0.14)] sm:left-20">
                   <p className="px-3 pb-2 pt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-faint">
@@ -2980,75 +2968,14 @@ export function KanbanApp({
           </div>
           <div className="flex items-center gap-2 sm:gap-4">
             {!isDemo && (
-              <div className="flex items-center gap-1">
-                <Link
-                  href="/app"
-                  className="hidden size-8 place-items-center rounded-full text-ink-faint hover:bg-ink/5 hover:text-ink sm:grid"
-                  aria-label="项目 Gateway"
-                >
-                  <LayoutGrid className="size-4" />
-                </Link>
-                <Link
-                  href="/settings"
-                  className="grid size-8 place-items-center rounded-full text-ink-faint hover:bg-ink/5 hover:text-ink"
-                  aria-label="设置"
-                >
-                  <Settings className="size-4" />
-                </Link>
-              </div>
-            )}
-            <div className="hidden sm:block">
-              <AvatarGroup>
-                {teamMembers.map((member) => (
-                  <button
-                    key={member.id}
-                    onClick={() =>
-                      setMemberFilter(
-                        memberFilter === member.id ? 'all' : member.id,
-                      )
-                    }
-                    aria-label={`筛选 ${member.name}`}
-                    aria-pressed={memberFilter === member.id}
-                    title={`筛选 ${member.name} 的任务`}
-                  >
-                    <span
-                      className={cn(
-                        'block rounded-full',
-                        memberFilter === member.id &&
-                          'ring-2 ring-ink ring-offset-2 ring-offset-background',
-                      )}
-                    >
-                      <Owner user={member} />
-                    </span>
-                  </button>
-                ))}
-              </AvatarGroup>
-            </div>
-            {auth.user ? (
-              <form
-                action="/api/auth/logout"
-                method="post"
-                className="hidden sm:block"
+              <Link
+                href="/settings"
+                className="grid size-8 place-items-center rounded-full text-ink-faint hover:bg-ink/5 hover:text-ink"
+                aria-label="设置"
               >
-                <Button
-                  type="submit"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="rounded-full text-ink-faint"
-                  aria-label="退出登录"
-                >
-                  <LogOut />
-                </Button>
-              </form>
-            ) : (
-              <Badge
-                variant="outline"
-                className="hidden border-ink/10 bg-card text-[10px] text-ink-faint sm:inline-flex"
-              >
-                演示模式
-              </Badge>
+                <Settings className="size-4" />
+              </Link>
             )}
-            <span className="hidden h-5 w-px bg-ink/10 sm:block" />
             {(activeProject || isDemo) && (
               <Button
                 type="button"
@@ -3110,56 +3037,10 @@ export function KanbanApp({
           </section>
         ) : (
           <>
-            <div className="flex flex-wrap items-center justify-between gap-4 py-4 sm:py-6">
-              <div className="min-w-0">
-                <p className="mb-2 hidden items-center gap-2 text-xs font-medium text-ink-subtle sm:flex">
-                  <LayoutGrid className="size-3.5" /> 项目看板
-                  {isDemo && (
-                    <span className="rounded-md bg-acid/25 px-1.5 py-0.5 text-[10px] text-ink">
-                      Demo
-                    </span>
-                  )}
-                </p>
-                <h1 className="break-words text-2xl font-semibold leading-tight tracking-[-0.04em] sm:text-3xl">
-                  {isDemo ? '把想法，变成交付。' : activeProject?.name}
-                </h1>
-                <p className="mt-2 text-xs text-ink-subtle">
-                  {tasks.length} 项任务
-                  <span className="mx-2 text-ink/20">/</span>
-                  {buildingCount} 项进行中
-                  <span className="mx-2 text-ink/20">/</span>
-                  {doneCount} 项已完成
-                </p>
-              </div>
-              <div
-                className="hidden w-48 shrink-0 sm:block"
-                aria-label={`项目完成度 ${progress}%`}
-              >
-                <div className="mb-2 flex justify-between text-xs text-ink-subtle">
-                  <span>项目完成度</span>
-                  <span className="font-mono text-ink">{progress}%</span>
-                </div>
-                <div className="h-1.5 overflow-hidden rounded-full bg-ink/10">
-                  <div
-                    className="h-full rounded-full bg-acid transition-[width]"
-                    style={{ width: `${progress}%` }}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {isDemo && (
-              <div className="mb-4 flex items-center justify-between gap-3 border-l-2 border-acid pl-3 text-xs text-ink-subtle">
-                <span>自由体验拖拽与编辑，刷新后重置。</span>
-                <Link
-                  href="/"
-                  className="shrink-0 font-medium text-ink hover:underline"
-                >
-                  登录使用 <ArrowUpRight className="inline size-3" />
-                </Link>
-              </div>
-            )}
-            <div className="mb-4 flex flex-wrap items-center gap-2 border-y border-ink/10 py-3">
+            <h1 className="sr-only">
+              {isDemo ? '示例看板' : `${activeProject?.name} 看板`}
+            </h1>
+            <div className="flex flex-wrap items-center gap-2 py-3">
               <div className="relative min-w-0 flex-1 sm:max-w-72">
                 <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-subtle" />
                 <Input
@@ -3197,6 +3078,90 @@ export function KanbanApp({
                 </select>
                 <ChevronDown className="pointer-events-none absolute right-3 top-1/2 size-3 -translate-y-1/2 text-ink-subtle" />
               </div>
+              {githubConnected && (
+                <Popover key={activeProjectId}>
+                  <PopoverTrigger
+                    className="ml-auto flex h-10 shrink-0 items-center gap-2 rounded-xl px-3 text-xs font-medium text-ink-subtle hover:bg-ink/5 data-popup-open:bg-ink/5"
+                    aria-label="GitHub 动态"
+                    title="GitHub 动态"
+                  >
+                    <GitBranch className="size-4" />
+                    <span className="hidden sm:inline">GitHub 动态</span>
+                    <ChevronDown className="hidden size-3 sm:block" />
+                  </PopoverTrigger>
+                  <PopoverContent
+                    align="end"
+                    className="w-96 max-w-[calc(100vw-2rem)] rounded-2xl p-3"
+                    aria-label="GitHub 最近动态"
+                  >
+                    <div className="flex items-center justify-between gap-3 px-1 pb-1">
+                      <p className="text-xs font-semibold">GitHub 最近动态</p>
+                      <Link
+                        href={`/settings?project=${encodeURIComponent(activeProjectId ?? '')}`}
+                        className="rounded-lg px-2 py-1 text-xs text-ink-subtle hover:bg-ink/5"
+                      >
+                        设置
+                      </Link>
+                    </div>
+                    <div className="max-h-[min(24rem,60dvh)] space-y-2 overflow-y-auto">
+                      {githubActivity.length > 0 ? (
+                        githubActivity.slice(0, 4).map((activity) => (
+                          <div
+                            key={activity.id}
+                            className="min-w-0 rounded-xl bg-canvas px-3 py-2.5"
+                          >
+                            {activity.url ? (
+                              <a
+                                href={activity.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="block truncate text-[11px] font-medium hover:underline"
+                              >
+                                {activity.title}
+                              </a>
+                            ) : (
+                              <p className="truncate text-[11px] font-medium">
+                                {activity.title}
+                              </p>
+                            )}
+                            <p className="mt-0.5 truncate text-[11px] leading-4 text-ink-subtle">
+                              {activity.summary}
+                            </p>
+                            {activity.kind === 'issues' &&
+                              activity.itemNumber != null &&
+                              githubAutomation?.issueTaskCreation && (
+                                <button
+                                  type="button"
+                                  disabled={
+                                    Boolean(activity.taskId) ||
+                                    githubIssueImporting === activity.id
+                                  }
+                                  onClick={() =>
+                                    void createTaskFromGitHubIssue(activity)
+                                  }
+                                  className="mt-1.5 flex items-center gap-1 text-[10px] font-semibold text-ink disabled:text-ink-faint"
+                                >
+                                  {githubIssueImporting === activity.id ? (
+                                    <LoaderCircle className="size-3 animate-spin" />
+                                  ) : activity.taskId ? (
+                                    <Check className="size-3" />
+                                  ) : (
+                                    <Plus className="size-3" />
+                                  )}
+                                  {activity.taskId ? '已创建任务' : '创建任务'}
+                                </button>
+                              )}
+                          </div>
+                        ))
+                      ) : (
+                        <p className="px-2 text-[11px] text-ink-faint">
+                          等待仓库动态
+                        </p>
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              )}
               {hasFilters && (
                 <div className="flex w-full items-center gap-3 text-xs sm:ml-auto sm:w-auto">
                   <output className="text-ink-subtle">
@@ -3223,76 +3188,6 @@ export function KanbanApp({
                 <span>{syncError}</span>
                 <X className="size-3.5" />
               </button>
-            )}
-            {githubConnected && (
-              <section
-                className="mb-4 flex items-center gap-2 overflow-x-auto rounded-2xl border border-ink/10 bg-card p-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                aria-label="GitHub 最近动态"
-              >
-                <div className="flex shrink-0 items-center gap-2 px-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-ink-faint">
-                  <GitBranch className="size-3.5" /> GitHub
-                </div>
-                {githubActivity.length > 0 ? (
-                  githubActivity.slice(0, 4).map((activity) => (
-                    <div
-                      key={activity.id}
-                      className="min-w-52 max-w-72 shrink-0 rounded-xl bg-canvas px-3 py-2"
-                    >
-                      {activity.url ? (
-                        <a
-                          href={activity.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="block truncate text-[11px] font-medium hover:underline"
-                        >
-                          {activity.title}
-                        </a>
-                      ) : (
-                        <p className="truncate text-[11px] font-medium">
-                          {activity.title}
-                        </p>
-                      )}
-                      <p className="mt-0.5 truncate text-[9px] text-ink-faint">
-                        {activity.summary}
-                      </p>
-                      {activity.kind === 'issues' &&
-                        activity.itemNumber != null &&
-                        githubAutomation?.issueTaskCreation && (
-                          <button
-                            type="button"
-                            disabled={
-                              Boolean(activity.taskId) ||
-                              githubIssueImporting === activity.id
-                            }
-                            onClick={() =>
-                              void createTaskFromGitHubIssue(activity)
-                            }
-                            className="mt-1.5 flex items-center gap-1 text-[10px] font-semibold text-ink disabled:text-ink-faint"
-                          >
-                            {githubIssueImporting === activity.id ? (
-                              <LoaderCircle className="size-3 animate-spin" />
-                            ) : activity.taskId ? (
-                              <Check className="size-3" />
-                            ) : (
-                              <Plus className="size-3" />
-                            )}
-                            {activity.taskId ? '已创建任务' : '创建任务'}
-                          </button>
-                        )}
-                    </div>
-                  ))
-                ) : (
-                  <p className="px-2 text-[11px] text-ink-faint">
-                    等待仓库动态
-                  </p>
-                )}
-                <Link
-                  href={`/settings?project=${encodeURIComponent(activeProjectId ?? '')}`}
-                  className="ml-auto shrink-0 rounded-full px-3 py-2 text-[10px] font-medium text-ink-subtle hover:bg-ink/5"
-                >
-                  设置
-                </Link>
-              </section>
             )}
             <nav
               className="mb-3 grid grid-cols-3 gap-1 rounded-xl bg-ink/[0.05] p-1 sm:hidden"
@@ -3409,7 +3304,7 @@ export function KanbanApp({
               <p>
                 {auth.user
                   ? `@${auth.user.login} · 3 秒内自动同步`
-                  : '演示模式 · 少开会，多交付。'}
+                  : '演示模式 · 可自由编辑，刷新后重置。'}
               </p>
             </footer>
           </>
