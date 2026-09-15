@@ -686,7 +686,7 @@ export async function listTasks(
 export async function createTask(
   user: AuthUser,
   projectId: string,
-  input: { title: string; status: ColumnId },
+  input: { title: string; status: ColumnId; due?: string },
   activityActor?: TaskActivityActor,
 ): Promise<TaskRecord> {
   await ensureSchema();
@@ -712,6 +712,7 @@ export async function createTask(
     title: input.title,
     note: '刚刚创建，补充一点上下文吧',
     tag: '产品',
+    due: input.due || undefined,
     owner: user,
     owners: [user],
     status: input.status,
@@ -738,7 +739,7 @@ export async function createTask(
         user.login,
         user.name,
         user.avatarUrl,
-        null,
+        task.due ?? null,
         task.status,
         task.position,
         now,

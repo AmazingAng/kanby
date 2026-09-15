@@ -21,7 +21,7 @@ tokens.
 - `GET /api/v1/projects` — return the token's project.
 - `GET /api/v1/tasks?status=ideas` — list tasks.
 - `GET /api/v1/tasks?id=<ref>` — task detail, current claim, and agent activity.
-- `POST /api/v1/tasks` — create a task.
+- `POST /api/v1/tasks` — create a task with `title`, optional `status`, `note`, and `due`. `due` is an optional `YYYY-MM-DD` calendar date stored with the initial task insert; omit it or pass an empty string for no deadline. Invalid dates, datetime strings, and non-string values return HTTP 400 `invalid_due` before a task is created.
 - `PATCH /api/v1/tasks` — mutate a task with `action`: `update`, `split`, `claim`, `heartbeat`, `progress`, `release`, `link`, or `complete`. An `update` may send ordered `ownerIds` with 1–3 current project-member IDs; legacy `ownerId` remains supported. `split` accepts `titles` with 1–20 child titles and is idempotent when the request supplies an `Idempotency-Key`.
 
 Task JSON includes ordered `owners` for every assignee and retains `owner` as the first assignee for compatibility. Human-readable CLI task output lists every assignee login.
@@ -30,6 +30,14 @@ Task reads include an ordered `acceptanceCriteria` array. Each item contains
 `id`, `body`, `completed`, `position`, `createdAt`, and `updatedAt`. The CLI
 renders it as a Markdown-style `[ ]` / `[x]` checklist in `task get`; JSON mode
 preserves the structured array.
+
+Checklist mutations use `PATCH /api/v1/tasks` with `id` and `action`:
+`checklist.add` takes `body`; `checklist.edit` takes `criterionId` and `body`;
+`checklist.check`, `checklist.uncheck`, and `checklist.remove` take `criterionId`.
+Read the current items, verify the criterion, check its ID, and re-read before
+sending `complete`. Completion sets the status to `shipped` and records its
+message; it does not check items automatically or enforce that all are checked.
+Agents must perform that verification workflow explicitly.
 
 Every successful Agent mutation is also written to the task's unified activity timeline. Repeated heartbeats for the same claim are coalesced, while progress messages remain visible to teammates and power the compact “Agent 正在处理” state on the board card. Releasing or completing a task clears the live card state; its history remains in the timeline.
 

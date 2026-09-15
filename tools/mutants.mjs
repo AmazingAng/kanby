@@ -4,6 +4,62 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 const mutations = [
   {
+    name: 'create deadline calendar validation',
+    file: 'app/api/v1/tasks/route.ts',
+    from: '(due && !parseTaskDueDate(due))',
+    to: 'false',
+    test: 'tests/agent-deadline-workflow.test.ts',
+  },
+  {
+    name: 'create deadline optional compatibility',
+    file: 'app/api/v1/tasks/route.ts',
+    from: "(body.due !== undefined && typeof body.due !== 'string')",
+    to: "(typeof body.due !== 'string')",
+    test: 'tests/agent-deadline-workflow.test.ts',
+  },
+  {
+    name: 'create deadline database persistence',
+    file: 'lib/db.ts',
+    from: 'user.avatarUrl,\n        task.due ?? null,',
+    to: 'user.avatarUrl,\n        null,',
+    test: 'tests/agent-deadline-workflow.test.ts',
+  },
+  {
+    name: 'create note preserves deadline',
+    file: 'app/api/v1/tasks/route.ts',
+    from: 'due: task.due,\n        tag: task.tag,',
+    to: 'due: undefined,\n        tag: task.tag,',
+    test: 'tests/agent-deadline-workflow.test.ts',
+  },
+  {
+    name: 'CLI create forwards deadline',
+    file: 'packages/cli/bin/kanby.js',
+    from: "due: option('due', undefined),",
+    to: 'due: undefined,',
+    test: 'tests/agent-deadline-workflow.test.ts',
+  },
+  {
+    name: 'CLI empty option value',
+    file: 'packages/cli/bin/kanby.js',
+    from: "return value !== undefined && !value.startsWith('--') ? value : true;",
+    to: "return value && !value.startsWith('--') ? value : true;",
+    test: 'tests/agent-deadline-workflow.test.ts',
+  },
+  {
+    name: 'CLI empty positional option consumption',
+    file: 'packages/cli/bin/kanby.js',
+    from: "args[index + 1] !== undefined && !args[index + 1].startsWith('--')",
+    to: "args[index + 1] && !args[index + 1].startsWith('--')",
+    test: 'tests/agent-deadline-workflow.test.ts',
+  },
+  {
+    name: 'completion workflow persists criterion checks',
+    file: 'app/api/v1/tasks/route.ts',
+    from: "action === 'checklist.check'\n                  ? true",
+    to: "action === 'checklist.check'\n                  ? false",
+    test: 'tests/agent-deadline-workflow.test.ts',
+  },
+  {
     name: 'OAuth return target same-origin boundary',
     file: 'lib/auth.ts',
     from: 'if (target.origin !== base.origin) return',

@@ -42,6 +42,8 @@ import {
   readJsonObjectWithLimit,
 } from '@/lib/request-limits';
 
+import { parseTaskDueDate } from '@/lib/task-due';
+
 export const dynamic = 'force-dynamic';
 
 const tags = new Set<TaskTag>(['产品', '设计', '代码', '增长']);
@@ -204,6 +206,16 @@ export async function POST(request: Request) {
       'Title is required and must be at most 160 characters',
       400,
     );
+  const due = typeof body.due === 'string' ? body.due.trim() : undefined;
+  if (
+    (body.due !== undefined && typeof body.due !== 'string') ||
+    (due && !parseTaskDueDate(due))
+  )
+    return fail(
+      'invalid_due',
+      'Due must be a valid YYYY-MM-DD date or an empty string',
+      400,
+    );
   const idempotency = await idempotent(
     auth,
     request,
@@ -220,7 +232,7 @@ export async function POST(request: Request) {
       avatarUrl: auth.userAvatarUrl,
     },
     auth.projectId,
-    { title, status },
+    { title, status, due },
   );
   const note = typeof body.note === 'string' ? body.note.trim() : '';
   if (note)
@@ -229,6 +241,7 @@ export async function POST(request: Request) {
         id: task.id,
         title: task.title,
         note: note.slice(0, 2000),
+        due: task.due,
         tag: task.tag,
         ownerId: task.owner.id,
         status: task.status,
