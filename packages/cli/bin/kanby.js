@@ -46,7 +46,7 @@ function option(name, fallback) {
   const index = args.indexOf(`--${name}`);
   if (index === -1) return fallback;
   const value = args[index + 1];
-  return value && !value.startsWith('--') ? value : true;
+  return value !== undefined && !value.startsWith('--') ? value : true;
 }
 
 function has(name) {
@@ -57,7 +57,8 @@ function positional() {
   const values = [];
   for (let index = 0; index < args.length; index += 1) {
     if (args[index].startsWith('--')) {
-      if (args[index + 1] && !args[index + 1].startsWith('--')) index += 1;
+      if (args[index + 1] !== undefined && !args[index + 1].startsWith('--'))
+        index += 1;
       continue;
     }
     values.push(args[index]);
@@ -180,7 +181,7 @@ Usage:
   kanby task checklist add <ref> <criterion>
   kanby task checklist edit <ref> <item-number-or-id> <criterion>
   kanby task checklist check|uncheck|remove <ref> <item-number-or-id>
-  kanby task create <title> [--status <status>] [--note <text>]
+  kanby task create <title> [--status <status>] [--note <text>] [--due YYYY-MM-DD]
   kanby task update <ref> [--title <title>] [--note <text>] [--status <status>] [--due <date>] [--tag 产品|设计|代码|增长]
   kanby task split <ref> <title> [<title> ...]
   kanby task claim <ref> [--lease 15]
@@ -290,6 +291,14 @@ async function main() {
     );
     return;
   }
+  if (
+    ['create', 'update'].includes(command) &&
+    option('due', undefined) === true
+  )
+    throw new Error(
+      '--due requires a date (YYYY-MM-DD); use --due "" to leave it unset or clear it',
+    );
+
   if (command === 'create') {
     if (!first) throw new Error('Task title is required');
     const data = await api('/api/v1/tasks', {
@@ -303,6 +312,7 @@ async function main() {
         title: [first, ...rest].join(' '),
         status: option('status', 'ideas'),
         note: option('note', ''),
+        due: option('due', undefined),
       }),
     });
     out(data, (item) => `Created ${taskLine(item)}`);

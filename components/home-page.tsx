@@ -7,7 +7,7 @@ import {
   ArrowRight,
   Check,
   GitBranch,
-  ImageIcon,
+  Bot,
   Paperclip,
   RefreshCw,
   Users,
@@ -120,19 +120,19 @@ export function HomePage() {
 
       <section className="relative overflow-hidden">
         <div className="pointer-events-none absolute inset-y-0 right-0 hidden w-[56%] bg-[radial-gradient(circle_at_50%_48%,rgba(200,242,70,0.13),transparent_55%)] lg:block" />
-        <div className="relative mx-auto grid max-w-7xl gap-12 px-5 py-14 sm:px-8 sm:py-18 lg:grid-cols-[minmax(440px,0.86fr)_minmax(0,1.14fr)] lg:items-center lg:gap-16 lg:py-20 xl:gap-24 xl:py-24">
-          <div className="max-w-[590px]">
+        <div className="relative mx-auto grid max-w-7xl grid-cols-1 gap-12 px-5 py-14 sm:px-8 sm:py-18 lg:grid-cols-[minmax(440px,0.86fr)_minmax(0,1.14fr)] lg:items-center lg:gap-16 lg:py-20 xl:gap-24 xl:py-24">
+          <div className="min-w-0 max-w-[590px]">
             <div className="inline-flex items-center gap-2 rounded-full border border-ink/10 bg-card px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-subtle">
               <span className="size-1.5 rounded-full bg-acid ring-2 ring-acid/25" />
               Built for 1–3 person teams
             </div>
-            <h1 className="mt-6 text-[clamp(3.35rem,5.35vw,5.35rem)] font-semibold leading-[0.92] tracking-[-0.07em]">
+            <h1 className="mt-6 text-[clamp(3.35rem,5.35vw,5.35rem)] font-semibold leading-[1.08] tracking-[-0.07em]">
               <span className="block whitespace-nowrap">想法很快，</span>
               <span className="block whitespace-nowrap">交付更快。</span>
             </h1>
             <p className="mt-7 max-w-[510px] text-base leading-7 text-ink-subtle sm:text-[17px]">
-              为 vibe coding
-              小团队准备的任务墙。把刚冒出来的点子拖进流程，让每个人都清楚下一步。
+              让你、Coding Agent 和 GitHub 共用一块任务墙。
+              从想法到实现，小团队的每一步都有上下文。
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <a
@@ -168,7 +168,7 @@ export function HomePage() {
           </div>
 
           <figure
-            className="relative mx-auto w-full max-w-[700px]"
+            className="relative mx-auto w-full min-w-0 max-w-[700px]"
             aria-label="Kanby 看板界面预览"
           >
             <div className="absolute -inset-6 -z-10 rounded-[40px] bg-card/70 blur-2xl" />
@@ -297,10 +297,10 @@ export function HomePage() {
               text: '任务、负责人和成员变化会在数秒内同步，不再互相追问最新状态。',
             },
             {
-              icon: ImageIcon,
+              icon: Bot,
               index: '02',
-              title: '附件即上下文',
-              text: '直接拖入文件；图片成为卡片封面，需求和实现始终放在一起。',
+              title: 'Agent 也是队友',
+              text: '让 Coding Agent 领取任务、更新进度、提交验收。你和 Agent 的工作，记录在同一条时间线。',
             },
             {
               icon: Users,

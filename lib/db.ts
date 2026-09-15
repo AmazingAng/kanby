@@ -303,6 +303,17 @@ export async function hasPendingProjectInvitation(
   return Boolean(row?.found);
 }
 
+export async function hasActiveProjectMembership(
+  userId: string,
+): Promise<boolean> {
+  await ensureSchema();
+  const row = await database()
+    .prepare('SELECT 1 AS found FROM project_members WHERE user_id = ? LIMIT 1')
+    .bind(userId)
+    .first<{ found: number }>();
+  return Boolean(row?.found);
+}
+
 export async function registerUserAndAcceptInvitations(
   user: AuthUser,
   emails: string[] = [],
@@ -676,7 +687,7 @@ export async function listTasks(
 export async function createTask(
   user: AuthUser,
   projectId: string,
-  input: { title: string; status: ColumnId },
+  input: { title: string; status: ColumnId; due?: string },
   activityActor?: TaskActivityActor,
 ): Promise<TaskRecord> {
   await ensureSchema();
@@ -702,6 +713,7 @@ export async function createTask(
     title: input.title,
     note: '刚刚创建，补充一点上下文吧',
     tag: '产品',
+    due: input.due || undefined,
     owner: user,
     owners: [user],
     status: input.status,
@@ -728,7 +740,7 @@ export async function createTask(
         user.login,
         user.name,
         user.avatarUrl,
-        null,
+        task.due ?? null,
         task.status,
         task.position,
         now,

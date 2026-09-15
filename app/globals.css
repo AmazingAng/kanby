@@ -50,7 +50,7 @@
   --soft: #ebeae3;
   --ink: #1d1e19;
   --ink-subtle: #6e7068;
-  --ink-faint: #9a9b94;
+  --ink-faint: #76786f;
   --acid: #c8f246;
   --acid-wash: #eff7d8;
   --parent-surface: #f7f9ec;
@@ -67,7 +67,7 @@
   --soft: #292a24;
   --ink: #eeeee7;
   --ink-subtle: #aaa99f;
-  --ink-faint: #74756d;
+  --ink-faint: #a0a196;
   --acid: #c8f246;
   --acid-wash: #28331a;
   --parent-surface: #22261a;
@@ -91,6 +91,12 @@
   button,
   [role='button'] {
     -webkit-tap-highlight-color: transparent;
+  }
+  a:focus-visible,
+  button:focus-visible,
+  select:focus-visible {
+    outline: 2px solid var(--ink);
+    outline-offset: 3px;
   }
   ::selection {
     background: var(--acid);
