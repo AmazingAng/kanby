@@ -13,6 +13,7 @@ import {
   Users,
 } from 'lucide-react';
 
+import { appPath } from '@/lib/app-path';
 import { buttonVariants } from '@/components/ui/button';
 import { KanbyMark, type AppUser } from '@/components/kanby-shell';
 import { cn } from '@/lib/utils';
@@ -73,7 +74,7 @@ export function HomePage() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/auth/session', { cache: 'no-store' })
+    fetch(appPath('/api/auth/session'), { cache: 'no-store' })
       .then(async (response) =>
         response.ok
           ? ((await response.json()) as { user?: AppUser | null })
@@ -88,7 +89,9 @@ export function HomePage() {
     };
   }, []);
 
-  const primaryHref = user ? '/app' : '/api/auth/github?returnTo=%2Fapp';
+  const primaryHref = appPath(
+    user ? '/app' : '/api/auth/github?returnTo=%2Fapp',
+  );
 
   return (
     <main className="min-h-dvh bg-background text-foreground">
@@ -97,7 +100,7 @@ export function HomePage() {
           <KanbyMark href="/" />
           <div className="flex items-center gap-1 sm:gap-3">
             <a
-              href="/demo"
+              href={appPath('/demo')}
               className="hidden rounded-full px-4 py-2 text-xs font-medium text-ink-subtle transition-colors hover:text-ink sm:block"
             >
               查看 Demo
@@ -142,7 +145,7 @@ export function HomePage() {
                 {user ? '打开我的项目' : '使用 GitHub 开始'} <ArrowRight />
               </a>
               <a
-                href="/demo"
+                href={appPath('/demo')}
                 className={cn(
                   buttonVariants({ variant: 'outline' }),
                   'h-12 rounded-full border-ink/15 bg-transparent px-6 text-sm hover:bg-card',

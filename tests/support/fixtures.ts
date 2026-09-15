@@ -11,6 +11,7 @@ export function configureEnvironment(database: TestD1Database) {
   Object.assign(env, {
     DB: database,
     PUBLIC_APP_ORIGIN: origin,
+    PUBLIC_APP_BASE_PATH: '',
     GITHUB_CLIENT_ID: 'test-client',
     GITHUB_CLIENT_SECRET: 'test-client-secret',
     SESSION_SECRET: sessionSecret,

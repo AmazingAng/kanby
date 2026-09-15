@@ -22,6 +22,7 @@ type AuthBindings = {
   GITHUB_CLIENT_SECRET?: string;
   SESSION_SECRET?: string;
   PUBLIC_APP_ORIGIN?: string;
+  PUBLIC_APP_BASE_PATH?: string;
   ALLOWED_GITHUB_LOGINS?: string;
   ALLOWED_GITHUB_ORGS?: string;
   ALLOWED_GITHUB_TEAMS?: string;
@@ -32,6 +33,8 @@ export type AuthConfig = {
   clientSecret: string;
   sessionSecret: string;
   origin: string;
+  basePath: string;
+  publicBaseUrl: string;
   allowedIdentities: Set<string>;
   allowedOrganizations: Set<string>;
   allowedTeams: Set<string>;
@@ -92,11 +95,25 @@ export function getAuthConfig(): AuthConfig | null {
     return null;
   }
 
+  const rawBasePath = runtime.PUBLIC_APP_BASE_PATH?.trim() ?? '';
+  if (
+    rawBasePath &&
+    (!rawBasePath.startsWith('/') ||
+      rawBasePath.startsWith('//') ||
+      rawBasePath.includes('\\') ||
+      rawBasePath.includes('?') ||
+      rawBasePath.includes('#'))
+  )
+    return null;
+  const basePath = rawBasePath.replace(/\/$/, '');
+
   return {
     clientId,
     clientSecret,
     sessionSecret,
     origin,
+    basePath,
+    publicBaseUrl: `${origin}${basePath}`,
     allowedIdentities: commaSeparatedSet(runtime.ALLOWED_GITHUB_LOGINS),
     allowedOrganizations: commaSeparatedSet(runtime.ALLOWED_GITHUB_ORGS),
     allowedTeams: commaSeparatedSet(runtime.ALLOWED_GITHUB_TEAMS),
@@ -161,11 +178,11 @@ export function hasFreshAuthorizationClaims(
 export function cookieHeader(
   name: string,
   value: string,
-  options: { maxAge: number; secure: boolean },
+  options: { maxAge: number; secure: boolean; path?: string },
 ): string {
   return [
     `${name}=${encodeURIComponent(value)}`,
-    'Path=/',
+    `Path=${options.path || '/'}`,
     'HttpOnly',
     'SameSite=Lax',
     options.secure ? 'Secure' : '',
@@ -175,8 +192,12 @@ export function cookieHeader(
     .join('; ');
 }
 
-export function clearCookieHeader(name: string, secure: boolean): string {
-  return cookieHeader(name, '', { maxAge: 0, secure });
+export function clearCookieHeader(
+  name: string,
+  secure: boolean,
+  path?: string,
+): string {
+  return cookieHeader(name, '', { maxAge: 0, secure, path });
 }
 
 function encodeBase64Url(bytes: Uint8Array): string {

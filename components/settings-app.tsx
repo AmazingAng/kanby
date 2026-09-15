@@ -22,6 +22,7 @@ import {
   X,
 } from 'lucide-react';
 
+import { appPath } from '@/lib/app-path';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -166,8 +167,8 @@ export function SettingsApp() {
   useEffect(() => {
     let cancelled = false;
     Promise.all([
-      fetch('/api/auth/session', { cache: 'no-store' }),
-      fetch('/api/projects', { cache: 'no-store' }),
+      fetch(appPath('/api/auth/session'), { cache: 'no-store' }),
+      fetch(appPath('/api/projects'), { cache: 'no-store' }),
     ])
       .then(async ([sessionResponse, projectResponse]) => {
         const session = sessionResponse.ok
@@ -211,17 +212,30 @@ export function SettingsApp() {
     if (!selectedId) return;
     let cancelled = false;
     Promise.all([
-      fetch(`/api/members?projectId=${encodeURIComponent(selectedId)}`, {
-        cache: 'no-store',
-      }),
-      fetch(`/api/github?projectId=${encodeURIComponent(selectedId)}`, {
-        cache: 'no-store',
-      }),
-      fetch(`/api/agent-tokens?projectId=${encodeURIComponent(selectedId)}`, {
-        cache: 'no-store',
-      }),
       fetch(
-        `/api/github/recovery?projectId=${encodeURIComponent(selectedId)}`,
+        appPath(`/api/members?projectId=${encodeURIComponent(selectedId)}`),
+        {
+          cache: 'no-store',
+        },
+      ),
+      fetch(
+        appPath(`/api/github?projectId=${encodeURIComponent(selectedId)}`),
+        {
+          cache: 'no-store',
+        },
+      ),
+      fetch(
+        appPath(
+          `/api/agent-tokens?projectId=${encodeURIComponent(selectedId)}`,
+        ),
+        {
+          cache: 'no-store',
+        },
+      ),
+      fetch(
+        appPath(
+          `/api/github/recovery?projectId=${encodeURIComponent(selectedId)}`,
+        ),
         {
           cache: 'no-store',
         },
@@ -294,7 +308,7 @@ export function SettingsApp() {
       return;
     setSaving(true);
     try {
-      const response = await fetch('/api/projects', {
+      const response = await fetch(appPath('/api/projects'), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -316,7 +330,7 @@ export function SettingsApp() {
     event.preventDefault();
     if (!selectedProject || !identity.trim()) return;
     try {
-      const response = await fetch('/api/members', {
+      const response = await fetch(appPath('/api/members'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -343,7 +357,7 @@ export function SettingsApp() {
   async function removeMember(memberId: string) {
     if (!selectedProject) return;
     try {
-      const response = await fetch('/api/members', {
+      const response = await fetch(appPath('/api/members'), {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: selectedProject.id, memberId }),
@@ -367,7 +381,7 @@ export function SettingsApp() {
     if (!selectedProject) return;
     try {
       await navigator.clipboard.writeText(
-        `${window.location.origin}/${encodeURIComponent(selectedProject.slug)}/board`,
+        `${window.location.origin}${appPath(`/${encodeURIComponent(selectedProject.slug)}/board`)}`,
       );
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1600);
@@ -380,7 +394,7 @@ export function SettingsApp() {
     if (!selectedProject || selectedProject.role !== 'owner') return;
     setGithubSaving(true);
     try {
-      const response = await fetch('/api/github', {
+      const response = await fetch(appPath('/api/github'), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -412,14 +426,16 @@ export function SettingsApp() {
     setGithubRecovering(true);
     setError('');
     try {
-      const response = await fetch('/api/github/recovery', {
+      const response = await fetch(appPath('/api/github/recovery'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: selectedProject.id, action }),
       });
       if (!response.ok) throw new Error('recovery');
       const diagnosticsResponse = await fetch(
-        `/api/github/recovery?projectId=${encodeURIComponent(selectedProject.id)}`,
+        appPath(
+          `/api/github/recovery?projectId=${encodeURIComponent(selectedProject.id)}`,
+        ),
         { cache: 'no-store' },
       );
       if (diagnosticsResponse.ok) {
@@ -448,7 +464,7 @@ export function SettingsApp() {
       return;
     setGithubSaving(true);
     try {
-      const response = await fetch('/api/github', {
+      const response = await fetch(appPath('/api/github'), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -477,7 +493,7 @@ export function SettingsApp() {
     setAgentSaving(true);
     setGeneratedToken('');
     try {
-      const response = await fetch('/api/agent-tokens', {
+      const response = await fetch(appPath('/api/agent-tokens'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -503,7 +519,7 @@ export function SettingsApp() {
   async function revokeAgentAccess(tokenId: string) {
     if (!selectedProject) return;
     try {
-      const response = await fetch('/api/agent-tokens', {
+      const response = await fetch(appPath('/api/agent-tokens'), {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: selectedProject.id, tokenId }),
@@ -540,7 +556,7 @@ export function SettingsApp() {
           <LockKeyhole className="mx-auto size-6" />
           <h1 className="mt-4 text-2xl font-semibold">登录后管理设置</h1>
           <a
-            href="/api/auth/github?returnTo=%2Fsettings"
+            href={appPath('/api/auth/github?returnTo=%2Fsettings')}
             className={cn(
               buttonVariants(),
               'mt-6 h-11 w-full rounded-full bg-ink text-background',
@@ -739,7 +755,9 @@ export function SettingsApp() {
                         {copied ? '已复制' : '复制'}
                       </Button>
                       <a
-                        href={`/${encodeURIComponent(selectedProject.slug)}/board`}
+                        href={appPath(
+                          `/${encodeURIComponent(selectedProject.slug)}/board`,
+                        )}
                         className={cn(
                           buttonVariants({ size: 'sm' }),
                           'rounded-lg bg-ink text-background',
@@ -787,7 +805,9 @@ export function SettingsApp() {
                       </p>
                       {selectedProject.role === 'owner' ? (
                         <a
-                          href={`/api/github/connect?projectId=${encodeURIComponent(selectedProject.id)}`}
+                          href={appPath(
+                            `/api/github/connect?projectId=${encodeURIComponent(selectedProject.id)}`,
+                          )}
                           className={cn(
                             buttonVariants(),
                             'mt-5 rounded-full bg-acid text-ink hover:bg-acid/85',
@@ -820,7 +840,9 @@ export function SettingsApp() {
                           </p>
                         </div>
                         <a
-                          href={`/api/github/connect?projectId=${encodeURIComponent(selectedProject.id)}`}
+                          href={appPath(
+                            `/api/github/connect?projectId=${encodeURIComponent(selectedProject.id)}`,
+                          )}
                           className={cn(
                             buttonVariants({ variant: 'outline', size: 'sm' }),
                             'rounded-full border-ink/15 bg-card',
@@ -1466,7 +1488,7 @@ export function SettingsApp() {
                     没有可设置的项目
                   </h2>
                   <a
-                    href="/app"
+                    href={appPath('/app')}
                     className={cn(
                       buttonVariants(),
                       'mt-5 rounded-full bg-ink text-background',

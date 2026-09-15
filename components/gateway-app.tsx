@@ -14,6 +14,7 @@ import {
   X,
 } from 'lucide-react';
 
+import { appPath } from '@/lib/app-path';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,7 +33,7 @@ type ProjectSummary = {
 };
 
 function boardPath(project: ProjectSummary) {
-  return `/${encodeURIComponent(project.slug)}/board`;
+  return appPath(`/${encodeURIComponent(project.slug)}/board`);
 }
 
 export function GatewayApp() {
@@ -47,8 +48,8 @@ export function GatewayApp() {
   useEffect(() => {
     let cancelled = false;
     Promise.all([
-      fetch('/api/auth/session', { cache: 'no-store' }),
-      fetch('/api/projects', { cache: 'no-store' }),
+      fetch(appPath('/api/auth/session'), { cache: 'no-store' }),
+      fetch(appPath('/api/projects'), { cache: 'no-store' }),
     ])
       .then(async ([sessionResponse, projectResponse]) => {
         const session = sessionResponse.ok
@@ -92,7 +93,7 @@ export function GatewayApp() {
     if (!name) return;
     setCreating(true);
     try {
-      const response = await fetch('/api/projects', {
+      const response = await fetch(appPath('/api/projects'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
@@ -124,7 +125,7 @@ export function GatewayApp() {
             项目、任务和团队设置会安全地保存在你的 Kanby 空间。
           </p>
           <a
-            href="/api/auth/github?returnTo=%2Fapp"
+            href={appPath('/api/auth/github?returnTo=%2Fapp')}
             className={cn(
               buttonVariants(),
               'mt-6 h-11 w-full rounded-full bg-ink text-background',
@@ -133,7 +134,7 @@ export function GatewayApp() {
             使用 GitHub 登录 <ArrowRight />
           </a>
           <a
-            href="/"
+            href={appPath('/')}
             className="mt-4 block text-xs text-ink-faint hover:text-ink"
           >
             返回首页
@@ -203,7 +204,7 @@ export function GatewayApp() {
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-sm font-semibold">你的项目</h2>
             <a
-              href="/settings"
+              href={appPath('/settings')}
               className="flex items-center gap-1.5 text-xs text-ink-subtle hover:text-ink"
             >
               <Settings className="size-3.5" /> 管理设置

@@ -6,6 +6,7 @@ import { LayoutGrid, LogOut, Settings, Sparkles } from 'lucide-react';
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
+import { appPath } from '@/lib/app-path';
 import { cn } from '@/lib/utils';
 
 export type AppUser = {
@@ -18,7 +19,7 @@ export type AppUser = {
 export function KanbyMark({ href = '/app' }: { href?: string }) {
   return (
     <a
-      href={href}
+      href={appPath(href)}
       className="flex items-center gap-2.5"
       aria-label="Kanby 首页"
     >
@@ -46,7 +47,7 @@ export function AppHeader({
           aria-label="主导航"
         >
           <a
-            href="/app"
+            href={appPath('/app')}
             aria-label="项目"
             aria-current={active === 'gateway' ? 'page' : undefined}
             className={cn(
@@ -59,7 +60,7 @@ export function AppHeader({
             <span className="hidden sm:inline">项目</span>
           </a>
           <a
-            href="/settings"
+            href={appPath('/settings')}
             aria-label="设置"
             aria-current={active === 'settings' ? 'page' : undefined}
             className={cn(
@@ -83,7 +84,7 @@ export function AppHeader({
               {user.name.slice(0, 1).toUpperCase()}
             </AvatarFallback>
           </Avatar>
-          <form action="/api/auth/logout" method="post">
+          <form action={appPath('/api/auth/logout')} method="post">
             <Button
               type="submit"
               variant="ghost"

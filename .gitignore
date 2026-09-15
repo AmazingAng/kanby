@@ -42,6 +42,10 @@ yarn-error.log*
 .vercel
 next-env.d.ts
 /dist/
+/dist-xapi/
+/dist-xapi-full/
 /.wrangler/
 /outputs/
 /work/
+
+/dist-xapi-native/

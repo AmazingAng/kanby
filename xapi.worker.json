@@ -1,0 +1,72 @@
+{
+  "$schema": "https://xapi.to/schemas/worker-project.v1.json",
+  "version": 1,
+  "workerId": "702a5b16-47a3-4bfe-a984-49e725409cc5",
+  "worker": {
+    "name": "Kanby complete application",
+    "slug": "kanby-xapi-0914",
+    "description": "Complete Kanby deployment through xAPI Workers for Platforms",
+    "template": "worker"
+  },
+  "wrangler": "wrangler.xapi.jsonc",
+  "build": {
+    "command": "npm run build:xapi-workers",
+    "output": "dist/kanby.worker.bundle"
+  },
+  "environments": {
+    "preview": {
+      "dailyBudgetUsd": 0.25,
+      "healthCheck": "/",
+      "resources": [
+        {
+          "type": "d1_database",
+          "bindingName": "DB"
+        },
+        {
+          "type": "d1_database",
+          "bindingName": "DB_APAC",
+          "location": "apac",
+          "readReplication": "disabled"
+        },
+        {
+          "type": "r2_bucket",
+          "bindingName": "ATTACHMENTS"
+        },
+        {
+          "type": "r2_bucket",
+          "bindingName": "ATTACHMENTS_APAC",
+          "location": "apac"
+        }
+      ],
+      "secrets": [
+        "GITHUB_CLIENT_ID",
+        "GITHUB_CLIENT_SECRET",
+        "SESSION_SECRET",
+        "PUBLIC_APP_ORIGIN",
+        "ALLOWED_GITHUB_LOGINS",
+        "GITHUB_APP_ID",
+        "GITHUB_APP_SLUG",
+        "GITHUB_APP_PRIVATE_KEY",
+        "GITHUB_WEBHOOK_SECRET"
+      ]
+    },
+    "production": {
+      "dailyBudgetUsd": 0.25,
+      "healthCheck": "/",
+      "resources": [
+        {
+          "type": "d1_database",
+          "bindingName": "DB"
+        },
+        {
+          "type": "r2_bucket",
+          "bindingName": "ATTACHMENTS"
+        }
+      ],
+      "secrets": []
+    }
+  },
+  "assets": {
+    "directory": "dist/client"
+  }
+}

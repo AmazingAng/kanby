@@ -49,6 +49,13 @@ Generate `SESSION_SECRET` from at least 32 random bytes (for example,
 credentials, path, query, or fragment. Plain HTTP is accepted only on loopback
 hosts for local development.
 
+When the application is served below a shared host path, set
+`PUBLIC_APP_BASE_PATH` to that exact route prefix. For example, an xAPI preview
+served at `/w/702a5b1647a3/preview` uses the dispatch host as
+`PUBLIC_APP_ORIGIN` and that prefix as `PUBLIC_APP_BASE_PATH`. Leave it empty
+when the application has a dedicated hostname. OAuth callbacks, redirects, and
+authentication cookies all use this path.
+
 Set `GITHUB_CLIENT_ID`, `PUBLIC_APP_ORIGIN`, and optional access rules as Worker
 variables. `ALLOWED_GITHUB_LOGINS` accepts comma-separated GitHub usernames or
 verified email addresses. `ALLOWED_GITHUB_ORGS` accepts organization names, and
@@ -73,12 +80,12 @@ The generated deployment configuration is `dist/server/wrangler.json`. Never com
 ## 4. Connect repositories with a GitHub App
 
 The OAuth App above is only for signing in. Create a separate GitHub App for
-repository activity. Replace `<origin>` below with the exact
-`PUBLIC_APP_ORIGIN` used by the deployed Worker and configure:
+repository activity. Replace `<public-base-url>` below with
+`PUBLIC_APP_ORIGIN` plus `PUBLIC_APP_BASE_PATH` when a base path is configured:
 
-- Homepage URL: `<origin>`
-- Setup URL: `<origin>/api/github/setup` (redirect after installation)
-- Webhook URL: `<origin>/api/github/webhook`
+- Homepage URL: `<public-base-url>`
+- Setup URL: `<public-base-url>/api/github/setup` (redirect after installation)
+- Webhook URL: `<public-base-url>/api/github/webhook`
 - Webhook secret: a new random secret
 - Repository permissions: Contents `Read-only`, Issues `Read-only`, Pull
   requests `Read-only`, Actions `Read-only`, and Metadata `Read-only`

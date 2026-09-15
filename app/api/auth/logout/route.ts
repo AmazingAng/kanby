@@ -12,12 +12,16 @@ export async function POST(request: Request) {
   if (!config || !isSameOriginMutation(request, config))
     return new Response('Forbidden', { status: 403 });
   const headers = new Headers({
-    Location: config.origin,
+    Location: config.publicBaseUrl,
     'Cache-Control': 'no-store',
   });
   headers.set(
     'Set-Cookie',
-    clearCookieHeader(SESSION_COOKIE, config.origin.startsWith('https://')),
+    clearCookieHeader(
+      SESSION_COOKIE,
+      config.origin.startsWith('https://'),
+      config.basePath,
+    ),
   );
   return new Response(null, { status: 303, headers });
 }

@@ -27,6 +27,7 @@
   "scripts": {
     "dev": "vinext dev",
     "build": "vinext build",
+    "build:xapi-workers": "NEXT_PUBLIC_BASE_PATH= npm run build && wrangler deploy --dry-run --config dist/server/wrangler.json --outfile dist/kanby.worker.bundle",
     "postbuild": "node tools/add-worker-schedule.mjs",
     "db:generate": "drizzle-kit generate",
     "deploy:cloudflare": "vinext build && wrangler deploy --config dist/server/wrangler.json",
