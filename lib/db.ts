@@ -158,11 +158,12 @@ type TaskGitHubLinkRow = {
   ci_status: string | null;
 };
 
-type DbBindings = { DB?: D1Database };
+type DbBindings = { DB_APAC?: D1Database; DB?: D1Database };
 
 export function database(): D1Database {
-  const db = (env as unknown as DbBindings).DB;
-  if (!db) throw new Error('D1 binding DB is unavailable');
+  const bindings = env as unknown as DbBindings;
+  const db = bindings.DB_APAC ?? bindings.DB;
+  if (!db) throw new Error('D1 binding DB_APAC or DB is unavailable');
   return db;
 }
 

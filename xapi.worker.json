@@ -23,8 +23,19 @@
           "bindingName": "DB"
         },
         {
+          "type": "d1_database",
+          "bindingName": "DB_APAC",
+          "location": "apac",
+          "readReplication": "disabled"
+        },
+        {
           "type": "r2_bucket",
           "bindingName": "ATTACHMENTS"
+        },
+        {
+          "type": "r2_bucket",
+          "bindingName": "ATTACHMENTS_APAC",
+          "location": "apac"
         }
       ],
       "secrets": [
