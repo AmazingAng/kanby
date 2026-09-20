@@ -254,7 +254,7 @@ function parseCursor(cursor: string | null | undefined) {
 
 export async function listTaskActivity(input: {
   projectId: string;
-  taskId: string;
+  taskId?: string;
   cursor?: string | null;
   limit?: number;
 }) {
@@ -263,25 +263,18 @@ export async function listTaskActivity(input: {
   const limit = Math.min(Math.max(input.limit ?? 20, 1), 50);
   const query = `SELECT id, task_id, source, kind, actor_id, actor_name, actor_login, actor_avatar_url, summary, body, metadata, created_at
      FROM task_events
-     WHERE project_id = ? AND task_id = ?
+     WHERE project_id = ? ${input.taskId ? 'AND task_id = ?' : ''}
        ${cursor ? 'AND (created_at < ? OR (created_at = ? AND id < ?))' : ''}
      ORDER BY created_at DESC, id DESC LIMIT ?`;
-  const result = cursor
-    ? await database()
-        .prepare(query)
-        .bind(
-          input.projectId,
-          input.taskId,
-          cursor.createdAt,
-          cursor.createdAt,
-          cursor.id,
-          limit + 1,
-        )
-        .all<TaskActivityRow>()
-    : await database()
-        .prepare(query)
-        .bind(input.projectId, input.taskId, limit + 1)
-        .all<TaskActivityRow>();
+  const result = await database()
+    .prepare(query)
+    .bind(
+      input.projectId,
+      ...(input.taskId ? [input.taskId] : []),
+      ...(cursor ? [cursor.createdAt, cursor.createdAt, cursor.id] : []),
+      limit + 1,
+    )
+    .all<TaskActivityRow>();
   const rows = result.results.slice(0, limit);
   const last = rows.at(-1);
   return {

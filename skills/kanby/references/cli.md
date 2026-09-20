@@ -72,3 +72,11 @@ kanby task complete <ref> --message "Deadline creation verified; all acceptance 
 ```
 
 Replace item placeholders with IDs from the current list. `check <ref> 1` also selects the first current item; prefer IDs when concurrent edits are possible. Re-list and resolve again after a conflict. If any item remains unverified, report the blocker and leave the task open. `complete` does not automatically tick a checklist, and a successful API response is not evidence that the acceptance criteria passed.
+
+## Historical reports and unified activity
+
+`kanby report --from YYYY-MM-DD --to YYYY-MM-DD --timezone Asia/Shanghai --json`
+returns project delivery statistics with explicit coverage, cohort and denominator.
+`kanby activity [--task KANBY-21] [--cursor <nextCursor>] [--limit 1..50] --json`
+returns a page of human, Agent and GitHub activity, including archived cards.
+See [reporting.md](reporting.md) before interpreting completion or per-member rates.

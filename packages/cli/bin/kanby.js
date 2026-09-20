@@ -175,6 +175,8 @@ Usage:
   kanby auth login --token <TOKEN> [--url <URL>]
   kanby auth status [--json]
   kanby project list [--json]
+  kanby report --from YYYY-MM-DD --to YYYY-MM-DD [--timezone Asia/Shanghai] [--json]
+  kanby activity [--task <ref>] [--cursor <cursor>] [--limit 1..50] [--json]
   kanby task list [--status ideas|building|shipped] [--json]
   kanby task get <ref> [--json]
   kanby task checklist <ref> [--json]
@@ -218,6 +220,59 @@ async function main() {
     return;
   }
 
+  if (group === 'report') {
+    const from = option('from', ''),
+      to = option('to', ''),
+      timezone = option('timezone', 'UTC');
+    if (
+      typeof from !== 'string' ||
+      typeof to !== 'string' ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(from) ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(to) ||
+      typeof timezone !== 'string'
+    )
+      throw new Error(
+        'report requires --from YYYY-MM-DD --to YYYY-MM-DD and an optional --timezone',
+      );
+    const data = await api(
+      `/api/v1/metrics?${new URLSearchParams({ from, to, timezone })}`,
+    );
+    out(data, (r) =>
+      [
+        `${r.period.from} – ${r.period.to} (${r.period.timeZone})`,
+        `History: ${r.coverage.complete ? 'complete' : 'incomplete'}${r.period.provisional ? ' · provisional' : ''}`,
+        `Observed top-level throughput: ${r.team.throughput}`,
+        `Planned completion: ${r.team.plannedCompleted}/${r.team.planned} (${r.team.completionRate === null ? 'unavailable' : (100 * r.team.completionRate).toFixed(1) + '%'})`,
+        `Member equivalents: ${r.team.memberEquivalents.toFixed(2)}`,
+        `Tasks per member equivalent: ${r.team.perMemberThroughput === null ? 'unavailable' : r.team.perMemberThroughput.toFixed(2)}`,
+        'Task counts are not a productivity ranking or proof of deployment.',
+        ...r.people.map(
+          (p) =>
+            `${p.name}\tcredit ${p.completionCredit.toFixed(2)}\tmember equivalent ${p.memberEquivalent.toFixed(2)}`,
+        ),
+      ].join('\n'),
+    );
+    return;
+  }
+  if (group === 'activity') {
+    const params = new URLSearchParams();
+    for (const key of ['task', 'cursor', 'limit']) {
+      const value = option(key, undefined);
+      if (value === true) throw new Error(`--${key} requires a value`);
+      if (value !== undefined) params.set(key, value);
+    }
+    const data = await api(`/api/v1/activity?${params}`);
+    out(data, (page) =>
+      [
+        ...page.events.map(
+          (e) =>
+            `${new Date(e.createdAt).toISOString()}\t${e.taskId}\t${e.source}\t${e.summary}${e.body ? '\n' + e.body : ''}`,
+        ),
+        page.nextCursor ? `Next cursor: ${page.nextCursor}` : 'End of history',
+      ].join('\n'),
+    );
+    return;
+  }
   if (group === 'auth' && command === 'login') {
     const token = String(option('token', process.env.KANBY_TOKEN || ''));
     const url = normalizeServerUrl(

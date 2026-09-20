@@ -1,6 +1,6 @@
 {
   "name": "@kanby/cli",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Kanby CLI for coding agents and small teams",
   "keywords": [
     "kanban",

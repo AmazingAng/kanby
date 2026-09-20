@@ -46,3 +46,32 @@ When an Agent creates a Pull Request, it should add `Kanby-Task: <task ref>` as 
 For retryable mutations, send a stable `Idempotency-Key` header between 8 and 128 characters. A claim is a renewable 1–60 minute lease. GitHub links are accepted only for repositories selected in the corresponding Kanby project.
 
 Successful responses use `{ "ok": true, "data": ... }`. Errors use `{ "ok": false, "error": { "code": "...", "message": "..." } }`.
+
+## Delivery reports and full activity pagination
+
+- `GET /api/v1/metrics?from=2026-09-07&to=2026-09-13&timezone=Asia%2FShanghai`
+  requires `task:read`, uses only the token's project, and returns `{ok,data}`.
+  Dates are inclusive local dates (2000–2100), at most 366 days; timezone defaults
+  to UTC. Invalid periods return 400. Histories over 50,000 combined task/member
+  records return 422 `history_limit`, never partial success. All responses disable caching.
+- `GET /api/v1/activity?task=KANBY-21&limit=50&cursor=<nextCursor>` requires
+  `task:read`. `task` is optional; omit it for all project activity. Follow
+  `data.nextCursor` until null. Archived task references are supported. Events
+  include human, Agent, system and GitHub sources. Existing `task get` stays compatible.
+- Browser `GET /api/metrics` accepts the same period plus `projectId`, authorized
+  by current session membership. A supplied project ID cannot widen Agent scope.
+
+Metric definitions and interpretation limits are maintained in
+[the reporting reference](../skills/kanby/references/reporting.md).
+
+Migration `0015_team_metrics.sql` establishes a collection baseline and compact
+statistical journal. Existing tasks are snapshots, not invented historical
+completions. The journal is independent of mutable/coalesced activity messages.
+Project mutation transactions update `projects.updated_at` after task/assignee/
+checklist writes, and the database trigger snapshots changed statistical state
+at that point. New tasks and membership transitions have dedicated triggers.
+Task position, title, description and heartbeat updates produce no statistical
+change. Task deletion retains a statistical tombstone (IDs, owners and task
+state, without task text), so deleting a card does not rewrite historical totals.
+Future database writers must keep the same transaction ordering; raw maintenance
+SQL that bypasses the project commit marker is outside this collection contract.

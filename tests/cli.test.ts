@@ -579,3 +579,110 @@ describe('Kanby CLI credential contract', () => {
     ]);
   });
 });
+
+describe('delivery reporting CLI', () => {
+  it('runs the real report and activity commands against a local HTTP service', async () => {
+    const requests: string[] = [];
+    const report = {
+      period: {
+        from: '2026-09-07',
+        to: '2026-09-13',
+        timeZone: 'Asia/Shanghai',
+        provisional: false,
+      },
+      coverage: { complete: true },
+      team: {
+        throughput: 2,
+        planned: 4,
+        plannedCompleted: 2,
+        completionRate: 0.5,
+        memberEquivalents: 2,
+        perMemberThroughput: 1,
+      },
+      people: [{ name: 'Alice', completionCredit: 1.5, memberEquivalent: 1 }],
+    };
+    const server = createServer((request, response) => {
+      requests.push(request.url ?? '');
+      response.setHeader('Content-Type', 'application/json');
+      response.end(
+        JSON.stringify({
+          ok: true,
+          data: request.url?.startsWith('/api/v1/metrics')
+            ? report
+            : {
+                events: [
+                  {
+                    createdAt: 100,
+                    taskId: 'task-one',
+                    source: 'user',
+                    summary: 'Moved',
+                    body: 'Verified',
+                  },
+                ],
+                nextCursor: '100:event-one',
+              },
+        }),
+      );
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, '127.0.0.1', resolve),
+    );
+    const address = server.address();
+    if (!address || typeof address === 'string')
+      throw new Error('No local server address');
+    const environment = {
+      ...process.env,
+      XDG_CONFIG_HOME: temporaryConfigRoot(),
+      KANBY_URL: `http://127.0.0.1:${address.port}`,
+      KANBY_TOKEN: 'test-report-token',
+    };
+    try {
+      const args = [
+        'report',
+        '--from',
+        '2026-09-07',
+        '--to',
+        '2026-09-13',
+        '--timezone',
+        'Asia/Shanghai',
+      ];
+      const json = await runCli([...args, '--json'], environment);
+      expect(json.status).toBe(0);
+      expect(JSON.parse(json.stdout)).toEqual(report);
+      const human = await runCli(args, environment);
+      expect(human.status).toBe(0);
+      expect(human.stdout).toContain('2/4 (50.0%)');
+      expect(human.stdout).toContain('Alice');
+      const page = await runCli(
+        [
+          'activity',
+          '--task',
+          'KANBY-1',
+          '--cursor',
+          '200:event-two',
+          '--limit',
+          '20',
+          '--json',
+        ],
+        environment,
+      );
+      expect(page.status).toBe(0);
+      expect(JSON.parse(page.stdout).nextCursor).toBe('100:event-one');
+      const humanActivity = await runCli(['activity'], environment);
+      expect(humanActivity.stdout).toContain('Next cursor: 100:event-one');
+      const url = new URL(requests[0]!, environment.KANBY_URL);
+      expect(url.searchParams.get('timezone')).toBe('Asia/Shanghai');
+      expect(
+        new URL(requests[2]!, environment.KANBY_URL).searchParams.get('cursor'),
+      ).toBe('200:event-two');
+      expect((await runCli(['report', '--from'], environment)).status).toBe(1);
+      expect((await runCli(['activity', '--cursor'], environment)).status).toBe(
+        1,
+      );
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+});

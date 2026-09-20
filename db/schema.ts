@@ -809,3 +809,51 @@ export const createGitHubIndexesSql = [
   'CREATE INDEX IF NOT EXISTS idx_github_sync_runs_project_started ON github_sync_runs(project_id, started_at)',
   'CREATE INDEX IF NOT EXISTS idx_github_connection_states_expires ON github_connection_states(expires_at)',
 ] as const;
+
+// Compact statistical history intentionally survives task deletion; it contains
+// no task title, description, comments or credentials.
+export const metricCoverage = sqliteTable('metric_coverage', {
+  id: integer('id').primaryKey(),
+  startedAt: integer('started_at').notNull(),
+});
+export const taskMetricEvents = sqliteTable(
+  'task_metric_events',
+  {
+    sequence: integer('sequence').primaryKey({ autoIncrement: true }),
+    projectId: text('project_id').notNull(),
+    taskId: text('task_id').notNull(),
+    occurredAt: integer('occurred_at').notNull(),
+    kind: text('kind').notNull(),
+    state: text('state').notNull(),
+  },
+  (table) => [
+    index('idx_task_metrics_project_time').on(
+      table.projectId,
+      table.occurredAt,
+      table.sequence,
+    ),
+    index('idx_task_metrics_task_sequence').on(
+      table.projectId,
+      table.taskId,
+      table.sequence,
+    ),
+  ],
+);
+export const memberMetricEvents = sqliteTable(
+  'member_metric_events',
+  {
+    sequence: integer('sequence').primaryKey({ autoIncrement: true }),
+    projectId: text('project_id').notNull(),
+    userId: text('user_id').notNull(),
+    name: text('name').notNull(),
+    occurredAt: integer('occurred_at').notNull(),
+    active: integer('active').notNull(),
+  },
+  (table) => [
+    index('idx_member_metrics_project_time').on(
+      table.projectId,
+      table.occurredAt,
+      table.sequence,
+    ),
+  ],
+);

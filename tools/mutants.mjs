@@ -4,6 +4,62 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 const mutations = [
   {
+    name: 'metrics project isolation',
+    file: 'app/api/v1/metrics/route.ts',
+    from: 'metricsResponse(request, identity.projectId)',
+    to: "metricsResponse(request, new URL(request.url).searchParams.get('projectId') ?? identity.projectId)",
+    test: 'tests/team-metrics-store.test.ts',
+  },
+  {
+    name: 'metrics exclusive period end',
+    file: 'lib/team-metrics.ts',
+    from: 'if (e.at >= cutoff) continue;',
+    to: 'if (e.at > cutoff) continue;',
+    test: 'tests/team-metrics.test.ts',
+  },
+  {
+    name: 'metrics frozen planned denominator',
+    file: 'lib/team-metrics.ts',
+    from: 'plannedCompleted / cohort.length',
+    to: 'plannedCompleted / (cohort.length + 1)',
+    test: 'tests/team-metrics.test.ts',
+  },
+  {
+    name: 'metrics shared completion credit',
+    file: 'lib/team-metrics.ts',
+    from: 'person.completionCredit += 1 / owners.length;',
+    to: 'person.completionCredit += 1;',
+    test: 'tests/team-metrics.test.ts',
+  },
+  {
+    name: 'metrics historical baseline is not a completion',
+    file: 'lib/team-metrics.ts',
+    from: "if (e.kind === 'baseline') continue;",
+    to: 'if (false) continue;',
+    test: 'tests/team-metrics.test.ts',
+  },
+  {
+    name: 'metrics missing historical coverage',
+    file: 'lib/team-metrics.ts',
+    from: 'input.coverageFrom <= period.start && cutoff > period.start',
+    to: 'cutoff > period.start',
+    test: 'tests/team-metrics.test.ts',
+  },
+  {
+    name: 'metric journal ignores repeated identical state',
+    file: 'drizzle/0015_team_metrics.sql',
+    from: 'WHERE s.project_id=NEW.id AND s.state IS NOT (',
+    to: 'WHERE s.project_id=NEW.id OR s.state IS NOT (',
+    test: 'tests/team-metrics-store.test.ts',
+  },
+  {
+    name: 'metrics Agent read scope',
+    file: 'app/api/v1/metrics/route.ts',
+    from: "authenticateAgent(request, 'task:read')",
+    to: "authenticateAgent(request, 'task:write')",
+    test: 'tests/team-metrics-store.test.ts',
+  },
+  {
     name: 'create deadline calendar validation',
     file: 'app/api/v1/tasks/route.ts',
     from: '(due && !parseTaskDueDate(due))',
@@ -520,6 +576,11 @@ for (const mutation of mutations) {
   }
   if (hash(readFileSync(mutation.file, 'utf8')) !== originalHash) {
     throw new Error(`${mutation.name}: source restoration failed`);
+  }
+  if (result.error || result.signal || result.status === null) {
+    throw new Error(
+      `${mutation.name}: mutation test did not complete normally`,
+    );
   }
   if (result.status === 0) {
     process.stderr.write(result.stdout);

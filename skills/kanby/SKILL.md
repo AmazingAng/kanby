@@ -1,6 +1,6 @@
 ---
 name: kanby
-description: Manage Kanby cards, deadlines, and acceptance checklists through the CLI. Use when an agent needs to create or claim tasks, report progress, and complete verified work.
+description: Manage Kanby tasks and review team delivery through the CLI. Use for cards, deadlines, acceptance checklists, progress updates, and weekly completion or per-member throughput reports.
 ---
 
 # Kanby
@@ -31,3 +31,13 @@ Use the `kanby` CLI as the single interface to Kanby. Prefer `--json` when consu
 Archive only when the user asks to remove a task from the active board: `kanby task archive <ref> --json`. Archiving is recoverable; Agent Tokens cannot permanently delete tasks. If abandoning work, release the claim instead of marking the task complete.
 
 Use a stable `--idempotency-key` when retrying a mutation whose prior response is unknown. Never print, log, commit, or place `KANBY_TOKEN` in command arguments.
+
+## Review a team's delivery
+
+For weekly progress or efficiency reviews, use `kanby report --from YYYY-MM-DD
+--to YYYY-MM-DD --timezone <IANA-zone> --json`. Resolve the requested calendar week
+and timezone first. Read [references/reporting.md](references/reporting.md) for the
+metric definitions and historical coverage limits. Use `kanby activity --json`
+and follow `nextCursor` to inspect human, Agent and GitHub evidence; `task get`
+contains only a recent Agent excerpt. This is a read-only workflow: do not claim,
+create, complete or rewrite cards merely to produce a review.

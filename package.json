@@ -36,10 +36,11 @@
     "test:mutations": "node tools/mutants.mjs",
     "lint": "oxlint",
     "format": "oxfmt",
-    "format:check": "oxfmt --check README.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md .github app components/gateway-app.tsx components/home-page.tsx components/kanban-app.tsx components/kanby-shell.tsx components/settings-app.tsx db docs drizzle lib proxy.ts packages tests tools vite.config.ts vitest.config.ts package.json",
+    "format:check": "oxfmt --check README.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md .github app components/gateway-app.tsx components/home-page.tsx components/kanban-app.tsx components/kanby-shell.tsx components/settings-app.tsx components/team-metrics.tsx db docs drizzle lib proxy.ts packages tests tools vite.config.ts vitest.config.ts package.json",
     "gauntlet": "bash tools/gauntlet.sh",
     "cli": "kanby",
-    "cli:pack:check": "npm pack --workspace @kanby/cli --dry-run"
+    "cli:pack:check": "npm pack --workspace @kanby/cli --dry-run",
+    "test:metrics": "vitest run tests/team-metrics.test.ts tests/team-metrics-store.test.ts --coverage --coverage.include=lib/team-metrics*.ts --coverage.include=app/api/metrics/route.ts --coverage.include=app/api/v1/metrics/route.ts --coverage.include=app/api/v1/activity/route.ts --coverage.thresholds.lines=100 --coverage.thresholds.statements=95 --coverage.thresholds.branches=90 --coverage.thresholds.functions=100"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",

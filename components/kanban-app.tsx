@@ -69,6 +69,7 @@ import {
   AvatarGroup,
   AvatarImage,
 } from '@/components/ui/avatar';
+import { TeamMetricsDialog } from '@/components/team-metrics';
 import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
@@ -2967,6 +2968,13 @@ export function KanbanApp({
             </div>
           </div>
           <div className="flex items-center gap-2 sm:gap-4">
+            {!isDemo && activeProject && (
+              <TeamMetricsDialog
+                key={activeProject.id}
+                projectId={activeProject.id}
+                projectName={activeProject.name}
+              />
+            )}
             {!isDemo && (
               <Link
                 href="/settings"

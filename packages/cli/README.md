@@ -85,3 +85,17 @@ Task mutations support `--idempotency-key <stable-key>` for safe retries. Never 
 ## License
 
 MIT
+
+## Review team delivery
+
+```bash
+kanby report --from 2026-09-07 --to 2026-09-13 --timezone Asia/Shanghai --json
+kanby activity --limit 50 --json
+kanby activity --cursor '<nextCursor>' --json
+```
+
+Reports include a fixed planned cohort, distinct completed top-level tasks,
+completion-time shared credit, membership duration and data-quality warnings.
+Historical coverage is explicit; incomplete periods return null rates. Task
+throughput is not an individual productivity ranking or proof of deployment.
+Activity pagination includes human and GitHub work as well as Agent updates.

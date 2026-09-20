@@ -146,6 +146,22 @@ Install the skill directly from the repository with:
 npx skills add https://github.com/AmazingAng/kanby --skill kanby
 ```
 
+## Team delivery reports
+
+Open **团队交付统计** from a project board, or use CLI 0.4.0+:
+
+```bash
+kanby report --from 2026-09-07 --to 2026-09-13 --timezone Asia/Shanghai --json
+kanby activity --limit 50 --json
+```
+
+Reports distinguish distinct top-level deliveries, a fixed planned-task completion
+rate, shared completion credit and membership-weighted per-person throughput.
+Coverage gaps produce null rates; task counts are not individual productivity scores
+or proof of production deployment. See the [reporting reference](skills/kanby/references/reporting.md).
+Apply migration `0015_team_metrics.sql` before deploying this version. Reliable
+history begins at migration time; older weekly totals cannot be reconstructed.
+
 ## Contributing
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before sending a change. Security issues must follow [SECURITY.md](SECURITY.md), not the public issue tracker.
