@@ -12,6 +12,7 @@ Spec approval: not obtained (autonomous run). The user authorized deployment, ex
 - `npm run gauntlet`: 15/15 passed, including type checking, lint/format, metric coverage, existing mutation suite, production dependency audit, secret scan with negative control, CLI contracts/package check, build and native scheduled handler verification.
 - Four additional manual mutants were executed and killed: accept wrong token, accept expired token, re-import completed batch, accept invalid HMAC. The expired-token mutant initially survived because that test also supplied an invalid token; the test now isolates expiry with valid credentials and kills the mutant. Helpers were restored after every mutation.
 - Final xAPI artifact wrapper includes signed recovery but neither the migration import nor `/__kanby_migration`.
+- The first remote CI run caught a README heading change made after the local gauntlet. The established `Cloudflare deployment` heading and anchor were restored without weakening the release-contract test; the xAPI guide remains linked from that section.
 - No dependencies were added. The isolated checkout omits the root ignored `.env`; build receives only the public origin. Runtime credentials were delivered separately through CLI stdin. Generated exports and temporary credentials are outside Git in a private directory.
 
 ## Actual preview acceptance
