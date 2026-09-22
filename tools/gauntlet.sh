@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-EXPECTED_LAYERS=14
+EXPECTED_LAYERS=15
 COMPLETED_LAYERS=0
 
 check_cli_contract() {
@@ -28,6 +28,7 @@ rm -rf coverage
 run_layer "unit, integration, property, concurrency" npm test
 run_layer "changed-code coverage" npm run test:coverage
 run_layer "delivery metrics coverage" npm run test:metrics
+run_layer "xAPI deployment boundary coverage" npm run test:xapi
 run_layer "TypeScript" npx tsc --noEmit
 run_layer "lint" npm run lint
 run_layer "format" npm run format:check

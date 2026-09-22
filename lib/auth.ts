@@ -60,7 +60,9 @@ export function getAuthConfig(): AuthConfig | null {
   const clientId = runtime.GITHUB_CLIENT_ID?.trim();
   const clientSecret = runtime.GITHUB_CLIENT_SECRET?.trim();
   const sessionSecret = runtime.SESSION_SECRET?.trim();
-  const rawOrigin = runtime.PUBLIC_APP_ORIGIN?.trim();
+  const rawOrigin = (
+    runtime.PUBLIC_APP_ORIGIN ?? process.env.KANBY_PUBLIC_ORIGIN
+  )?.trim();
   if (
     !clientId ||
     !clientSecret ||

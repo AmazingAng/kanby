@@ -73,6 +73,11 @@ export default defineConfig(async () => {
   const { cloudflare } = await import('@cloudflare/vite-plugin');
 
   return {
+    define: {
+      'process.env.KANBY_PUBLIC_ORIGIN': JSON.stringify(
+        process.env.KANBY_PUBLIC_ORIGIN ?? '',
+      ),
+    },
     css: { postcss: { plugins: [tailwindcss()] } },
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }

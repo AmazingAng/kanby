@@ -5,11 +5,25 @@ const serverDir = join(process.cwd(), 'dist', 'server');
 const entry = join(serverDir, 'index.js');
 const vinextEntry = join(serverDir, 'vinext.js');
 const configPath = join(serverDir, 'wrangler.json');
+const xapi = process.env.KANBY_XAPI === '1';
+const migration = xapi && process.env.KANBY_MIGRATION === '1';
+if (xapi)
+  await writeFile(
+    join(serverDir, 'xapi-scheduled-recovery.js'),
+    await readFile('tools/xapi-scheduled-recovery.mjs'),
+  );
+if (migration)
+  await writeFile(
+    join(serverDir, 'xapi-migration.js'),
+    await readFile('tools/xapi-migration.mjs'),
+  );
 
 await rename(entry, vinextEntry);
 await writeFile(
   entry,
   `import application from './vinext.js';
+${xapi ? "import { scheduledRecovery } from './xapi-scheduled-recovery.js';" : ''}
+${migration ? "import { migrationFetch } from './xapi-migration.js';" : ''}
 
 const encoder = new TextEncoder();
 async function signature(secret, body) {
@@ -20,6 +34,8 @@ async function signature(secret, body) {
 
 export default {
   fetch(request, env, context) {
+    ${migration ? "if (new URL(request.url).pathname === '/__kanby_migration') return migrationFetch(request, env); if (new URL(request.url).pathname !== '/demo' && !new URL(request.url).pathname.startsWith('/_next/')) return new Response('Migration in progress', { status: 503 });" : ''}
+    ${xapi ? "if (new URL(request.url).pathname === '/__kanby_recovery') return scheduledRecovery(request, env, context, application);" : ''}
     return application.fetch(request, env, context);
   },
   scheduled(_controller, env, context) {

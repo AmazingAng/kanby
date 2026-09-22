@@ -124,11 +124,11 @@ GitHub OAuth authenticates Kanby users. Repository access is deliberately handle
 
 The GitHub App needs read-only access to Contents, Issues, Pull requests, Actions, and Metadata. Subscribe it to Push, Issues, Pull request, and Workflow run events. See [the Cloudflare deployment guide](docs/CLOUDFLARE_DEPLOY.md) for exact URLs and environment variables.
 
-## Cloudflare deployment
+## Deployment
 
 Kanby targets Cloudflare Workers with a `DB` D1 binding and an `ATTACHMENTS` R2 binding. The generated Worker configuration is intentionally excluded from Git because account IDs and custom-domain settings belong to each deployment.
 
-Follow [docs/CLOUDFLARE_DEPLOY.md](docs/CLOUDFLARE_DEPLOY.md) to create resources, apply migrations, configure secrets, and deploy. Never commit a generated PEM private key or paste credentials into an issue, pull request, build log, or support discussion.
+The managed service uses [xAPI Workers](docs/XAPI_DEPLOY.md), with its desired state in `xapi.worker.json`. For an independent deployment in your own Cloudflare account, follow [docs/CLOUDFLARE_DEPLOY.md](docs/CLOUDFLARE_DEPLOY.md) to create resources, apply migrations, configure secrets, and deploy. Never commit a generated PEM private key or paste credentials into an issue, pull request, build log, or support discussion.
 
 ## Kanby CLI and Agent skill
 

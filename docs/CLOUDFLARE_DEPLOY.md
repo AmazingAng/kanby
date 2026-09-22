@@ -1,5 +1,7 @@
 # Cloudflare Workers deployment
 
+For the managed `kanby.dev` service, use [xAPI deployment](XAPI_DEPLOY.md). This guide is for independent deployments in your own Cloudflare account.
+
 Kanby builds to a Cloudflare Worker with Static Assets. Task data uses the `DB` D1 binding and attachments use the `ATTACHMENTS` R2 binding.
 
 ## 0. Prepare the checkout
