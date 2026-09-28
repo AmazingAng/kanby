@@ -7,6 +7,8 @@ description: Manage Kanby tasks and review team delivery through the CLI. Use fo
 
 Use the `kanby` CLI as the single interface to Kanby. Prefer `--json` when consuming output programmatically. Read [references/cli.md](references/cli.md) for commands, deadline examples, completion examples, and exit codes.
 
+The official service is `https://kanby.dev` (CLI 0.4.1+ default). Respect an explicit self-hosted URL. For installation, saved legacy URLs, or missing CLI commands, see the connection setup in [references/cli.md](references/cli.md).
+
 ## Find or create a task
 
 1. Run `kanby auth status --json`. If authentication is missing, tell the user to create a project Agent Token in Kanby Settings and expose it as `KANBY_TOKEN`; never ask them to paste it into chat.

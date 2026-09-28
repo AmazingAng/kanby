@@ -1,6 +1,14 @@
 # Kanby CLI reference
 
-Set `KANBY_TOKEN` for agents and CI. `KANBY_URL` is optional and defaults to the hosted Kanby service.
+## Connection setup
+
+Set `KANBY_TOKEN` for agents and CI. CLI 0.4.1+ defaults to `https://kanby.dev`. URL precedence is `KANBY_URL`, then the saved CLI config URL, then the default. Preserve explicit self-hosted URLs.
+
+If an older CLI or saved official-service configuration still selects `https://kanby.0xaa.workers.dev`, set `KANBY_URL=https://kanby.dev` for the session. To persist the new URL, run `KANBY_URL=https://kanby.dev kanby auth login` with `KANBY_TOKEN` already set; credentials and the URL are saved only after successful authentication. Existing valid project Agent Tokens remain usable after the domain migration.
+
+If `kanby` is not installed and a Kanby checkout is available, run `node packages/cli/bin/kanby.js <command>` from its root, or install it with `npm install --global ./packages/cli`. Do not confuse a missing executable or missing credentials with a server outage. `auth status --json` and `task list --json` provide read-only connectivity checks; a 401 response does not confirm successful authentication.
+
+## Commands
 
 | Intent            | Command                                                                                                                               |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------- |

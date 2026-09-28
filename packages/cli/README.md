@@ -18,9 +18,11 @@ export KANBY_TOKEN="kby_..."
 kanby auth status
 ```
 
-`KANBY_URL` is optional and defaults to `https://kanby.0xaa.workers.dev`. Run `kanby --help` for all commands and add `--json` for machine-readable output.
+CLI 0.4.1+ defaults to `https://kanby.dev`. Server selection uses `KANBY_URL`, then the saved CLI config URL, then this default. Keep `KANBY_URL` set to your own origin for a self-hosted instance. Run `kanby --help` for all commands and add `--json` for machine-readable output.
 
-To store a validated token in the local CLI config instead, run `kanby auth login --token "$KANBY_TOKEN"`. Kanby writes the config with user-only permissions.
+To store a validated token in the local CLI config instead, run `kanby auth login` with `KANBY_TOKEN` set. Kanby writes the config with user-only permissions.
+
+To move an existing official-service configuration to the new domain, run `KANBY_URL=https://kanby.dev kanby auth login` with `KANBY_TOKEN` set. This validates access before saving the new URL. Existing valid project tokens continue to work after the migration; they are not tied to the hostname. The legacy public address forwards API traffic for compatibility.
 
 ## Install the skill
 

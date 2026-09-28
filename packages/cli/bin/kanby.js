@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-const DEFAULT_URL = 'https://kanby.0xaa.workers.dev';
+const DEFAULT_URL = 'https://kanby.dev';
 const TASK_TAGS = ['产品', '设计', '代码', '增长'];
 const VERSION = JSON.parse(
   await readFile(new URL('../package.json', import.meta.url), 'utf8'),
@@ -194,7 +194,7 @@ Usage:
   kanby task archive <ref>
   kanby task release <ref>
 
-Environment: KANBY_TOKEN, KANBY_URL`;
+Environment: KANBY_TOKEN, KANBY_URL (default: https://kanby.dev)`;
 }
 
 async function mutate(id, action, extra = {}, operation = action) {
