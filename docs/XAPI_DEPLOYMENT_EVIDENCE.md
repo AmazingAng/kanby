@@ -1,5 +1,7 @@
 # xAPI deployment evidence
 
+This is the historical September 22 attempt. The completed September 28 cutover and current service status are recorded in [the synchronization report](XAPI_SYNC_20260928.md).
+
 Date: 2026-09-22. Base: `b0b57b869db5ee78f1b00629d107bc20714ae54d`. Implementation branch: `codex/xapi-worker-deploy`.
 
 Spec approval: not obtained (autonomous run). The user authorized deployment, existing configuration reuse, domain binding, database migration and retention-v3; the implementation spec did not receive separate human review. Evidence supports the listed checks, not an unconditional correctness claim.

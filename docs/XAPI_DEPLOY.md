@@ -1,6 +1,6 @@
 # xAPI Workers deployment
 
-The target canonical service is `https://kanby.dev`. See [current acceptance and blockers](XAPI_DEPLOYMENT_EVIDENCE.md) before promoting or changing live routing. The checked-in `xapi.worker.json` targets Worker `3ef2459b-f47d-4a59-a46f-8dc132346df4` on `api.xapi.to`. Preview and production have separate D1 and R2 resources. Keep production data out of preview.
+The target canonical service is `https://kanby.dev`. See [current cutover evidence](XAPI_SYNC_20260928.md) before promoting or changing live routing. The checked-in `xapi.worker.json` targets Worker `3ef2459b-f47d-4a59-a46f-8dc132346df4` on `api.xapi.to`. Preview and production have separate D1 and R2 resources. Keep production data out of preview.
 
 Use Node.js 22.13+ and the pinned dependency tree (`npm ci`). The deployment uses xapi-to 0.1.23. Authenticate the CLI with a key scoped to `workers:read` and `workers:write`, stored in its configuration or environment, never in this repository.
 
