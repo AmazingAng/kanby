@@ -59,7 +59,7 @@ Use the returned `ref`, and confirm `due` is `2026-09-30`. Omit `--due` when the
 kanby task update <ref> --due "" --json
 ```
 
-## Verify, check, then complete
+## Verify, check, then hand off for acceptance
 
 Descriptions and checklist items are separate data. When defining acceptance conditions:
 
@@ -76,10 +76,9 @@ kanby task progress <ref> "Verified deadline persistence and rejection of invali
 kanby task checklist check <ref> <first-verified-item-id> --json
 kanby task checklist check <ref> <second-verified-item-id> --json
 kanby task checklist <ref> --json
-kanby task complete <ref> --message "Deadline creation verified; all acceptance criteria passed" --json
 ```
 
-Replace item placeholders with IDs from the current list. `check <ref> 1` also selects the first current item; prefer IDs when concurrent edits are possible. Re-list and resolve again after a conflict. If any item remains unverified, report the blocker and leave the task open. `complete` does not automatically tick a checklist, and a successful API response is not evidence that the acceptance criteria passed.
+Replace item placeholders with IDs from the current list. `check <ref> 1` also selects the first current item; prefer IDs when concurrent edits are possible. Re-list and resolve again after a conflict. If any item remains unverified, report the blocker and leave the task open. Even when all items pass, leave the card in `building` for user acceptance. Run `kanby task complete <ref> --message "<result and validation summary>" --json` only after the user explicitly authorizes marking that card complete. `complete` does not automatically tick a checklist, and a successful API response is not evidence that the acceptance criteria passed.
 
 ## Historical reports and unified activity
 
