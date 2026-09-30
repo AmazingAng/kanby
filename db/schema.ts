@@ -857,3 +857,57 @@ export const memberMetricEvents = sqliteTable(
     ),
   ],
 );
+
+export const interactionCollection = sqliteTable('interaction_collection', {
+  id: integer('id').primaryKey(),
+  startedAt: integer('started_at').notNull(),
+});
+export const interactionSessions = sqliteTable(
+  'interaction_sessions',
+  {
+    id: text('id').primaryKey().notNull(),
+    projectId: text('project_id').notNull(),
+    userId: text('user_id').notNull(),
+    userName: text('user_name').notNull(),
+    tokenId: text('token_id').notNull(),
+    agentName: text('agent_name').notNull(),
+    client: text('client').notNull(),
+    context: text('context'),
+    taskId: text('task_id'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    endedAt: integer('ended_at'),
+    revision: integer('revision').notNull(),
+    lastEventId: text('last_event_id').notNull(),
+    stateJson: text('state_json').notNull(),
+    fingerprint: text('fingerprint').notNull(),
+  },
+  (table) => [
+    index('idx_interaction_sessions_project').on(
+      table.projectId,
+      table.createdAt,
+      table.id,
+    ),
+  ],
+);
+export const interactionEvents = sqliteTable(
+  'interaction_events',
+  {
+    sessionId: text('session_id').notNull(),
+    id: text('id').notNull(),
+    sequence: integer('sequence').notNull(),
+    createdAt: integer('created_at').notNull(),
+    kind: text('kind').notNull(),
+    actorId: text('actor_id').notNull(),
+    provenance: text('provenance').notNull(),
+    inputJson: text('input_json').notNull(),
+    fingerprint: text('fingerprint').notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_interaction_event_id').on(table.sessionId, table.id),
+    uniqueIndex('idx_interaction_event_sequence').on(
+      table.sessionId,
+      table.sequence,
+    ),
+  ],
+);

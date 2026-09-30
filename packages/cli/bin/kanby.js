@@ -4,6 +4,7 @@ import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { sessionCommand } from './session.js';
 
 const DEFAULT_URL = 'https://kanby.dev';
 const TASK_TAGS = ['产品', '设计', '代码', '增长'];
@@ -177,6 +178,15 @@ Usage:
   kanby project list [--json]
   kanby report --from YYYY-MM-DD --to YYYY-MM-DD [--timezone Asia/Shanghai] [--json]
   kanby activity [--task <ref>] [--cursor <cursor>] [--limit 1..50] [--json]
+  kanby session start --client <name> [--id <uuid>] [--task <ref>] [--context <label>] [--json]
+  kanby session get|events <session-id> [--json]
+  kanby session list [--task <ref>] [--member <id>] [--cursor <cursor>] [--json]
+  kanby session prompt|note|heartbeat|pause|resume <session-id> [--event-id <uuid>] [--json]
+  kanby session wait <session-id> --reason input|review|approval|acceptance [--json]
+  kanby session reply <session-id> --request <wait-id> --decision continue|accept|changes|defer [--json]
+  kanby session end <session-id> --outcome completed|handed-off|cancelled|failed [--json]
+  kanby session report --from YYYY-MM-DD --to YYYY-MM-DD [--timezone Asia/Shanghai] [--json]
+  kanby session run --client <name> [--task <ref>] -- <command> [args...]
   kanby task list [--status ideas|building|shipped] [--json]
   kanby task get <ref> [--json]
   kanby task checklist <ref> [--json]
@@ -211,6 +221,12 @@ async function mutate(id, action, extra = {}, operation = action) {
 
 async function main() {
   const [group, command, first, ...rest] = positional();
+  const separator = args.indexOf('--');
+  const ownArgs = separator < 0 ? args : args.slice(0, separator);
+  if (group === 'session' && !ownArgs.includes('--help')) {
+    await sessionCommand(args.slice(1), api);
+    return;
+  }
   if (has('version')) {
     console.log(VERSION);
     return;

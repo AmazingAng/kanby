@@ -15,6 +15,7 @@ Kanby is a minimal, agent-native kanban board for one-to-three-person software t
 - Issue import, task/PR linking, status automation, CI failure signals, webhook deduplication, retry, and recovery sync
 - Task activity timeline for people, coding agents, and GitHub events
 - Agent Tokens plus a JSON API for claim, progress, checklist, link, and completion workflows
+- Project/task Agent sessions, correlated human handoffs, pending waits, and per-member interaction reports with explicit provenance
 - A zero-dependency CLI and Codex skill maintained in this repository
 
 ## Architecture

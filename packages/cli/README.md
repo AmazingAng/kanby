@@ -104,3 +104,53 @@ completion-time shared credit, membership duration and data-quality warnings.
 Historical coverage is explicit; incomplete periods return null rates. Task
 throughput is not an individual productivity ranking or proof of deployment.
 Activity pagination includes human and GitHub work as well as Agent updates.
+
+## Record project and task interactions
+
+With CLI 0.5.0+ and server migration 0016, record Agent sessions in the Token's
+project with an optional task. Each person must use their own Token. Session
+start/end never claim, complete or modify a task.
+
+```bash
+kanby session start --client codex --context "Project implementation" --json
+kanby session prompt <session-id> --json
+kanby session wait <session-id> --reason review --json
+kanby session reply <session-id> --request <wait-id> --decision changes --json
+kanby session end <session-id> --outcome handed-off --json
+kanby session list --json
+kanby session events <session-id> --json
+kanby session report --from 2026-09-24 --to 2026-09-30 --timezone Asia/Shanghai --json
+```
+
+Use the returned `wait.id` for the corresponding real response. `prompt` records
+an incoming user turn without copying its contents; an unrelated message does
+not answer an open wait. `note`, `heartbeat`, `pause` and `resume` cover other
+lifecycle events. Commands accept `KANBY_SESSION_ID` instead of the positional
+session ID. Events support `--event-id` and `--revision` for identical retries;
+start supports `--id`. Errors print retry identifiers and exit nonzero. List and
+event pages support `--cursor` / `--limit` (1–50); follow `nextCursor` until null.
+`list` also filters by `--task` or `--member` (member ID).
+
+Wait reasons: `input`, `review`, `approval`, `acceptance`. Reply decisions:
+`continue`, `accept`, `changes`, `defer`. End outcomes: `completed`, `handed-off`,
+`cancelled`, `failed`. Optional summaries use `--summary`, at most 500 characters;
+no transcript or output is uploaded automatically.
+
+`kanby session run --client my-agent -- my-agent <args>` supervises an executable,
+exports `KANBY_SESSION_ID`, forwards terminal I/O and sends periodic heartbeats.
+Successful work waits for acceptance unless the child already handed off or
+ended. Nonzero exits end failed/cancelled. The supervisor does not interpret I/O
+as human interaction; use the skill or a client integration for prompt/reply
+signals. Provider-specific hook adapters are not bundled.
+
+CLI events are **Agent-reported**, including replies. Only the browser's
+cookie-authenticated session API can record **verified-user** responses; even
+those do not prove review quality. Reports separate these samples and show
+pending waits and stale sessions. Five minutes without events means unknown
+liveness, not abandonment. Calendar latency includes nights and weekends.
+Only instrumented activity is observed; coverage is never claimed complete.
+There is no offline spool, and reports fail explicitly above 10,000 events.
+
+See the repository's [session integration guide](https://github.com/AmazingAng/kanby/blob/main/skills/kanby/references/sessions.md)
+for the full skill workflow and metric definitions. This feature requires a
+server deployment and migration; installing a new CLI alone does not add the API.
