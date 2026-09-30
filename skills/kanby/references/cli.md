@@ -76,6 +76,8 @@ kanby task progress <ref> "Verified deadline persistence and rejection of invali
 kanby task checklist check <ref> <first-verified-item-id> --json
 kanby task checklist check <ref> <second-verified-item-id> --json
 kanby task checklist <ref> --json
+# Only the user runs this after accepting the full deliverable:
+kanby task complete <ref> --message "Deadline creation verified; all acceptance criteria passed" --json
 ```
 
 Replace item placeholders with IDs from the current list. `check <ref> 1` also selects the first current item; prefer IDs when concurrent edits are possible. Re-list and resolve again after a conflict. If any item remains unverified, report the blocker and leave the task open. Even when all items pass, leave the card in `building` for the user to mark complete after acceptance. `complete` does not automatically tick a checklist, and a successful API response is not evidence that the acceptance criteria passed.
