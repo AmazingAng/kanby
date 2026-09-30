@@ -39,7 +39,7 @@ Deadlines are date-only values in `YYYY-MM-DD` format. Set one only when the use
 
 Task tags are exactly `产品`, `设计`, `代码`, or `增长`. Archive only on explicit user instruction. Archived tasks can be restored in Kanby; permanent deletion is not available through Agent Tokens.
 
-Checklist item numbers are one-based and match the current display order; item IDs and unambiguous ID prefixes are also accepted. Re-list after concurrent changes. Acceptance conditions belong in the structured checklist, not in the task description, and must only be checked when supporting evidence exists.
+Checklist item numbers are one-based and match the current display order; item IDs and unambiguous ID prefixes are also accepted. Re-list after concurrent changes. When the installed CLI supports checklist commands, put acceptance conditions in the structured checklist and check them only with supporting evidence. Older CLIs may lack those commands; use `task get` and `progress` to record evidence and remaining work without implying the checklist was checked.
 
 For automatic Pull Request association, put `Kanby-Task: <ref>` on its own line in the PR body or name the branch `kanby/<ref>-description`. Project owners can disable this rule in Kanby Settings; `task link` remains the explicit fallback.
 
@@ -59,7 +59,7 @@ Use the returned `ref`, and confirm `due` is `2026-09-30`. Omit `--due` when the
 kanby task update <ref> --due "" --json
 ```
 
-## Verify, check, then complete
+## Verify, check, then hand off for acceptance
 
 Descriptions and checklist items are separate data. When defining acceptance conditions:
 
@@ -68,7 +68,7 @@ kanby task checklist add <ref> "The new deadline survives a task reload" --json
 kanby task checklist add <ref> "Invalid dates do not create a card" --json
 ```
 
-At completion, read the current checklist and perform the checks it requires. After the corresponding evidence exists:
+When checklist commands are available, read the current checklist and perform the checks it requires. After the corresponding evidence exists:
 
 ```bash
 kanby task checklist <ref> --json
@@ -76,10 +76,11 @@ kanby task progress <ref> "Verified deadline persistence and rejection of invali
 kanby task checklist check <ref> <first-verified-item-id> --json
 kanby task checklist check <ref> <second-verified-item-id> --json
 kanby task checklist <ref> --json
+# Only the user runs this after accepting the full deliverable:
 kanby task complete <ref> --message "Deadline creation verified; all acceptance criteria passed" --json
 ```
 
-Replace item placeholders with IDs from the current list. `check <ref> 1` also selects the first current item; prefer IDs when concurrent edits are possible. Re-list and resolve again after a conflict. If any item remains unverified, report the blocker and leave the task open. `complete` does not automatically tick a checklist, and a successful API response is not evidence that the acceptance criteria passed.
+Replace item placeholders with IDs from the current list. `check <ref> 1` also selects the first current item; prefer IDs when concurrent edits are possible. Re-list and resolve again after a conflict. If any item remains unverified, report the blocker and leave the task open. Even when all items pass, leave the card in `building` for the user to mark complete after acceptance. `complete` does not automatically tick a checklist, and a successful API response is not evidence that the acceptance criteria passed.
 
 ## Historical reports and unified activity
 

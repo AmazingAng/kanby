@@ -50,7 +50,7 @@ kanby task update <ref> --due "" --json
 
 The final command explicitly clears the deadline. If an older server omits `due` from the creation result, update that same task with `task update --due` instead of creating another card.
 
-## Verify the checklist before completing
+## Verify the checklist and hand off for acceptance
 
 ```bash
 kanby task list --json
@@ -66,10 +66,13 @@ Run the required tests first. Only after they pass, use the corresponding checkl
 kanby task progress <ref> "Required tests passed" --json
 kanby task checklist check <ref> <item-id> --json
 kanby task checklist <ref> --json
+# Only the user runs this after accepting the full deliverable:
 kanby task complete <ref> --message "All acceptance criteria verified; tests pass" --json
 ```
 
-Repeat validation and `check` for each criterion, then re-read the list before completing. Item numbers (starting at 1) are supported, but stable IDs avoid selecting a different item after concurrent reordering. `complete` updates the task status; it does not check any checklist items or verify their evidence. Leave unverified work open.
+Repeat validation and `check` for each criterion, then re-read the list before handoff. Item numbers (starting at 1) are supported, but stable IDs avoid selecting a different item after concurrent reordering. Agents leave the card in `building` for human acceptance; the user manually marks it complete. `complete` updates the task status but does not check checklist items or verify their evidence. Leave unverified work open.
+
+Use the example completion message only when both the acceptance criteria and required tests have actually been verified.
 
 Archive only when requested, using `kanby task archive <ref>`.
 
