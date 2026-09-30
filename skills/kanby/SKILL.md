@@ -1,6 +1,6 @@
 ---
 name: kanby
-description: Manage Kanby tasks and review team delivery through the CLI. Use for cards, deadlines, acceptance checklists, progress updates, and weekly completion or per-member throughput reports.
+description: Manage Kanby tasks and record human–Agent interactions within a selected Kanby project through the CLI. Use for project or task sessions, handoffs, acceptance, progress, and team delivery reviews.
 ---
 
 # Kanby
@@ -8,6 +8,21 @@ description: Manage Kanby tasks and review team delivery through the CLI. Use fo
 Use the `kanby` CLI as the single interface to Kanby. Prefer `--json` when consuming output programmatically. Read [references/cli.md](references/cli.md) for commands, deadline examples, completion examples, and exit codes.
 
 The official service is `https://kanby.dev` (CLI 0.4.1+ default). Respect an explicit self-hosted URL. For installation, saved legacy URLs, or missing CLI commands, see the connection setup in [references/cli.md](references/cli.md).
+
+## Record project interactions
+
+When the user has selected a Kanby project and enabled interaction collection,
+read [references/sessions.md](references/sessions.md). Record each user turn,
+Agent work session and handoff, including project discussions without a task
+card. Retain the session ID across turns. Use an open wait plus its matching reply
+to measure response time; normal progress updates do not mean waiting for a human.
+Use metadata-only events by default. Agent-reported replies are not independently
+verified reviews. Missing telemetry is unknown activity, not inactivity.
+
+Check `kanby --help` for `session` commands. If the CLI or server lacks them,
+report the collection gap and the required upgrade; do not fabricate history or
+block the user's unrelated work. Collection cannot cover clients where the skill
+or a lifecycle integration is not active.
 
 ## Find or create a task
 
@@ -37,6 +52,9 @@ Archive only when the user asks to remove a task from the active board: `kanby t
 Use a stable `--idempotency-key` when retrying a mutation whose prior response is unknown. Never print, log, commit, or place `KANBY_TOKEN` in command arguments.
 
 ## Review a team's delivery
+
+For human–Agent collaboration reviews, use `kanby session report` and read
+[references/sessions.md](references/sessions.md) for provenance and coverage.
 
 For weekly progress or efficiency reviews, use `kanby report --from YYYY-MM-DD
 --to YYYY-MM-DD --timezone <IANA-zone> --json`. Resolve the requested calendar week

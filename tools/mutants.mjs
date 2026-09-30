@@ -4,6 +4,55 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 const mutations = [
   {
+    name: 'session member ownership',
+    file: 'lib/interaction-sessions-store.ts',
+    from: 'row.user_id !== actorId',
+    to: 'false',
+    test: 'tests/interaction-sessions.test.ts',
+  },
+  {
+    name: 'session request correlation',
+    file: 'lib/interaction-sessions.ts',
+    from: 'state.wait?.id !== event.requestId',
+    to: 'false',
+    test: 'tests/interaction-sessions.test.ts',
+  },
+  {
+    name: 'session event replay fingerprint',
+    file: 'lib/interaction-sessions-store.ts',
+    from: 'replay.fingerprint !== fingerprint',
+    to: 'false',
+    test: 'tests/interaction-sessions.test.ts',
+  },
+  {
+    name: 'session revision compare-and-swap',
+    file: 'lib/interaction-sessions-store.ts',
+    from: 'WHERE project_id=? AND id=? AND revision=?',
+    to: 'WHERE project_id=? AND id=? AND ?>=0',
+    test: 'tests/interaction-sessions.test.ts',
+  },
+  {
+    name: 'session provenance attribution',
+    file: 'lib/interaction-sessions-response.ts',
+    from: "      'agent_reported',",
+    to: "      'verified_user',",
+    test: 'tests/interaction-sessions.test.ts',
+  },
+  {
+    name: 'session stale liveness boundary',
+    file: 'lib/interaction-sessions.ts',
+    from: 'now - state.heartbeatAt > STALE_AFTER_MS',
+    to: 'false',
+    test: 'tests/interaction-sessions.test.ts',
+  },
+  {
+    name: 'session response percentile',
+    file: 'lib/interaction-sessions.ts',
+    from: 'Math.ceil(p * sorted.length) - 1',
+    to: '0',
+    test: 'tests/interaction-sessions.test.ts',
+  },
+  {
     name: 'metrics project isolation',
     file: 'app/api/v1/metrics/route.ts',
     from: 'metricsResponse(request, identity.projectId)',

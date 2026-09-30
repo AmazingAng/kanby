@@ -85,3 +85,8 @@ publication is implied by a source merge; report release status explicitly.
 
 - Initial contract: project-wide instrumentation with optional task association,
   honest provenance and collection coverage, and unchanged delivery metrics.
+
+- Implementation clarification: the process supervisor preserves handoffs already
+  reported by its child and refuses to launch a child for a replayed session ID.
+  A normal start retry still returns the same session. This prevents duplicate
+  process execution after an ambiguous retry without changing task semantics.
