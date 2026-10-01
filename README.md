@@ -4,7 +4,12 @@ Kanby is a minimal, agent-native kanban board for one-to-three-person software t
 
 > **Project status:** early beta. Kanby is running in production, but the self-hosting interface and database migrations may still evolve between releases.
 
-[Live service](https://kanby.dev) · [Demo](https://kanby.dev/demo) · [Kanby CLI](#kanby-cli-and-agent-skill)
+[Read-only recovery service](https://kanby.0xaa.workers.dev) · [Demo](https://kanby.0xaa.workers.dev/demo) · [Kanby CLI](#kanby-cli-and-agent-skill)
+
+The temporary native service uses an October 1 backup and rejects writes.
+The `kanby.dev` xAPI service is unavailable; newer data has not yet been recovered.
+See [recovery status](docs/CF_RETURN_20261002_EVIDENCE.md). For CLI reads, set
+`KANBY_URL=https://kanby.0xaa.workers.dev`; the default CLI URL is unchanged.
 
 ## Features
 
@@ -129,7 +134,7 @@ The GitHub App needs read-only access to Contents, Issues, Pull requests, Action
 
 Kanby targets Cloudflare Workers with a `DB` D1 binding and an `ATTACHMENTS` R2 binding. The generated Worker configuration is intentionally excluded from Git because account IDs and custom-domain settings belong to each deployment.
 
-The managed service uses [xAPI Workers](docs/XAPI_DEPLOY.md), with its desired state in `xapi.worker.json`. For an independent deployment in your own Cloudflare account, follow [docs/CLOUDFLARE_DEPLOY.md](docs/CLOUDFLARE_DEPLOY.md) to create resources, apply migrations, configure secrets, and deploy. Never commit a generated PEM private key or paste credentials into an issue, pull request, build log, or support discussion.
+The temporary recovery service uses native Cloudflare Workers. Follow [docs/CLOUDFLARE_DEPLOY.md](docs/CLOUDFLARE_DEPLOY.md) for native resources, migrations, secrets and deployment, including the recovery safeguards. The previous [xAPI deployment](docs/XAPI_DEPLOY.md) and `xapi.worker.json` are retained for historical reference. Never commit a generated PEM private key or paste credentials into an issue, pull request, build log, or support discussion.
 
 ## Kanby CLI and Agent skill
 

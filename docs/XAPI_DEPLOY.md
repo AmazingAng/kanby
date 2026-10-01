@@ -1,5 +1,10 @@
 # xAPI Workers deployment
 
+**Historical deployment path:** xAPI Workers is currently unavailable. The user
+authorized a temporary [native read-only recovery](CF_RETURN_20261002_EVIDENCE.md)
+at `https://kanby.0xaa.workers.dev`. Do not use the commands below to reactivate
+an independently writable xAPI service during recovery.
+
 The target canonical service is `https://kanby.dev`. See the [latest application release](XAPI_RELEASE_20261001.md) and [canonical cutover evidence](XAPI_SYNC_20260928.md) before promoting or changing live routing. The checked-in `xapi.worker.json` targets Worker `3ef2459b-f47d-4a59-a46f-8dc132346df4` on `api.xapi.to`. Preview and production have separate D1 and R2 resources. Keep production data out of preview.
 
 Use Node.js 22.13+ and the pinned dependency tree (`npm ci`). The deployment uses xapi-to 0.1.23. Authenticate the CLI with a key scoped to `workers:read` and `workers:write`, stored in its configuration or environment, never in this repository.

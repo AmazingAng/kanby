@@ -1,6 +1,15 @@
 # Cloudflare Workers deployment
 
-For the managed `kanby.dev` service, use [xAPI deployment](XAPI_DEPLOY.md). This guide is for independent deployments in your own Cloudflare account.
+Kanby currently has a temporary [read-only native recovery service](https://kanby.0xaa.workers.dev) restored from the October 1 backup. See [recovery evidence and resumption requirements](CF_RETURN_20261002_EVIDENCE.md) before changing its database, write protection or routing. The xAPI-hosted `kanby.dev` service is unavailable. This guide describes native Cloudflare deployment; [xAPI deployment](XAPI_DEPLOY.md) is retained for historical reference.
+
+The temporary recovery build sets `KANBY_RECOVERY_SNAPSHOT='2026-10-01 备份'`,
+`PUBLIC_APP_ORIGIN=https://kanby.0xaa.workers.dev` and
+`KANBY_PUBLIC_ORIGIN=https://kanby.0xaa.workers.dev`. It disables cron and permits
+only read access plus existing-member authentication. Its database also contains
+write guards. Do not deploy a normal build or remove those guards until the
+latest source data has been copied and verified. A new build without the recovery
+label is not a data migration. Fresh GitHub login requires the OAuth App callback
+to match the selected origin.
 
 Kanby builds to a Cloudflare Worker with Static Assets. Task data uses the `DB` D1 binding and attachments use the `ATTACHMENTS` R2 binding.
 
