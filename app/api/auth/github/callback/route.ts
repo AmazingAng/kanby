@@ -16,6 +16,7 @@ import {
   hasPendingProjectInvitation,
   registerUserAndAcceptInvitations,
 } from '@/lib/db';
+import { recoverySnapshot } from '@/lib/recovery';
 
 export const dynamic = 'force-dynamic';
 
@@ -205,7 +206,14 @@ export async function GET(request: Request) {
     avatarUrl: profile.avatar_url || null,
     githubAdminAccountIds: access.githubAdminAccountIds,
   };
-  await registerUserAndAcceptInvitations(user, access.verifiedEmails);
+  if (recoverySnapshot()) {
+    if (!(await hasActiveProjectMembership(user.id)))
+      return new Response('只读恢复预览仅允许备份中已有的项目成员登录。', {
+        status: 403,
+      });
+  } else {
+    await registerUserAndAcceptInvitations(user, access.verifiedEmails);
+  }
   const session = await createSessionToken(user, config.sessionSecret);
   const secure = config.origin.startsWith('https://');
   const headers = new Headers({

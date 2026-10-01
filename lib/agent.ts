@@ -6,6 +6,7 @@ import {
 } from '@/lib/db';
 import type { AuthUser } from '@/lib/auth';
 import { agentTokenLabel } from '@/lib/agent-token-policy';
+import { recoverySnapshot } from '@/lib/recovery';
 
 const encoder = new TextEncoder();
 const DEFAULT_SCOPES = ['task:read', 'task:write'] as const;
@@ -279,10 +280,11 @@ export async function authenticateAgent(
     return null;
   const scopes = new Set(row.scopes.split(',').filter(Boolean));
   if (!scopes.has(requiredScope)) return null;
-  await database()
-    .prepare('UPDATE agent_tokens SET last_used_at = ? WHERE id = ?')
-    .bind(Date.now(), row.id)
-    .run();
+  if (!recoverySnapshot())
+    await database()
+      .prepare('UPDATE agent_tokens SET last_used_at = ? WHERE id = ?')
+      .bind(Date.now(), row.id)
+      .run();
   return {
     tokenId: row.id,
     projectId: row.project_id,

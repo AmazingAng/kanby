@@ -4,6 +4,41 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 const mutations = [
   {
+    name: 'recovery HTTP write rejection',
+    file: 'tools/recovery-preview.mjs',
+    from: 'if (!snapshot) return null;',
+    to: 'if (snapshot) return null;',
+    test: 'tests/recovery-preview.test.ts',
+  },
+  {
+    name: 'recovery Agent authentication is read-only',
+    file: 'lib/agent.ts',
+    from: 'if (!recoverySnapshot())',
+    to: 'if (true)',
+    test: 'tests/recovery-preview.test.ts',
+  },
+  {
+    name: 'recovery OAuth avoids registration writes',
+    file: 'app/api/auth/github/callback/route.ts',
+    from: 'if (recoverySnapshot()) {',
+    to: 'if (false) {',
+    test: 'tests/recovery-preview.test.ts',
+  },
+  {
+    name: 'recovery OAuth existing membership enforcement',
+    file: 'app/api/auth/github/callback/route.ts',
+    from: 'if (!(await hasActiveProjectMembership(user.id)))',
+    to: 'if (false)',
+    test: 'tests/recovery-preview.test.ts',
+  },
+  {
+    name: 'recovery ignores scheduled invocations',
+    file: 'tools/add-worker-schedule.mjs',
+    from: "${recovery ? 'return;' : ''}",
+    to: '',
+    test: 'tests/recovery-preview.test.ts',
+  },
+  {
     name: 'session member ownership',
     file: 'lib/interaction-sessions-store.ts',
     from: 'row.user_id !== actorId',

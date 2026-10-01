@@ -59,3 +59,27 @@ Migration-specific evidence comes from restoration rehearsal, negative controls,
 full-data comparison and live boundary checks. Independent fresh-context
 verification has not been performed. Old code rollback does not reconcile new
 production writes back into a previous database.
+
+## Authorized temporary recovery preview
+
+The user subsequently chose: use the October 1 backup for a read-only recovery
+preview at `https://kanby.0xaa.workers.dev`, then enable writes only after the
+latest source data is available. This explicitly replaces the immediate
+canonical-domain cutover with an interim, clearly labelled snapshot service.
+
+Use a new native D1/R2 pair and retain both original databases. Restore exactly
+the selected backup, apply the additive session schema without inventing missing
+events, and install database write guards. Add a build-time recovery label,
+visible banner, HTTP write/side-effect rejection and disabled cron. Existing
+member OAuth must not register users or accept invitations; Agent authentication
+must not update last-used timestamps. Unknown/new members cannot join through
+this preview. Test these behaviors with SQLite integration, property tests and
+explicit negative controls before publication. Verify authenticated reads and
+blocked writes against the deployed service, then compare all restored business
+data again. Latest-data migration and canonical routing remain deferred.
+
+Expected implementation paths: `lib/recovery.ts`, `tools/recovery-preview.mjs`,
+`tools/add-worker-schedule.mjs`, `vite.config.ts`, `app/layout.tsx`,
+`lib/agent.ts`, the GitHub OAuth callback, and `tests/recovery-preview.test.ts`.
+No new package dependency is required. Full gauntlet and targeted recovery
+coverage/mutation checks apply to these changes.

@@ -7,6 +7,12 @@ const vinextEntry = join(serverDir, 'vinext.js');
 const configPath = join(serverDir, 'wrangler.json');
 const xapi = process.env.KANBY_XAPI === '1';
 const migration = xapi && process.env.KANBY_MIGRATION === '1';
+const recovery = process.env.KANBY_RECOVERY_SNAPSHOT?.trim() ?? '';
+if (recovery)
+  await writeFile(
+    join(serverDir, 'recovery-preview.js'),
+    await readFile('tools/recovery-preview.mjs'),
+  );
 if (xapi)
   await writeFile(
     join(serverDir, 'xapi-scheduled-recovery.js'),
@@ -22,6 +28,7 @@ await rename(entry, vinextEntry);
 await writeFile(
   entry,
   `import application from './vinext.js';
+${recovery ? "import { recoveryPreviewResponse } from './recovery-preview.js';" : ''}
 ${xapi ? "import { scheduledRecovery } from './xapi-scheduled-recovery.js';" : ''}
 ${migration ? "import { migrationFetch } from './xapi-migration.js';" : ''}
 
@@ -34,11 +41,13 @@ async function signature(secret, body) {
 
 export default {
   fetch(request, env, context) {
+    ${recovery ? `const denied = recoveryPreviewResponse(request, ${JSON.stringify(recovery)}); if (denied) return denied;` : ''}
     ${migration ? "if (new URL(request.url).pathname === '/__kanby_migration') return migrationFetch(request, env); if (new URL(request.url).pathname !== '/demo' && !new URL(request.url).pathname.startsWith('/_next/')) return new Response('Migration in progress', { status: 503 });" : ''}
     ${xapi ? "if (new URL(request.url).pathname === '/__kanby_recovery') return scheduledRecovery(request, env, context, application);" : ''}
     return application.fetch(request, env, context);
   },
   scheduled(_controller, env, context) {
+    ${recovery ? 'return;' : ''}
     const body = 'kanby-recovery-v1';
     context.waitUntil((async () => {
       if (!env.GITHUB_WEBHOOK_SECRET) return;
@@ -60,5 +69,8 @@ export default {
 );
 
 const config = JSON.parse(await readFile(configPath, 'utf8'));
-config.triggers = { ...config.triggers, crons: ['*/10 * * * *'] };
+config.triggers = {
+  ...config.triggers,
+  crons: recovery ? [] : ['*/10 * * * *'],
+};
 await writeFile(configPath, `${JSON.stringify(config)}\n`);

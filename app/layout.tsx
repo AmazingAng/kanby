@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
+import { recoverySnapshot } from '@/lib/recovery';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -46,6 +47,11 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
+        {recoverySnapshot() && (
+          <output className="block border-b border-amber-300 bg-amber-100 px-4 py-3 text-center text-sm text-amber-950">
+            只读恢复预览 · {recoverySnapshot()} · 非最新数据，暂不支持修改和同步
+          </output>
+        )}
         {children}
       </body>
     </html>

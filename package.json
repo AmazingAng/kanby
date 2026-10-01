@@ -42,7 +42,8 @@
     "cli:pack:check": "npm pack --workspace @kanby/cli --dry-run",
     "test:metrics": "vitest run tests/team-metrics.test.ts tests/team-metrics-store.test.ts --coverage --coverage.include=lib/team-metrics*.ts --coverage.include=app/api/metrics/route.ts --coverage.include=app/api/v1/metrics/route.ts --coverage.include=app/api/v1/activity/route.ts --coverage.thresholds.lines=100 --coverage.thresholds.statements=95 --coverage.thresholds.branches=90 --coverage.thresholds.functions=100",
     "test:xapi": "vitest run tests/xapi-deployment.test.ts --coverage --coverage.include=tools/xapi-migration.mjs --coverage.include=tools/xapi-scheduled-recovery.mjs --coverage.thresholds.lines=100 --coverage.thresholds.statements=100 --coverage.thresholds.functions=100 --coverage.thresholds.branches=95",
-    "test:sessions": "vitest run tests/interaction-sessions.test.ts --coverage --coverage.include=lib/interaction-sessions*.ts --coverage.include=app/api/v1/sessions/route.ts --coverage.include=app/api/sessions/route.ts --coverage.thresholds.lines=100 --coverage.thresholds.statements=95 --coverage.thresholds.functions=100 --coverage.thresholds.branches=90"
+    "test:sessions": "vitest run tests/interaction-sessions.test.ts --coverage --coverage.include=lib/interaction-sessions*.ts --coverage.include=app/api/v1/sessions/route.ts --coverage.include=app/api/sessions/route.ts --coverage.thresholds.lines=100 --coverage.thresholds.statements=95 --coverage.thresholds.functions=100 --coverage.thresholds.branches=90",
+    "test:recovery": "vitest run tests/recovery-preview.test.ts --coverage --coverage.include=lib/recovery.ts --coverage.include=tools/recovery-preview.mjs --coverage.thresholds.lines=100 --coverage.thresholds.statements=100 --coverage.thresholds.functions=100 --coverage.thresholds.branches=100"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",

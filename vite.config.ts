@@ -74,6 +74,9 @@ export default defineConfig(async () => {
 
   return {
     define: {
+      'process.env.KANBY_RECOVERY_SNAPSHOT': JSON.stringify(
+        process.env.KANBY_RECOVERY_SNAPSHOT?.trim() ?? '',
+      ),
       'process.env.KANBY_PUBLIC_ORIGIN': JSON.stringify(
         process.env.KANBY_PUBLIC_ORIGIN ?? '',
       ),
