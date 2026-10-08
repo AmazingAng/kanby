@@ -36,3 +36,15 @@ being deployed. Coverage/mutation/property checks apply to existing recovery
 regressions; operational safety is checked by export/replay and live requests.
 Interactive GitHub consent and unavailable historical xAPI data are outside what
 synthetic authentication and snapshot comparison can prove.
+
+## Addendum: release audit discovered during execution
+
+The unchanged dependency tree failed today's high-severity production audit
+(13 findings: 1 moderate, 11 high, 1 critical). Address available compatible
+transitive fixes in `package-lock.json`; classify `vinext` and `shadcn` as build
+and generation tools in `package.json` devDependencies. Their pinned versions
+stay unchanged. No new direct dependency or audit-threshold exception is added.
+Verify actual Worker module inputs do not include vulnerable build-only glob
+walkers. The unpatched braces advisory remains a disclosed development/build
+risk; only trusted repository paths are used for this build. Repeat the full
+gauntlet and rebuild the deployment with the final locked dependency tree.
