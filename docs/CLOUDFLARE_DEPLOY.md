@@ -1,15 +1,30 @@
 # Cloudflare Workers deployment
 
-Kanby currently has a temporary [read-only native recovery service](https://kanby.0xaa.workers.dev) restored from the October 1 backup. See [recovery evidence and resumption requirements](CF_RETURN_20261002_EVIDENCE.md) before changing its database, write protection or routing. The xAPI-hosted `kanby.dev` service is unavailable. This guide describes native Cloudflare deployment; [xAPI deployment](XAPI_DEPLOY.md) is retained for historical reference.
+Kanby runs at <https://kanby.0xaa.workers.dev> with writes enabled by the user's
+October 8 decision. Its historical baseline is the October 1 backup, with newer
+xAPI data still unrecovered. See [writable deployment evidence](CF_WRITE_20261008_EVIDENCE.md).
+The [October 2 read-only deployment](CF_RETURN_20261002_EVIDENCE.md) is retained
+as historical evidence; its guarded D1 is now an archive. The xAPI-hosted
+`kanby.dev` remains unavailable and its routing was not changed.
 
-The temporary recovery build sets `KANBY_RECOVERY_SNAPSHOT='2026-10-01 备份'`,
-`PUBLIC_APP_ORIGIN=https://kanby.0xaa.workers.dev` and
-`KANBY_PUBLIC_ORIGIN=https://kanby.0xaa.workers.dev`. It disables cron and permits
-only read access plus existing-member authentication. Its database also contains
-write guards. Do not deploy a normal build or remove those guards until the
-latest source data has been copied and verified. A new build without the recovery
-label is not a data migration. Fresh GitHub login requires the OAuth App callback
-to match the selected origin.
+The current native Worker uses `kanby-db-writable-20261008`
+(`d5436e67-4784-416a-9e78-b2029a78a79d`) and the existing
+`kanby-attachments-native-20261002` bucket. Build with an empty or absent
+`KANBY_RECOVERY_SNAPSHOT`, and set both `PUBLIC_APP_ORIGIN` and
+`KANBY_PUBLIC_ORIGIN` to `https://kanby.0xaa.workers.dev`. Preserve runtime
+secrets, `workers_dev: true`, and an empty routes list for this temporary origin.
+Fresh GitHub login requires the OAuth App callback to match that origin.
+
+Periodic GitHub recovery is intentionally paused. A normal build generates a
+10-minute cron by default, so set `triggers.crons` to `[]` in the generated
+`dist/server/wrangler.json` before deploying this instance. Do not use the
+repository's old `.env` database/domain values for it. Build with the complete
+locked toolchain (`npm ci`, including devDependencies); `vinext` and `shadcn`
+are build/generation tools, not packages installed on the deployed Worker.
+
+Future source recovery must reconcile missing xAPI data with new native writes.
+Never replace the writable database with the October 1/2 archive. A code rollback
+must retain the writable D1 binding or use a freshly verified backup of it.
 
 Kanby builds to a Cloudflare Worker with Static Assets. Task data uses the `DB` D1 binding and attachments use the `ATTACHMENTS` R2 binding.
 

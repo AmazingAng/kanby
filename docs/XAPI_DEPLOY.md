@@ -1,7 +1,7 @@
 # xAPI Workers deployment
 
 **Historical deployment path:** xAPI Workers is currently unavailable. The user
-authorized a temporary [native read-only recovery](CF_RETURN_20261002_EVIDENCE.md)
+authorized a [native writable recovery](CF_WRITE_20261008_EVIDENCE.md)
 at `https://kanby.0xaa.workers.dev`. Do not use the commands below to reactivate
 an independently writable xAPI service during recovery.
 

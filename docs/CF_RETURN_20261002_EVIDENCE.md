@@ -1,5 +1,10 @@
 # Native Cloudflare read-only recovery — 2026-10-02
 
+**Superseded on October 8:** the user requested writes on this recovered baseline.
+See [the writable activation](CF_WRITE_20261008_EVIDENCE.md). The guarded database
+below is preserved as an archive; the “wait for latest data before writes” rule
+below describes the October 2 decision, not the current authorization.
+
 The user authorized restoring the October 1 backup as a **read-only recovery
 preview** at <https://kanby.0xaa.workers.dev>, while current-source access is
 unavailable. That interim service is deployed and verified. Copying the latest
