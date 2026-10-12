@@ -22,7 +22,7 @@ CLI 0.4.1+ defaults to `https://kanby.dev`. Server selection uses `KANBY_URL`, t
 
 To store a validated token in the local CLI config instead, run `kanby auth login` with `KANBY_TOKEN` set. Kanby writes the config with user-only permissions.
 
-To move an existing official-service configuration to the new domain, run `KANBY_URL=https://kanby.dev kanby auth login` with `KANBY_TOKEN` set. This validates access before saving the new URL. Existing valid project tokens continue to work after the migration; they are not tied to the hostname. The legacy public address forwards API traffic for compatibility.
+To move an existing official-service configuration to the new domain, run `KANBY_URL=https://kanby.dev kanby auth login` with `KANBY_TOKEN` set. This validates access before saving the new URL. Existing valid project tokens continue to work after the migration; they are not tied to the hostname. The previous native address (`https://kanby.0xaa.workers.dev`) is disabled and returns 404. If your environment or saved config still selects it, update that setting; upgrading the CLI alone does not override an explicit URL.
 
 ## Install the skill
 
