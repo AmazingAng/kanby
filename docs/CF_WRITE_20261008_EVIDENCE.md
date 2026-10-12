@@ -1,8 +1,8 @@
 # Native Cloudflare writable recovery — 2026-10-08
 
 **Superseded on October 12:** Kanby returned to xAPI at `kanby.dev` after merging
-both databases. The native address is a compatibility bridge and its database
-is retained with write guards. See [cutover evidence](XAPI_RETURN_20261012_EVIDENCE.md).
+both databases. The native public address and preview URLs are now disabled; its
+database is retained with write guards. See [cutover evidence](XAPI_RETURN_20261012_EVIDENCE.md).
 
 The user requested “要也能写入”, superseding the October 2 read-only decision.
 <https://kanby.0xaa.workers.dev> now accepts writes on a new native D1 cloned

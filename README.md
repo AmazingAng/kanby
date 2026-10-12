@@ -8,11 +8,11 @@ Kanby is a minimal, agent-native kanban board for one-to-three-person software t
 
 Kanby runs on xAPI Workers at `https://kanby.dev`. The October 12 cutover merged
 recovered xAPI data with subsequent native Cloudflare writes; all 124 tasks and
-both activity histories were preserved. The previous native address redirects
-browser navigation and proxies API requests to the canonical service. See
+both activity histories were preserved. The previous native Worker's public
+address and preview URLs are disabled; its database and backups are retained. See
 [deployment and data verification](docs/XAPI_RETURN_20261012_EVIDENCE.md).
 The CLI default URL is `https://kanby.dev`; clients using the previous native
-origin can switch `KANBY_URL` back to this canonical URL.
+origin must switch `KANBY_URL` back to this canonical URL.
 
 ## Features
 

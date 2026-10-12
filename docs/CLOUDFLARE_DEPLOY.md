@@ -5,9 +5,11 @@ The canonical service is now <https://kanby.dev> on xAPI Workers. See
 [current xAPI deployment guide](XAPI_DEPLOY.md). This document describes
 independent native Cloudflare installations.
 
-The existing `kanby.0xaa.workers.dev` Worker is a compatibility bridge: browser
-navigation redirects to the canonical origin; API requests are proxied without
-following redirects with credentials. It has no scheduled jobs. Its former
+The existing `kanby` Worker has its `workers.dev` and preview URLs disabled as
+of October 12. `kanby.0xaa.workers.dev` returns 404 and has no scheduled jobs or
+custom domain bindings. Its compatibility bridge code remains stored, but the
+old address no longer redirects or proxies requests. Clients must use
+`https://kanby.dev`. Its former
 writable D1 `kanby-db-writable-20261008`
 (`d5436e67-4784-416a-9e78-b2029a78a79d`) and R2
 `kanby-attachments-native-20261002` are retained for recovery. All 99 database

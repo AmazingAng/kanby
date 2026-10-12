@@ -2,8 +2,8 @@
 
 Kanby is deployed at <https://kanby.dev> on xAPI Workers. The October 12 return
 merged the recovered xAPI database with new writes from native Cloudflare; see
-[cutover evidence](XAPI_RETURN_20261012_EVIDENCE.md). The previous native Worker
-redirects browser navigation and proxies API requests to this canonical service.
+[cutover evidence](XAPI_RETURN_20261012_EVIDENCE.md). The previous native Worker's
+public address and preview URLs are disabled; clients must use `https://kanby.dev`.
 Its retained database is guarded against writes. Do not reactivate a second
 writable copy without reconciling data.
 

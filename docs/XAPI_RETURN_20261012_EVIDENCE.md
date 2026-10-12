@@ -2,8 +2,9 @@
 
 Kanby is writable at <https://kanby.dev> on the restored xAPI platform. Data from
 both the recovered xAPI service and the native Cloudflare recovery service was
-merged and verified before returning production traffic. The native address
-now redirects browsers and proxies API requests to the canonical service.
+merged and verified before returning production traffic. The native public
+address and preview URLs were subsequently disabled at the user's request;
+clients must use `https://kanby.dev`.
 
 Specification: [XAPI_RETURN_20261012_SPEC.md](XAPI_RETURN_20261012_SPEC.md).
 Spec approval: not obtained (autonomous run); deployment, data preservation and
@@ -114,10 +115,12 @@ are not independent verification.
 
 ## Routing and a single recovery schedule
 
-Native Worker bridge version: `23a9f1f4-d1fc-4fdb-8d70-c1dd1ebf2b74`. It uses the
+At initial cutover, native Worker bridge version
+`23a9f1f4-d1fc-4fdb-8d70-c1dd1ebf2b74` used the
 existing tested `tools/legacy-worker-redirect.mjs`: browser paths/query strings
-redirect to `kanby.dev`; API requests preserve authorization and body bytes and
-do not follow upstream redirects. Native schedules are empty. The former native
+redirected to `kanby.dev`; API requests preserved authorization and body bytes and
+did not follow upstream redirects. The public entry was subsequently disabled
+as recorded below. Native schedules are empty. The former native
 D1 `d5436e67-4784-416a-9e78-b2029a78a79d` retains all 99 `_kanby_return_*` guards.
 
 CLI 0.2.0 now imports supported Wrangler crons as platform schedules invoking
@@ -129,6 +132,31 @@ Its immediate run `51f19b56-5aa8-49b4-a5ab-49b7092294c0` **SUCCEEDED / HTTP 200*
 The legacy HTTP run also passed before it was paused. Neither immediate test is
 proof of future periodic execution. The deployment guide now documents automatic
 cron import and checking for unwanted preview/duplicate schedules after pushes.
+
+## Native public entry shutdown — October 12 follow-up
+
+The user requested shutdown of the previous native address after cutover.
+Cloudflare initially reported `enabled: true` and `previews_enabled: true` for
+Worker `kanby` in account `4592ac4d37d07944e6abee1c15a6cc00`. Updated only that
+Worker's subdomain settings via `POST /accounts/{account}/workers/scripts/kanby/subdomain`
+to `enabled: false` and `previews_enabled: false`; a subsequent GET confirmed
+both flags. Native schedules were already empty and no custom domain bindings
+referenced this Worker.
+
+Live checks after disabling the entry confirmed:
+
+- `https://kanby.0xaa.workers.dev/` and `/api/v1/tasks`: **404**, no redirect.
+- `https://23a9f1f4-kanby.0xaa.workers.dev/`: **404**, no redirect.
+- `https://kanby.dev/` and `/demo`: **200**.
+- Unauthenticated `https://kanby.dev/api/v1/tasks`: **401**, as expected.
+
+The Worker script, guarded D1 databases, R2 bucket and local backups were not
+deleted. The xAPI deployment and its production schedule were not changed.
+Clients still configured with the old origin must set `KANBY_URL=https://kanby.dev`.
+Control-plane responses and HTTP results are retained as private
+`native-shutdown-*.json` evidence. Documentation format and secret checks cover
+this follow-up; the earlier application gauntlet was not rerun for a domain
+setting and documentation change.
 
 ## Repairs, limitations and rollback
 
