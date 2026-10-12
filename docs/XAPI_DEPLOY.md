@@ -1,26 +1,43 @@
 # xAPI Workers deployment
 
-**Historical deployment path:** xAPI Workers is currently unavailable. The user
-authorized a [native writable recovery](CF_WRITE_20261008_EVIDENCE.md)
-at `https://kanby.0xaa.workers.dev`. Do not use the commands below to reactivate
-an independently writable xAPI service during recovery.
+Kanby is deployed at <https://kanby.dev> on xAPI Workers. The October 12 return
+merged the recovered xAPI database with new writes from native Cloudflare; see
+[cutover evidence](XAPI_RETURN_20261012_EVIDENCE.md). The previous native Worker
+redirects browser navigation and proxies API requests to this canonical service.
+Its retained database is guarded against writes. Do not reactivate a second
+writable copy without reconciling data.
 
-The target canonical service is `https://kanby.dev`. See the [latest application release](XAPI_RELEASE_20261001.md) and [canonical cutover evidence](XAPI_SYNC_20260928.md) before promoting or changing live routing. The checked-in `xapi.worker.json` targets Worker `3ef2459b-f47d-4a59-a46f-8dc132346df4` on `api.xapi.to`. Preview and production have separate D1 and R2 resources. Keep production data out of preview.
+The checked-in `xapi.worker.json` targets Worker
+`3ef2459b-f47d-4a59-a46f-8dc132346df4` on `api.xapi.to`. Preview and production
+have separate D1/R2 resources. Keep customer data out of preview.
 
-Use Node.js 22.13+ and the pinned dependency tree (`npm ci`). The deployment uses xapi-to 0.1.23. Authenticate the CLI with a key scoped to `workers:read` and `workers:write`, stored in its configuration or environment, never in this repository.
+Use Node.js 22.13+, the pinned dependency tree (`npm ci`, including development
+build tools), and `xapi-to@0.2.0`. Authenticate with a key scoped to
+`workers:read` and `workers:write`, stored in CLI configuration or environment.
+Build in a clean checkout without the old native deployment's ignored `.env`
+files. The CLI reads the Wrangler path before its planned build, so generate
+`dist/server/wrangler.json` once before the initial plan:
 
 ```sh
 npm run gauntlet
-npx xapi-to@0.1.23 workers plan --env preview
-npx xapi-to@0.1.23 workers push --env preview --non-interactive \
-  --retention-price-version cf65a-production-retention-20260917-v1
-npx xapi-to@0.1.23 workers promote --to production --non-interactive \
-  --retention-price-version cf65a-production-retention-20260917-v1
+KANBY_XAPI=1 KANBY_PUBLIC_ORIGIN=https://kanby.dev npm run build
+npx xapi-to@0.2.0 workers plan --env preview
+npx xapi-to@0.2.0 workers push --env preview --non-interactive
+npx xapi-to@0.2.0 workers promote --to production \
+  --artifact <verified-preview-artifact-id> --non-interactive
 ```
 
-The manifest builds with `KANBY_XAPI=1` and compiles only `KANBY_PUBLIC_ORIGIN=https://kanby.dev`. Runtime `PUBLIC_APP_ORIGIN`, if supplied, takes precedence and must pass origin validation. GitHub credentials and session secrets are runtime bindings, written separately per environment through `workers secrets set ... --stdin`. Normalize escaped newlines in the GitHub PEM before sending it. Never print credentials or pass their values in command arguments.
+The manifest packages both Worker modules and static assets. It compiles
+`KANBY_PUBLIC_ORIGIN=https://kanby.dev`; a runtime `PUBLIC_APP_ORIGIN`, if present,
+takes precedence and must pass origin validation. Keep recovery/migration flags
+unset for normal builds. GitHub credentials and session secrets remain runtime
+bindings per environment. Normalize escaped newlines in the GitHub PEM before
+sending it through stdin; never print credentials or put them in command arguments.
 
-Wrangler `deploy --dry-run` is a local packaging step. Publish the complete resulting artifact through xAPI, preserving its modules and static assets. Do not deploy this managed Worker directly to Cloudflare. Original Cloudflare deployment instructions are retained in `CLOUDFLARE_DEPLOY.md` for independent installations.
+Wrangler `deploy --dry-run` is a local packaging step. The immutable xAPI artifact
+accepted in preview must be the artifact activated in production. Do not deploy
+this managed Worker directly through Cloudflare. Native self-hosting instructions
+remain in [CLOUDFLARE_DEPLOY.md](CLOUDFLARE_DEPLOY.md).
 
 ## Platform recovery
 
@@ -49,11 +66,31 @@ Before attachment, use `xapi get dns.list` and `xapi call dns.list` to inventory
 Attach the production domain using the combined xAPI command after data verification:
 
 ```sh
-npx xapi-to@0.1.23 workers domains attach \
+npx xapi-to@0.2.0 workers domains attach \
   3ef2459b-f47d-4a59-a46f-8dc132346df4 --env production \
   --xdomain-domain-id dom_mtirxgsdc3rf9k2p --subdomain @
 ```
 
 Verify DNS/TLS, root-relative assets, authenticated metrics/activity and attachment persistence. The OAuth App callback must be `https://kanby.dev/api/auth/github/callback`; the separate GitHub App webhook uses `https://kanby.dev/api/github/webhook`. An OAuth redirect alone does not verify successful sign-in.
 
-Native Wrangler cron triggers are not imported by xAPI. Configure a production schedule for `*/10 * * * *`, method POST, path `/__kanby_recovery`, with JSON `{signature}`. Compute `signature` as `sha256=` plus the hex HMAC-SHA256 of `kanby-recovery-v1` using the environment's `GITHUB_WEBHOOK_SECRET`. Deliver this body to the CLI in memory; do not put it in source control, process arguments or logs. The endpoint verifies the signature and forwards the signed fixed message to the existing recovery handler. Update the schedule signature after rotating the webhook secret. Test an immediate run and inspect run history; a successful manual run does not prove future cron firing.
+In `xapi-to@0.2.0`, supported Wrangler `triggers.crons` are imported as xAPI
+platform schedules that invoke the Worker's `scheduled()` handler. Do not also
+enable the legacy HTTP `/__kanby_recovery` schedule. The handler internally
+signs its call to the existing GitHub recovery route using the environment's
+`GITHUB_WEBHOOK_SECRET`; no signature needs to be copied into a schedule body.
+
+The current production schedule `29c4626a-1f34-8eb3-a6c2-231c81936ce0` runs
+`*/10 * * * *`. The old HTTP schedule
+`6976939e-5a83-482b-907d-f2151b68e22d` and the preview schedule
+`214e237a-2aa0-8b39-a2c3-6cc7658302f1` are paused. `push` can re-enable a preview
+schedule declared by the generated Wrangler config, so inspect schedules after
+each deployment and pause preview recovery for this project. Verify exactly one
+production recovery schedule is enabled and native Cloudflare has none:
+
+```sh
+npx xapi-to@0.2.0 workers schedules list <worker-id>
+npx xapi-to@0.2.0 workers schedules pause <worker-id> <preview-schedule-id>
+npx xapi-to@0.2.0 workers schedules run <worker-id> <production-schedule-id>
+```
+
+A successful immediate run verifies that invocation, not future cron firing.

@@ -4,13 +4,15 @@ Kanby is a minimal, agent-native kanban board for one-to-three-person software t
 
 > **Project status:** early beta. Kanby is running in production, but the self-hosting interface and database migrations may still evolve between releases.
 
-[Native service](https://kanby.0xaa.workers.dev) · [Demo](https://kanby.0xaa.workers.dev/demo) · [Kanby CLI](#kanby-cli-and-agent-skill)
+[Kanby](https://kanby.dev) · [Demo](https://kanby.dev/demo) · [Kanby CLI](#kanby-cli-and-agent-skill)
 
-The native service accepts writes using the October 1 backup as its historical
-baseline. Later xAPI data has not yet been recovered; new native writes must be
-preserved when that data becomes available. See [writable deployment evidence](docs/CF_WRITE_20261008_EVIDENCE.md).
-For CLI reads and writes, set `KANBY_URL=https://kanby.0xaa.workers.dev`;
-the default CLI URL still points to the unavailable `kanby.dev` xAPI service.
+Kanby runs on xAPI Workers at `https://kanby.dev`. The October 12 cutover merged
+recovered xAPI data with subsequent native Cloudflare writes; all 124 tasks and
+both activity histories were preserved. The previous native address redirects
+browser navigation and proxies API requests to the canonical service. See
+[deployment and data verification](docs/XAPI_RETURN_20261012_EVIDENCE.md).
+The CLI default URL is `https://kanby.dev`; clients using the previous native
+origin can switch `KANBY_URL` back to this canonical URL.
 
 ## Features
 
