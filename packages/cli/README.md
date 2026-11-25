@@ -74,6 +74,24 @@ Repeat validation and `check` for each criterion, then re-read the list before h
 
 Use the example completion message only when both the acceptance criteria and required tests have actually been verified.
 
+## Attach files to a task
+
+With CLI 0.6.0+ and a server that provides the Agent attachment API:
+
+```bash
+kanby task attach <ref> ./screenshots/after.png --json
+kanby task attachments <ref> --json
+kanby task download <attachment-id> --output ./after.png
+```
+
+Files are limited to 10 MB each and 10 per task. `attach` needs `task:write` and
+fails with exit code 3 while another Agent Token holds the task's claim; every
+upload appears in the task activity. `--name` overrides the stored file name and
+`--type` the content type (otherwise inferred from the extension). `download`
+saves to the attachment's name in the current directory unless `--output` is set
+and refuses to overwrite an existing file unless `--force` is passed. Agent
+Tokens cannot delete attachments; remove them in the Kanby web app.
+
 Archive only when requested, using `kanby task archive <ref>`.
 
 Task tags are `产品`, `设计`, `代码`, or `增长`. Archiving is recoverable from

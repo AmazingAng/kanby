@@ -1,13 +1,33 @@
 #!/usr/bin/env node
 
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, extname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { sessionCommand } from './session.js';
 
 const DEFAULT_URL = 'https://kanby.dev';
 const TASK_TAGS = ['产品', '设计', '代码', '增长'];
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const CONTENT_TYPES = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.avif': 'image/avif',
+  '.svg': 'image/svg+xml',
+  '.pdf': 'application/pdf',
+  '.txt': 'text/plain',
+  '.log': 'text/plain',
+  '.md': 'text/markdown',
+  '.csv': 'text/csv',
+  '.json': 'application/json',
+  '.html': 'text/html',
+  '.zip': 'application/zip',
+  '.gz': 'application/gzip',
+  '.tar': 'application/x-tar',
+};
 const VERSION = JSON.parse(
   await readFile(new URL('../package.json', import.meta.url), 'utf8'),
 ).version;
@@ -91,7 +111,15 @@ async function credentials() {
   };
 }
 
-async function api(path, init = {}, credentialOverride) {
+function apiError(status, payload) {
+  const message =
+    payload?.error?.message || payload?.error || `Kanby API returned ${status}`;
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+async function request(path, init = {}, credentialOverride) {
   const { url, token } = credentialOverride ?? (await credentials());
   if (!token) {
     const error = new Error(
@@ -102,23 +130,52 @@ async function api(path, init = {}, credentialOverride) {
   }
   const headers = new Headers(init.headers);
   headers.set('Authorization', `Bearer ${token}`);
-  if (init.body) headers.set('Content-Type', 'application/json');
-  const response = await fetch(`${url}${path}`, {
+  if (typeof init.body === 'string')
+    headers.set('Content-Type', 'application/json');
+  return fetch(`${url}${path}`, {
     ...init,
     headers,
     redirect: 'error',
   });
+}
+
+async function api(path, init = {}, credentialOverride) {
+  const response = await request(path, init, credentialOverride);
   const payload = await response.json().catch(() => null);
-  if (!response.ok || payload?.ok === false) {
-    const message =
-      payload?.error?.message ||
-      payload?.error ||
-      `Kanby API returned ${response.status}`;
-    const error = new Error(message);
-    error.status = response.status;
-    throw error;
-  }
+  if (!response.ok || payload?.ok === false)
+    throw apiError(response.status, payload);
   return payload?.data;
+}
+
+function size(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function attachmentLine(attachment) {
+  return `${attachment.id}\t${size(attachment.size).padStart(9)}\t${attachment.contentType}\t${attachment.name}`;
+}
+
+function dispositionFileName(header) {
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(header ?? '')?.[1];
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      // Fall through to the ASCII filename.
+    }
+  }
+  return /filename="([^"]*)"/i.exec(header ?? '')?.[1] ?? '';
+}
+
+function safeLocalName(name) {
+  const cleaned = basename(String(name).replace(/\\/g, '/'))
+    .replace(/\p{Cc}/gu, '_')
+    .trim();
+  return cleaned && cleaned !== '.' && cleaned !== '..'
+    ? cleaned
+    : 'attachment';
 }
 
 function out(data, formatter) {
@@ -200,6 +257,9 @@ Usage:
   kanby task heartbeat <ref> [--lease 15]
   kanby task progress <ref> <message>
   kanby task link <ref> <github-issue-or-pr-url>
+  kanby task attach <ref> <file> [--name <name>] [--type <mime>]  (10 MB/file, 10 per task)
+  kanby task attachments <ref> [--json]
+  kanby task download <attachment-id> [--output <path>] [--force]
   kanby task complete <ref> [--message <summary>]
   kanby task archive <ref>
   kanby task release <ref>
@@ -424,8 +484,75 @@ async function main() {
     out(data.acceptanceCriteria ?? [], checklistLines);
     return;
   }
+  if (command === 'download') {
+    if (!first) throw new Error('Attachment id is required');
+    const response = await request(
+      `/api/v1/attachments?id=${encodeURIComponent(first)}`,
+    );
+    if (!response.ok)
+      throw apiError(response.status, await response.json().catch(() => null));
+    const output = option('output', undefined);
+    if (output === true) throw new Error('--output requires a path');
+    const target =
+      output ??
+      safeLocalName(
+        dispositionFileName(response.headers.get('content-disposition')),
+      );
+    const bytes = Buffer.from(await response.arrayBuffer());
+    try {
+      await writeFile(target, bytes, { flag: has('force') ? 'w' : 'wx' });
+    } catch (error) {
+      if (error?.code === 'EEXIST')
+        throw new Error(`${target} already exists; pass --force to overwrite`);
+      throw error;
+    }
+    out(
+      { path: target, size: bytes.byteLength },
+      (item) => `Saved ${item.path} (${size(item.size)})`,
+    );
+    return;
+  }
   if (!first) throw new Error('Task ref is required');
 
+  if (command === 'attachments') {
+    const attachments = await api(
+      `/api/v1/attachments?task=${encodeURIComponent(first)}`,
+    );
+    out(attachments, (items) =>
+      items.length ? items.map(attachmentLine).join('\n') : 'No attachments',
+    );
+    return;
+  }
+  if (command === 'attach') {
+    const path = rest[0];
+    if (!path) throw new Error('File path is required');
+    const info = await stat(path).catch(() => null);
+    if (!info?.isFile()) throw new Error(`${path} is not a readable file`);
+    if (info.size === 0) throw new Error(`${path} is empty`);
+    if (info.size > MAX_ATTACHMENT_BYTES)
+      throw new Error(`${path} exceeds the 10 MB attachment limit`);
+    const name = option('name', basename(path));
+    const type = option(
+      'type',
+      CONTENT_TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream',
+    );
+    if (name === true || type === true)
+      throw new Error('--name and --type require a value');
+    const form = new FormData();
+    form.set('task', first);
+    form.set('file', new File([await readFile(path)], name, { type }));
+    const data = await api('/api/v1/attachments', {
+      method: 'POST',
+      headers: {
+        'Idempotency-Key': String(
+          option('idempotency-key', `attach-${randomUUID()}`),
+        ),
+      },
+      body: form,
+    });
+    out(data, (item) => `Attached ${attachmentLine(item)}`);
+    return;
+  }
   if (command === 'update') {
     const fields = {};
     for (const name of ['title', 'note', 'status', 'due', 'tag', 'ownerId']) {

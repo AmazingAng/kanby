@@ -29,6 +29,9 @@ If `kanby` is not installed and a Kanby checkout is available, run `node package
 | Renew claim       | `kanby task heartbeat <ref> [--lease 15] --json`                                                                                      |
 | Report checkpoint | `kanby task progress <ref> "<message>" --json`                                                                                        |
 | Link GitHub       | `kanby task link <ref> <issue-or-pr-url> --json`                                                                                      |
+| Attach file       | `kanby task attach <ref> <file> [--name "..."] [--type <mime>] --json`                                                                |
+| List attachments  | `kanby task attachments <ref> --json`                                                                                                 |
+| Download file     | `kanby task download <attachment-id> [--output <path>] [--force]`                                                                     |
 | Complete          | `kanby task complete <ref> [--message "..."] --json`                                                                                  |
 | Archive           | `kanby task archive <ref> --json`                                                                                                     |
 | Release           | `kanby task release <ref> --json`                                                                                                     |
@@ -81,6 +84,25 @@ kanby task complete <ref> --message "Deadline creation verified; all acceptance 
 ```
 
 Replace item placeholders with IDs from the current list. `check <ref> 1` also selects the first current item; prefer IDs when concurrent edits are possible. Re-list and resolve again after a conflict. If any item remains unverified, report the blocker and leave the task open. Even when all items pass, leave the card in `building` for the user to mark complete after acceptance. `complete` does not automatically tick a checklist, and a successful API response is not evidence that the acceptance criteria passed.
+
+## Task attachments
+
+CLI 0.6.0+ with a server that provides `/api/v1/attachments` can attach evidence
+files (screenshots, logs, reports) to a task. Each file is at most 10 MB and a task
+holds at most 10 attachments; empty files are rejected. Uploads need `task:write`,
+are refused with exit code `3` while another Agent Token holds the claim, and are
+recorded in the task activity. Archived tasks cannot receive uploads. Listing and
+downloading need only `task:read`. `download` writes to the attachment name in the
+current directory unless `--output` is given and never overwrites an existing file
+without `--force`. Attachments cannot be deleted with an Agent Token. Attach only
+files the user would expect teammates to see; never attach credentials or
+`KANBY_TOKEN`.
+
+```bash
+kanby task attach <ref> ./screenshots/after.png --json
+kanby task attachments <ref> --json
+kanby task download <attachment-id> --output ./after.png
+```
 
 ## Historical reports and unified activity
 

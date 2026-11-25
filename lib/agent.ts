@@ -506,6 +506,7 @@ export async function recordAgentUpdate(
     progress: `${identity.agentName} 汇报了进度`,
     released: `${identity.agentName} 释放了任务`,
     linked: `${identity.agentName} 关联了 GitHub 工作项`,
+    attached: `${identity.agentName} 上传了附件`,
     completed: `${identity.agentName} 完成了任务`,
   };
   const { prepareTaskActivityStatement } = await import('@/lib/task-activity');

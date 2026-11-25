@@ -1651,6 +1651,22 @@ export async function countTaskAttachments(
   return Number(row?.count ?? 0);
 }
 
+export const MAX_ATTACHMENTS_PER_TASK = 10;
+
+export async function listTaskAttachments(
+  taskId: string,
+  projectId: string,
+): Promise<StoredTaskAttachment[]> {
+  await ensureSchema();
+  const result = await database()
+    .prepare(
+      'SELECT id, project_id, task_id, object_key, file_name, content_type, size, created_at FROM task_attachments WHERE task_id = ? AND project_id = ? ORDER BY created_at ASC, id ASC',
+    )
+    .bind(taskId, projectId)
+    .all<TaskAttachmentRow>();
+  return result.results.map(mapAttachment);
+}
+
 export async function createTaskAttachment(input: {
   projectId: string;
   taskId: string;
@@ -1668,7 +1684,7 @@ export async function createTaskAttachment(input: {
     .prepare(
       `INSERT INTO task_attachments (id, project_id, task_id, object_key, file_name, content_type, size, created_by, created_at)
      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
-     WHERE (SELECT COUNT(*) FROM task_attachments WHERE task_id = ? AND project_id = ?) < 10`,
+     WHERE (SELECT COUNT(*) FROM task_attachments WHERE task_id = ? AND project_id = ?) < ?`,
     )
     .bind(
       id,
@@ -1682,6 +1698,7 @@ export async function createTaskAttachment(input: {
       createdAt,
       input.taskId,
       input.projectId,
+      MAX_ATTACHMENTS_PER_TASK,
     )
     .run();
   if (Number(result.meta.changes ?? 0) === 0) return null;
