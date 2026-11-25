@@ -24,6 +24,22 @@ tokens.
 - `POST /api/v1/tasks` — create a task with `title`, optional `status`, `note`, and `due`. `due` is an optional `YYYY-MM-DD` calendar date stored with the initial task insert; omit it or pass an empty string for no deadline. Invalid dates, datetime strings, and non-string values return HTTP 400 `invalid_due` before a task is created.
 - `PATCH /api/v1/tasks` — mutate a task with `action`: `update`, `split`, `claim`, `heartbeat`, `progress`, `release`, `link`, or `complete`. An `update` may send ordered `ownerIds` with 1–3 current project-member IDs; legacy `ownerId` remains supported. `split` accepts `titles` with 1–20 child titles and is idempotent when the request supplies an `Idempotency-Key`.
 
+- `POST /api/v1/attachments` — upload a task attachment (`task:write`). Send
+  `multipart/form-data` with `task` (task ref or ID in the token's project) and
+  `file`, plus `Content-Length`. Files must be non-empty, at most 10 MB, with a
+  name of at most 240 characters; a task holds at most 10 attachments
+  (`409 attachment_limit`). Archived or unknown tasks return `404`; a task
+  actively claimed by another Agent Token returns `409 claimed_by_another_agent`.
+  An optional `Idempotency-Key` replays the original `201` response for an
+  identical retry (same task, name, type and content digest). Success records an
+  `agent.attached` activity event and returns `{ id, name, contentType, size,
+createdAt, url }`.
+- `GET /api/v1/attachments?task=<ref>` — list a task's attachments (`task:read`).
+- `GET /api/v1/attachments?id=<attachment-id>` — download an attachment from the
+  token's project (`task:read`). Other projects' attachments return `404`.
+  Agent Tokens cannot delete attachments; the browser routes under
+  `/api/attachments` remain session-only and same-origin.
+
 Task JSON includes ordered `owners` for every assignee and retains `owner` as the first assignee for compatibility. Human-readable CLI task output lists every assignee login.
 
 Task reads include an ordered `acceptanceCriteria` array. Each item contains
