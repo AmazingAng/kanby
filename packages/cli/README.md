@@ -50,6 +50,24 @@ kanby task update <ref> --due "" --json
 
 The final command explicitly clears the deadline. If an older server omits `due` from the creation result, update that same task with `task update --due` instead of creating another card.
 
+## Start from your turn, finish with a handoff
+
+CLI 0.7.0+ with a server that provides `/api/v1/next`:
+
+```bash
+kanby next                         # cards waiting on you or your member, @mentions, new replies
+kanby task get <ref>               # turn, thread and what is new since your last read
+kanby task comment <ref> "@alice 迁移要不要拆两步？"
+kanby task mention <ref> @bob/agent "请复核第 3 点"
+kanby task handoff <ref> --to owner --reason awaiting_acceptance --note "看登录和退出两条路径"
+```
+
+`handoff` reasons are `developing`, `awaiting_acceptance`, `awaiting_decision`,
+`blocked` and `awaiting_review`; `--to` accepts `@login`, `@login/agent`,
+`@login/<agent name>`, `owner`, `self` or `none`. A handoff releases your claim
+unless `--keep-claim` is passed. Comments, mentions, handoffs, progress and
+attachments do not need the claim; it only guards code work and card edits.
+
 ## Verify the checklist and hand off for acceptance
 
 ```bash
@@ -84,8 +102,8 @@ kanby task attachments <ref> --json
 kanby task download <attachment-id> --output ./after.png
 ```
 
-Files are limited to 10 MB each and 10 per task. `attach` needs `task:write` and
-fails with exit code 3 while another Agent Token holds the task's claim; every
+Files are limited to 10 MB each and 10 per task. `attach` needs `task:write`
+and works for reviewers even while another Agent Token holds the claim; every
 upload appears in the task activity. `--name` overrides the stored file name and
 `--type` the content type (otherwise inferred from the extension). `download`
 saves to the attachment's name in the current directory unless `--output` is set

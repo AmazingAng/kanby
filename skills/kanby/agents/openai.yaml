@@ -1,4 +1,4 @@
 interface:
   display_name: 'Kanby'
   short_description: 'Operate Kanby tasks from coding agents'
-  default_prompt: 'Use $kanby to pick up and complete the next Kanby task.'
+  default_prompt: 'Use $kanby: run kanby next, answer what is waiting on you, and hand finished cards to someone with what to check.'
