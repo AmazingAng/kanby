@@ -34,6 +34,11 @@ Keep build-time identifiers in an ignored `.env.local` file or in your shell. Ke
 
 ## 1. Create and bind D1
 
+This applies only to a native Cloudflare installation that owns its D1. The
+hosted `kanby.dev` database lives in xAPI's account and cannot be reached with
+`wrangler --remote`; migrate it with the maintenance flow in
+[XAPI_DEPLOY.md](XAPI_DEPLOY.md#database-migration).
+
 ```bash
 npx wrangler d1 create kanby-db --location apac
 npx wrangler r2 bucket create kanby-attachments
