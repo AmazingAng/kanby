@@ -1004,3 +1004,35 @@ export const interactionEvents = sqliteTable(
     ),
   ],
 );
+
+// Hosted WeChat (iLink) bindings. *_enc columns are AES-GCM sealed with the
+// WEIXIN_CREDENTIAL_KEY Worker secret and bound to the member id.
+export const weixinAccounts = sqliteTable('weixin_accounts', {
+  userId: text('user_id').primaryKey(),
+  ilinkBotId: text('ilink_bot_id').notNull(),
+  ilinkUserEnc: text('ilink_user_enc').notNull(),
+  botTokenEnc: text('bot_token_enc').notNull(),
+  contextTokenEnc: text('context_token_enc'),
+  baseUrl: text('base_url').notNull(),
+  updatesBuf: text('updates_buf'),
+  status: text('status').notNull(),
+  lastError: text('last_error'),
+  activatedAt: integer('activated_at'),
+  lastSyncedAt: integer('last_synced_at'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
+
+export const weixinLogins = sqliteTable(
+  'weixin_logins',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id').notNull(),
+    qrcode: text('qrcode').notNull(),
+    baseUrl: text('base_url').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+  },
+  (table) => [
+    index('idx_weixin_logins_user').on(table.userId, table.expiresAt),
+  ],
+);

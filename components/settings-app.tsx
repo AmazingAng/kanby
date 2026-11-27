@@ -25,6 +25,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { NotificationSettings } from '@/components/notification-settings';
+import { WeixinSettings } from '@/components/weixin-settings';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { AppHeader, type AppUser } from '@/components/kanby-shell';
@@ -1368,6 +1369,8 @@ export function SettingsApp() {
                     )}
                   </div>
                 </section>
+
+                <WeixinSettings />
 
                 <NotificationSettings
                   key={selectedProject.id}

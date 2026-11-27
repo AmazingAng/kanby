@@ -138,3 +138,16 @@ kanby task handoff <ref> --to @alice --reason awaiting_acceptance --note "看这
 3. 只有 `update/link/split/complete/archive/checklist` 继续受租约保护；`progress`、评论、交接、附件不受（§4.1）。
 4. 迁移内回填 building 卡的轮次（§8）。
 5. 通知配置存 D1、项目群机器人由 owner 配、个人机器人由本人配，不引入环境变量（§7）。
+
+## 11. 微信通道（2026-11-28 追加，首选）
+
+团队不用飞书，通知首选微信；飞书/企业微信机器人降为备选。Kanby 直接对接 iLink Bot 协议（腾讯官方 `@tencent-weixin/openclaw-weixin` 渠道使用的协议），不依赖 OpenClaw。
+
+- **绑定**：设置页「微信通知」→ Kanby 调 `ilink/bot/get_bot_qrcode` 拿登录链接，服务端用 `uqr` 渲染成二维码；本人扫码确认后（`get_qrcode_status` 返回 `confirmed`）得到 `bot_token`、机器人 ID 和本人的 iLink 用户 ID，状态为 `pending`。
+- **激活**：iLink 发消息必须带对方消息里的 `context_token`。本人先给机器人发一句话，再点「我已发送」，Kanby 调 `getupdates` 取到本人消息的 `context_token`，状态变为 `active`。
+- **托管与加密**（迁移 `0018_weixin_accounts.sql`）：`weixin_accounts` 按成员一行；`bot_token`、iLink 用户 ID、`context_token` 用 AES-256-GCM 加密，密钥只在 Worker secret `WEIXIN_CREDENTIAL_KEY`（32 字节 base64）里，附加数据绑定「成员 ID + 字段」，密文换到别人名下无法解密。任何 API 都不返回凭证，日志不打印。只允许访问 `*.weixin.qq.com` 的 HTTPS 主机。解绑即删除。
+- **投递顺序**：接收人有 `active` 微信时先发微信；微信失败（如 `-14` 会话过期，状态改为 `expired`）或未绑定时，才发该成员的个人飞书/企业微信机器人；项目群机器人照旧。每次投递写入 `notification_deliveries`（`channel_id = weixin:<userId>`）。
+
+**待实测**：不带新的 `context_token`、隔一段时间后主动推送是否仍成功，以及 `context_token` 的有效期。若会过期，下一步在定时任务里续期或改走备选通道。
+
+**下一增量**：定时任务（挂到 `tools/add-worker-schedule.mjs`，每分钟）对每个绑定账号调 `getupdates`，持续刷新 `context_token`，并把回复写回卡片（回复「通过 / 打回 原因 / 选 B」→ `handoff` / `comment`，以本人身份）。
