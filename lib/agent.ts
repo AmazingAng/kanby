@@ -6,6 +6,7 @@ import {
 } from '@/lib/db';
 import type { AuthUser } from '@/lib/auth';
 import { agentTokenLabel } from '@/lib/agent-token-policy';
+import { agentLabel } from '@/lib/task-turn';
 import { recoverySnapshot } from '@/lib/recovery';
 
 const encoder = new TextEncoder();
@@ -498,16 +499,18 @@ export async function recordAgentUpdate(
   const eventKind = ['created', 'updated'].includes(kind)
     ? `task.${kind}`
     : `agent.${kind}`;
+  // Agents act on behalf of a member: "Alice 的 codex", not a bare token name.
+  const label = agentLabel(identity.userName, identity.agentName);
   const summaries: Record<string, string> = {
-    created: `${identity.agentName} 创建了任务`,
-    updated: `${identity.agentName} 修改了任务`,
-    claimed: `${identity.agentName} 领取了任务`,
-    heartbeat: `${identity.agentName} 正在处理`,
-    progress: `${identity.agentName} 汇报了进度`,
-    released: `${identity.agentName} 释放了任务`,
-    linked: `${identity.agentName} 关联了 GitHub 工作项`,
-    attached: `${identity.agentName} 上传了附件`,
-    completed: `${identity.agentName} 完成了任务`,
+    created: `${label} 创建了任务`,
+    updated: `${label} 修改了任务`,
+    claimed: `${label} 领取了任务`,
+    heartbeat: `${label} 正在处理`,
+    progress: `${label} 汇报了进度`,
+    released: `${label} 释放了任务`,
+    linked: `${label} 关联了 GitHub 工作项`,
+    attached: `${label} 上传了附件`,
+    completed: `${label} 完成了任务`,
   };
   const { prepareTaskActivityStatement } = await import('@/lib/task-activity');
   const results = await db.batch([
@@ -523,7 +526,7 @@ export async function recordAgentUpdate(
         actorName: identity.agentName,
         actorLogin: identity.userLogin,
         actorAvatarUrl: identity.userAvatarUrl,
-        summary: summaries[kind] ?? `${identity.agentName} 更新了任务`,
+        summary: summaries[kind] ?? `${label} 更新了任务`,
         body: ['progress', 'completed'].includes(kind) ? message : null,
         metadata: { ...metadata, message },
         dedupeKey:

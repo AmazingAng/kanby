@@ -198,6 +198,7 @@ describe('unified task activity', () => {
       {
         taskId: live.id,
         agentName: 'Alice / Codex',
+        agentLabel: 'Alice 的 Alice / Codex',
         leaseExpiresAt: Date.now() + 60_000,
         lastHeartbeatAt: Date.now() - 1_000,
         latestProgress: '正在运行回归测试',
@@ -241,6 +242,7 @@ describe('unified task activity', () => {
       {
         taskId: task.id,
         agentName: 'Quiet Agent',
+        agentLabel: 'Alice 的 Quiet Agent',
         leaseExpiresAt: Date.now() + 60_000,
         lastHeartbeatAt: Date.now(),
         latestProgress: null,

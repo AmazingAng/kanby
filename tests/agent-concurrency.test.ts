@@ -114,9 +114,18 @@ describe('Agent mutation coordination', () => {
 
     expect(blocked.status).toBe(409);
     expect(stored.status).toBe('ideas');
+
+    const owner = await PATCH(
+      agentRequest(
+        tokenOne,
+        { id: task.id, action: 'update', title: 'Claimed edit' },
+        'owner-update-key',
+      ),
+    );
+    expect(owner.status).toBe(200);
   });
 
-  it('blocks another Agent Token from recording progress on a claimed task', async () => {
+  it('lets a reviewing Agent Token record progress while another holds the claim', async () => {
     const task = seedTask(database, { id: 'task-progress-claimed' });
     expect(
       (
@@ -133,7 +142,7 @@ describe('Agent mutation coordination', () => {
     const blocked = await PATCH(
       agentRequest(
         tokenTwo,
-        { id: task.id, action: 'progress', message: 'should not write' },
+        { id: task.id, action: 'progress', message: 'review note' },
         'blocked-progress-key',
       ),
     );
@@ -146,13 +155,20 @@ describe('Agent mutation coordination', () => {
     );
     const updates = database.sqlite
       .prepare(
-        "SELECT message FROM task_agent_updates WHERE task_id = ? AND kind = 'progress'",
+        "SELECT message FROM task_agent_updates WHERE task_id = ? AND kind = 'progress' ORDER BY created_at, message",
       )
       .all(task.id) as { message: string }[];
+    const claim = database.sqlite
+      .prepare('SELECT token_id FROM task_agent_claims WHERE task_id = ?')
+      .get(task.id) as { token_id: string };
 
-    expect(blocked.status).toBe(409);
+    expect(blocked.status).toBe(200);
     expect(allowed.status).toBe(200);
-    expect(updates).toEqual([{ message: 'owner update' }]);
+    expect(updates.map((update) => update.message).sort()).toEqual([
+      'owner update',
+      'review note',
+    ]);
+    expect(claim.token_id).toBe(tokenOneId);
   });
 
   it('releases an idempotency reservation after validation rejects the request', async () => {

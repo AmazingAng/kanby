@@ -461,8 +461,8 @@ const mutations = [
   {
     name: 'Agent split claim ownership enforcement',
     file: 'app/api/v1/tasks/route.ts',
-    from: "['update', 'progress', 'link', 'complete', 'split', 'archive']",
-    to: "['update', 'progress', 'link', 'complete', 'archive']",
+    from: "['update', 'link', 'complete', 'split', 'archive']",
+    to: "['update', 'link', 'complete', 'archive']",
     test: 'tests/task-subtasks.test.ts',
   },
   {
@@ -571,10 +571,24 @@ const mutations = [
     test: 'tests/cli.test.ts',
   },
   {
+    name: 'notification webhook host allowlist',
+    file: 'lib/notifications.ts',
+    from: '!ALLOWED_HOSTS[kind].includes(url.hostname)',
+    to: 'false',
+    test: 'tests/turn-collaboration.test.ts',
+  },
+  {
+    name: 'project notification channels need the owner',
+    file: 'app/api/notification-channels/route.ts',
+    from: "(scope === 'project' && role !== 'owner')",
+    to: 'false',
+    test: 'tests/turn-collaboration.test.ts',
+  },
+  {
     name: 'Agent archive active-claim enforcement',
     file: 'app/api/v1/tasks/route.ts',
-    from: "['update', 'progress', 'link', 'complete', 'split', 'archive'].includes(",
-    to: "['update', 'progress', 'link', 'complete', 'split'].includes(",
+    from: "['update', 'link', 'complete', 'split', 'archive'].includes(",
+    to: "['update', 'link', 'complete', 'split'].includes(",
     test: 'tests/agent-archive.test.ts',
   },
   {

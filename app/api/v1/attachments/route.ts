@@ -2,7 +2,6 @@ import {
   abortIdempotentRequest,
   authenticateAgent,
   beginIdempotentRequest,
-  canMutateTask,
   completeIdempotentRequest,
   recordAgentUpdate,
   resolveAgentTask,
@@ -149,12 +148,8 @@ export async function POST(request: Request) {
       'Task reference was not found, is ambiguous, or is archived',
       404,
     );
-  if (!(await canMutateTask(auth, taskId)))
-    return fail(
-      'claimed_by_another_agent',
-      'Task is actively claimed by another Agent Token',
-      409,
-    );
+  // Evidence is not code work: reviewers may attach files while another
+  // Agent Token holds the claim.
 
   const key = idempotencyKey(request);
   const idempotency = key

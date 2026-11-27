@@ -162,7 +162,7 @@ describe('Agent attachment API', () => {
       .get(taskId) as { kind: string; summary: string };
     expect(event).toEqual({
       kind: 'agent.attached',
-      summary: 'agent-one 上传了附件',
+      summary: 'Alice 的 agent-one 上传了附件',
     });
 
     const list = await GET(getRequest(tokenTwo, `task=${taskId}`));
@@ -261,7 +261,7 @@ describe('Agent attachment API', () => {
     expect(bucket.objects.size).toBe(0);
   });
 
-  it('rejects uploads while another Agent Token holds the claim', async () => {
+  it('accepts review evidence while another Agent Token holds the claim', async () => {
     const claim = await PATCH(
       agentRequest(
         tokenTwo,
@@ -271,13 +271,11 @@ describe('Agent attachment API', () => {
     );
     expect(claim.status).toBe(200);
 
-    const blocked = await POST(
+    const reviewer = await POST(
       await multipart(tokenOne, { task: taskId, file: textFile('x') }),
     );
-    const payload = (await blocked.json()) as { error: { code: string } };
-    expect(blocked.status).toBe(409);
-    expect(payload.error.code).toBe('claimed_by_another_agent');
-    expect(bucket.objects.size).toBe(0);
+    expect(reviewer.status).toBe(201);
+    expect(bucket.objects.size).toBe(1);
 
     const owner = await POST(
       await multipart(tokenTwo, { task: taskId, file: textFile('x') }),

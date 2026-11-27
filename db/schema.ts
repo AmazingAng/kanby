@@ -1,6 +1,7 @@
 import {
   index,
   integer,
+  primaryKey,
   sqliteTable,
   text,
   uniqueIndex,
@@ -93,8 +94,21 @@ export const tasks = sqliteTable(
     archivedAt: integer('archived_at'),
     createdBy: text('created_by').notNull(),
     parentTaskId: text('parent_task_id'),
+    // Whose turn it is. Orthogonal to status and deliberately not part of
+    // updated_at so a handoff never conflicts with an open editor.
+    turnKind: text('turn_kind'),
+    turnUserId: text('turn_user_id'),
+    turnTokenId: text('turn_token_id'),
+    turnReason: text('turn_reason'),
+    turnNote: text('turn_note'),
+    turnSince: integer('turn_since'),
   },
   (table) => [
+    index('idx_tasks_project_turn').on(
+      table.projectId,
+      table.turnUserId,
+      table.turnSince,
+    ),
     index('idx_tasks_project_status_position').on(
       table.projectId,
       table.status,
@@ -496,6 +510,85 @@ export const taskEvents = sqliteTable(
     uniqueIndex('idx_task_events_project_dedupe').on(
       table.projectId,
       table.dedupeKey,
+    ),
+  ],
+);
+
+export const taskMentions = sqliteTable(
+  'task_mentions',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id').notNull(),
+    taskId: text('task_id').notNull(),
+    eventId: text('event_id').notNull(),
+    targetUserId: text('target_user_id').notNull(),
+    targetTokenId: text('target_token_id'),
+    targetKind: text('target_kind').notNull(),
+    createdBy: text('created_by').notNull(),
+    createdAt: integer('created_at').notNull(),
+    resolvedAt: integer('resolved_at'),
+  },
+  (table) => [
+    index('idx_task_mentions_target').on(
+      table.projectId,
+      table.targetUserId,
+      table.resolvedAt,
+    ),
+    index('idx_task_mentions_task').on(table.taskId, table.resolvedAt),
+  ],
+);
+
+export const taskReadCursors = sqliteTable(
+  'task_read_cursors',
+  {
+    taskId: text('task_id').notNull(),
+    readerId: text('reader_id').notNull(),
+    projectId: text('project_id').notNull(),
+    readAt: integer('read_at').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.taskId, table.readerId] })],
+);
+
+// Webhook URLs embed bot keys: they are stored here, never returned in full
+// by any API and never logged.
+export const notificationChannels = sqliteTable(
+  'notification_channels',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id').notNull(),
+    userId: text('user_id'),
+    kind: text('kind').notNull(),
+    webhookUrl: text('webhook_url').notNull(),
+    secret: text('secret'),
+    enabled: integer('enabled').notNull().default(1),
+    createdBy: text('created_by').notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [
+    index('idx_notification_channels_project').on(
+      table.projectId,
+      table.userId,
+    ),
+  ],
+);
+
+export const notificationDeliveries = sqliteTable(
+  'notification_deliveries',
+  {
+    id: text('id').primaryKey(),
+    projectId: text('project_id').notNull(),
+    channelId: text('channel_id').notNull(),
+    taskId: text('task_id'),
+    eventKind: text('event_kind').notNull(),
+    status: text('status').notNull(),
+    error: text('error'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_notification_deliveries_project').on(
+      table.projectId,
+      table.createdAt,
     ),
   ],
 );
