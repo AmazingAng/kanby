@@ -123,7 +123,7 @@ kanby task handoff <ref> --to @alice --reason awaiting_acceptance --note "看这
 
 效果是上线当天每个人的「轮到我」会出现积压的待验收卡（评估里约 19 张），这正是要清理的对象。若不希望回填，可在应用迁移后执行 `UPDATE tasks SET turn_kind=NULL, turn_user_id=NULL, turn_reason=NULL, turn_since=NULL`。
 
-部署顺序：先 `wrangler d1 migrations apply`（新列都可空，旧代码不受影响），再部署 Worker，最后发布 CLI 0.7.0。
+部署顺序：先应用迁移（新列都可空，旧代码不受影响），再部署正常 Worker，最后发布 CLI 0.7.0。kanby.dev 跑在 xAPI Workers 上，D1 在 xAPI 账号下，`wrangler d1 migrations apply --remote` 连不到它；生产和预览都必须走 [XAPI_DEPLOY.md「Database migration」](../XAPI_DEPLOY.md#database-migration) 的维护制品 + `/__kanby_migration` 流程，本次发布的逐步清单见 [XAPI_RELEASE_TURN_WEIXIN.md](../XAPI_RELEASE_TURN_WEIXIN.md)。`wrangler d1 migrations apply DB --local` 只用于本地开发。
 
 ## 9. 分阶段
 
@@ -149,5 +149,7 @@ kanby task handoff <ref> --to @alice --reason awaiting_acceptance --note "看这
 - **投递顺序**：接收人有 `active` 微信时先发微信；微信失败（如 `-14` 会话过期，状态改为 `expired`）或未绑定时，才发该成员的个人飞书/企业微信机器人；项目群机器人照旧。每次投递写入 `notification_deliveries`（`channel_id = weixin:<userId>`）。
 
 **待实测**：不带新的 `context_token`、隔一段时间后主动推送是否仍成功，以及 `context_token` 的有效期。若会过期，下一步在定时任务里续期或改走备选通道。
+
+**部署**：先在 kanby Worker 的预览和生产 xAPI Secrets 里设置 `WEIXIN_CREDENTIAL_KEY`，再按 [XAPI_RELEASE_TURN_WEIXIN.md](../XAPI_RELEASE_TURN_WEIXIN.md) 通过维护制品依次应用 0017、0018（不能用 `wrangler --remote`）。
 
 **下一增量**：定时任务（挂到 `tools/add-worker-schedule.mjs`，每分钟）对每个绑定账号调 `getupdates`，持续刷新 `context_token`，并把回复写回卡片（回复「通过 / 打回 原因 / 选 B」→ `handoff` / `comment`，以本人身份）。
