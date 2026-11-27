@@ -40,7 +40,8 @@
         "GITHUB_CLIENT_ID",
         "GITHUB_CLIENT_SECRET",
         "GITHUB_WEBHOOK_SECRET",
-        "SESSION_SECRET"
+        "SESSION_SECRET",
+        "WEIXIN_CREDENTIAL_KEY"
       ]
     },
     "production": {
@@ -67,7 +68,8 @@
         "GITHUB_CLIENT_ID",
         "GITHUB_CLIENT_SECRET",
         "GITHUB_WEBHOOK_SECRET",
-        "SESSION_SECRET"
+        "SESSION_SECRET",
+        "WEIXIN_CREDENTIAL_KEY"
       ]
     }
   }

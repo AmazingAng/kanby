@@ -310,7 +310,7 @@ async function deliver(channel: ChannelRow, text: string) {
 }
 
 async function recordDelivery(
-  channel: ChannelRow,
+  channel: { id: string; kind: string },
   event: TaskNotification,
   error: string | null,
 ) {
@@ -343,6 +343,30 @@ export async function sendTaskNotification(event: TaskNotification) {
   const recipientIds = [
     ...new Set(event.recipients.map((item) => item.userId)),
   ];
+  // WeChat (hosted iLink binding) is each member's preferred channel; their
+  // personal Feishu/WeCom bots are only a fallback when WeChat cannot deliver.
+  const { activeWeixinUsers, sendWeixinText } = await import('@/lib/weixin');
+  const weixinUsers = await activeWeixinUsers(recipientIds);
+  const deliveredByWeixin = new Set<string>();
+  await Promise.all(
+    [...weixinUsers].map(async (userId) => {
+      const names = event.recipients
+        .filter((recipient) => recipient.userId === userId)
+        .map((recipient) => recipient.name);
+      const error = await sendWeixinText(
+        userId,
+        notificationText(event, names),
+      );
+      if (!error) deliveredByWeixin.add(userId);
+      await recordDelivery(
+        { id: `weixin:${userId}`, kind: 'weixin' },
+        event,
+        error,
+      ).catch((logError: unknown) =>
+        console.error('Kanby notification log failed', logError),
+      );
+    }),
+  );
   const channels = await database()
     .prepare(
       `SELECT id, project_id, user_id, kind, webhook_url, secret, enabled, updated_at
@@ -353,17 +377,22 @@ export async function sendTaskNotification(event: TaskNotification) {
     .bind(event.projectId, ...recipientIds)
     .all<ChannelRow>();
   await Promise.all(
-    channels.results.map(async (channel) => {
-      const names = channel.user_id
-        ? event.recipients
-            .filter((recipient) => recipient.userId === channel.user_id)
-            .map((recipient) => recipient.name)
-        : event.recipients.map((recipient) => recipient.name);
-      const error = await deliver(channel, notificationText(event, names));
-      await recordDelivery(channel, event, error).catch((logError: unknown) =>
-        console.error('Kanby notification log failed', logError),
-      );
-    }),
+    channels.results
+      .filter(
+        (channel) =>
+          !channel.user_id || !deliveredByWeixin.has(channel.user_id),
+      )
+      .map(async (channel) => {
+        const names = channel.user_id
+          ? event.recipients
+              .filter((recipient) => recipient.userId === channel.user_id)
+              .map((recipient) => recipient.name)
+          : event.recipients.map((recipient) => recipient.name);
+        const error = await deliver(channel, notificationText(event, names));
+        await recordDelivery(channel, event, error).catch((logError: unknown) =>
+          console.error('Kanby notification log failed', logError),
+        );
+      }),
   );
 }
 

@@ -232,7 +232,8 @@ describe('turn backfill migration', () => {
     const files = readdirSync('drizzle')
       .filter((file: string) => /^\d{4}_.+\.sql$/.test(file))
       .sort();
-    expect(files.at(-1)).toBe('0017_turn_collaboration.sql');
+    const turnIndex = files.indexOf('0017_turn_collaboration.sql');
+    expect(turnIndex).toBeGreaterThan(0);
     // Apply everything except 0017, seed legacy data, then apply 0017.
     const apply = (file: string) => {
       for (const statement of readFileSync(`drizzle/${file}`, 'utf8')
@@ -241,7 +242,7 @@ describe('turn backfill migration', () => {
         .filter(Boolean))
         db.exec(statement);
     };
-    for (const file of files.slice(0, -1)) apply(file);
+    for (const file of files.slice(0, turnIndex)) apply(file);
     seedProject(db);
     const insert = db.sqlite.prepare(
       `INSERT INTO tasks (id, project_id, title, note, tag, owner_id, owner_login, owner_name, status, position, created_at, updated_at, created_by)
@@ -256,7 +257,7 @@ describe('turn backfill migration', () => {
          VALUES ('e1', 'project-1', 'waiting', 'agent', 'agent.progress', 'codex', 's', '全部通过，待用户验收', 15)`,
       )
       .run();
-    apply(files.at(-1)!);
+    apply(files[turnIndex]!);
     const rows = db.sqlite
       .prepare(
         'SELECT id, turn_kind, turn_user_id, turn_reason, turn_since FROM tasks ORDER BY id',

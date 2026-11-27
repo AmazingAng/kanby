@@ -571,6 +571,20 @@ const mutations = [
     test: 'tests/cli.test.ts',
   },
   {
+    name: 'WeChat credentials are bound to the member',
+    file: 'lib/weixin-crypto.ts',
+    from: 'kanby-weixin:${userId}:${field}',
+    to: 'kanby-weixin:${field}',
+    test: 'tests/weixin.test.ts',
+  },
+  {
+    name: 'iLink host allowlist',
+    file: 'lib/weixin-ilink.ts',
+    from: "url.hostname.endsWith('.weixin.qq.com')",
+    to: 'true',
+    test: 'tests/weixin.test.ts',
+  },
+  {
     name: 'notification webhook host allowlist',
     file: 'lib/notifications.ts',
     from: '!ALLOWED_HOSTS[kind].includes(url.hostname)',
