@@ -47,7 +47,7 @@
 ### 3.2 新表
 
 - `task_mentions(id, project_id, task_id, event_id, target_user_id, target_token_id, target_kind, created_by, created_at, resolved_at)`：待回应提及。
-- `task_read_cursors(task_id, reader_id, project_id, read_at)`，主键 `(task_id, reader_id)`：agent 读卡游标（`reader_id`=token id）。网页端未读标记留到阶段 2，复用同表（`reader_id`=user id）。
+- `task_read_cursors(task_id, reader_id, project_id, read_at, read_event_id)`，主键 `(task_id, reader_id)`：agent 读卡游标（`reader_id`=token id）。游标是 `(read_at, read_event_id)` 稳定位置（`read_event_id` 由迁移 0019 加入），只推进到实际返回的最新一条未读，未读和讨论串都分页返回。网页端未读标记留到阶段 2，复用同表（`reader_id`=user id）。
 - `notification_channels(id, project_id, user_id, kind, webhook_url, secret, enabled, created_by, created_at, updated_at)`：`user_id` 为 NULL＝项目群机器人（仅项目 owner 可配），否则为该成员的个人机器人（仅本人可配）。`kind ∈ feishu/wecom`。
 - `notification_deliveries(id, project_id, channel_id, task_id, event_kind, status, error, created_at)`：投递日志，失败只记录不重试。
 
@@ -150,6 +150,6 @@ kanby task handoff <ref> --to @alice --reason awaiting_acceptance --note "看这
 
 **待实测**：不带新的 `context_token`、隔一段时间后主动推送是否仍成功，以及 `context_token` 的有效期。若会过期，下一步在定时任务里续期或改走备选通道。
 
-**部署**：先在 kanby Worker 的预览和生产 xAPI Secrets 里设置 `WEIXIN_CREDENTIAL_KEY`，再按 [XAPI_RELEASE_TURN_WEIXIN.md](../XAPI_RELEASE_TURN_WEIXIN.md) 通过维护制品依次应用 0017、0018（不能用 `wrangler --remote`）。
+**部署**：先在 kanby Worker 的预览和生产 xAPI Secrets 里设置 `WEIXIN_CREDENTIAL_KEY`，再按 [XAPI_RELEASE_TURN_WEIXIN.md](../XAPI_RELEASE_TURN_WEIXIN.md) 通过维护制品依次应用 0017、0018、0019（不能用 `wrangler --remote`）。
 
 **下一增量**：定时任务（挂到 `tools/add-worker-schedule.mjs`，每分钟）对每个绑定账号调 `getupdates`，持续刷新 `context_token`，并把回复写回卡片（回复「通过 / 打回 原因 / 选 B」→ `handoff` / `comment`，以本人身份）。

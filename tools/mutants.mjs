@@ -585,6 +585,20 @@ const mutations = [
     test: 'tests/weixin.test.ts',
   },
   {
+    name: 'WeChat confirm requires the current login session',
+    file: 'lib/weixin.ts',
+    from: 'WHERE EXISTS (SELECT 1 FROM weixin_logins',
+    to: 'WHERE 1 OR EXISTS (SELECT 1 FROM weixin_logins',
+    test: 'tests/weixin.test.ts',
+  },
+  {
+    name: 'agent read cursor only covers delivered entries',
+    file: 'app/api/v1/tasks/route.ts',
+    from: 'if (options.markRead && conversation.unreadEnd)',
+    to: 'if (false)',
+    test: 'tests/turn-collaboration.test.ts',
+  },
+  {
     name: 'notification webhook host allowlist',
     file: 'lib/notifications.ts',
     from: '!ALLOWED_HOSTS[kind].includes(url.hostname)',

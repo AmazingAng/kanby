@@ -50,11 +50,13 @@ import {
   markTaskRead,
   MAX_COMMENT_LENGTH,
   MAX_TURN_NOTE_LENGTH,
+  parseEventPosition,
   parseTargetSpec,
   postTaskComment,
   resolveTarget,
   setTaskTurn,
   TurnTaskNotFoundError,
+  type EventPosition,
   type TurnTarget,
 } from '@/lib/turns';
 import type { AgentIdentity } from '@/lib/agent';
@@ -164,12 +166,19 @@ function replay(decision: Awaited<ReturnType<typeof idempotent>>) {
   return null;
 }
 
+type ThreadOptions = {
+  markRead: boolean;
+  after: EventPosition | null;
+  unreadLimit: number | undefined;
+  threadCursor: EventPosition | null;
+  threadLimit: number | undefined;
+};
+
 async function detailedTask(
   task: TaskRecord,
   identity: AgentIdentity,
-  markRead: boolean,
+  options: ThreadOptions,
 ) {
-  const readAt = Date.now();
   const [claim, updates, conversation] = await Promise.all([
     getTaskClaim(task.id),
     listAgentUpdates(task.id),
@@ -177,20 +186,41 @@ async function detailedTask(
       projectId: identity.projectId,
       taskId: task.id,
       readerId: identity.tokenId,
+      after: options.after,
+      unreadLimit: options.unreadLimit,
+      threadCursor: options.threadCursor,
+      threadLimit: options.threadLimit,
     }),
   ]);
-  if (markRead)
-    await markTaskRead(identity.projectId, task.id, identity.tokenId, readAt);
+  // Only what was delivered counts as read; the rest stays unread.
+  if (options.markRead && conversation.unreadEnd)
+    await markTaskRead(
+      identity.projectId,
+      task.id,
+      identity.tokenId,
+      conversation.unreadEnd,
+    );
   return {
     ...publicTask(task),
     claim,
     updates,
     turn: task.turn ?? null,
     thread: conversation.thread,
+    threadNextCursor: conversation.threadNextCursor,
     unread: conversation.unread,
-    unreadTruncated: conversation.unreadTruncated,
+    unreadHasMore: conversation.unreadHasMore,
+    unreadNextCursor: conversation.unreadNextCursor,
+    lastRead: conversation.lastRead,
     lastReadAt: conversation.lastReadAt,
   };
+}
+
+function optionalLimit(value: string | null) {
+  if (value === null) return { ok: true as const, value: undefined };
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 1 && parsed <= 50
+    ? { ok: true as const, value: parsed }
+    : { ok: false as const };
 }
 
 /** `@login`, `@login/agent`, `@login/<agent>`, `owner`, `self` or `none`. */
@@ -229,10 +259,31 @@ export async function GET(request: Request) {
         'Task reference was not found or is ambiguous',
         404,
       );
+    const unreadLimit = optionalLimit(params.get('unreadLimit'));
+    const threadLimit = optionalLimit(params.get('threadLimit'));
+    const after = parseEventPosition(params.get('after'));
+    const threadCursor = parseEventPosition(params.get('threadCursor'));
+    if (
+      !unreadLimit.ok ||
+      !threadLimit.ok ||
+      (params.get('after') && !after) ||
+      (params.get('threadCursor') && !threadCursor)
+    )
+      return fail(
+        'invalid_page',
+        'unreadLimit/threadLimit must be 1–50; after/threadCursor must be cursors returned by this API',
+        400,
+      );
     return Response.json(
       {
         ok: true,
-        data: await detailedTask(task, auth, params.get('markRead') !== '0'),
+        data: await detailedTask(task, auth, {
+          markRead: params.get('markRead') !== '0',
+          after,
+          unreadLimit: unreadLimit.value,
+          threadCursor,
+          threadLimit: threadLimit.value,
+        }),
       },
       { headers: { 'Cache-Control': 'no-store' } },
     );
@@ -452,7 +503,6 @@ export async function PATCH(request: Request) {
         body: comment,
         actor: agentCollabActor(auth),
       });
-      await markTaskRead(auth.projectId, task.id, auth.tokenId);
       response = {
         ok: true,
         data: {
@@ -506,7 +556,6 @@ export async function PATCH(request: Request) {
           'released',
           'Released task claim',
         );
-      await markTaskRead(auth.projectId, task.id, auth.tokenId);
       response = {
         ok: true,
         data: {

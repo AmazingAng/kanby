@@ -1,4 +1,4 @@
-# 发布清单：轮次协作 + 微信通知（迁移 0017、0018，CLI 0.7.0）
+# 发布清单：轮次协作 + 微信通知（迁移 0017–0019，CLI 0.7.0）
 
 这是待执行的清单，不是已完成的记录。完成后按
 [XAPI_RELEASE_20261001.md](XAPI_RELEASE_20261001.md) 的格式补一份证据文档
@@ -16,18 +16,20 @@
 - `drizzle/0017_turn_collaboration.sql`：16 条语句，约 3 KB。tasks 增加
   `turn_*` 列（全部可空），新建 `task_mentions`、`task_read_cursors`、
   `notification_channels`、`notification_deliveries`，并回填 building 卡的轮次。
+- `drizzle/0019_read_cursor_event.sql`：1 条语句。`task_read_cursors` 增加
+  `read_event_id`，让读游标成为稳定的 `(created_at, id)` 位置。
 - `drizzle/0018_weixin_accounts.sql`：3 条语句。新建 `weixin_accounts`、
   `weixin_logins`。
 - 新 Worker secret：`WEIXIN_CREDENTIAL_KEY`（已在 `xapi.worker.json` 的
   preview 和 production secrets 中声明）。
 - 不新增定时任务；现有 `*/10 * * * *` 恢复任务不变。
 
-## 维护接口能否直接应用 0017/0018
+## 维护接口能否直接应用 0017–0019
 
 可以，`tools/xapi-migration.mjs` 不需要改动。它不读取迁移文件，而是执行请求里
 给出的 SQL 批次：每批最多 40 条单独的 SQL、1 MiB，加上摘要标记一起原子提交，
 同 ID 同内容可安全重放。0017 拆成 16 条，加上 `d1_migrations` 记录共 17 条；
-0018 为 4 条，都在限制内。按 `--> statement-breakpoint` 拆分（与
+0018 为 4 条，0019 为 2 条，都在限制内。按 `--> statement-breakpoint` 拆分（与
 `tests/support/d1.ts` 相同），不要按分号拆。
 
 0017 在同一批里先 `ALTER TABLE` 再 `UPDATE` 新列；0016 也是在同一批里先建表
@@ -51,7 +53,7 @@
 ```sh
 node -e '
 const fs = require("fs");
-for (const name of ["0017_turn_collaboration", "0018_weixin_accounts"]) {
+for (const name of ["0017_turn_collaboration", "0018_weixin_accounts", "0019_read_cursor_event"]) {
   const statements = fs.readFileSync(`drizzle/${name}.sql`, "utf8")
     .split("--> statement-breakpoint").map((s) => s.trim()).filter(Boolean);
   statements.push(
@@ -67,15 +69,16 @@ for (const name of ["0017_turn_collaboration", "0018_weixin_accounts"]) {
 ## 1. 预览环境
 
 - [ ] 用 `{query: "SELECT name FROM d1_migrations ORDER BY id"}` 确认最后一条是
-      `0016_interaction_sessions.sql`，且没有 0017/0018。
+      `0016_interaction_sessions.sql`，且没有 0017–0019。
 - [ ] 按 XAPI_DEPLOY.md 构建并推送维护制品到预览：`KANBY_XAPI=1 KANBY_MIGRATION=1`。
 - [ ] 设置预览临时 secrets：`KANBY_MIGRATION_TOKEN`（随机，至少 64 字符）和
       `KANBY_MIGRATION_EXPIRES`（短期的未来毫秒时间戳）。
 - [ ] 确认维护制品 `/demo` 正常，普通页面返回 503。
-- [ ] 依次 POST `0017_turn_collaboration.json`、`0018_weixin_accounts.json` 到预览
+- [ ] 依次 POST `0017_turn_collaboration.json`、`0018_weixin_accounts.json`、
+      `0019_read_cursor_event.json` 到预览
       主机的 `/__kanby_migration`（`Authorization: Bearer <token>`，只发给预览的
       HTTPS 主机）。每批都应返回 `{ok: true}`；同批重发应返回 `replay: true`。
-- [ ] 验证（接口只允许单条 SELECT）：`d1_migrations` 末尾是 0017、0018；再查，例如
+- [ ] 验证（接口只允许单条 SELECT）：`d1_migrations` 末尾依次是 0017、0018、0019；再查，例如
       `SELECT COUNT(*) AS n FROM tasks WHERE turn_kind IS NOT NULL`、
       `SELECT name FROM sqlite_master WHERE name IN ('task_mentions','task_read_cursors','notification_channels','notification_deliveries','weixin_accounts','weixin_logins')`。
 - [ ] 构建正常制品（`KANBY_XAPI=1 KANBY_PUBLIC_ORIGIN=https://kanby.dev npm run build`，
@@ -97,7 +100,7 @@ for (const name of ["0017_turn_collaboration", "0018_weixin_accounts"]) {
 - [ ] 完整备份生产数据库（所有表、行数和规范化行内容），存入私有目录。
 - [ ] 部署维护制品到生产，设置生产临时 `KANBY_MIGRATION_TOKEN` 与
       `KANBY_MIGRATION_EXPIRES`。维护期间普通访问返回 503。
-- [ ] 确认 `d1_migrations` 最后是 0016，然后依次应用 0017、0018（同上，主机换成
+- [ ] 确认 `d1_migrations` 最后是 0016，然后依次应用 0017、0018、0019（同上，主机换成
       生产）。
 - [ ] 比对：所有已有业务表与备份逐表比对行数和完整规范化行内容。预期差异只有：
       `tasks` 多出 `turn_*` 列，以及回填改动的 building 卡（记录回填条数）；

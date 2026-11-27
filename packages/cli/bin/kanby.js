@@ -238,7 +238,9 @@ function nextLines(data) {
       `${item.ref}\t@ by ${item.mention.by}\twaiting ${waited(item.waitingMs)}\t${item.title}${item.mention.body ? `\n  ${item.mention.body}` : ''}`,
     );
   if (data.turns.length || data.mentions.length)
-    lines.push('\nRead each card with: kanby task get <ref>');
+    lines.push(
+      '\nRead each card with: kanby task get <ref> (repeat while it says more unread remain)',
+    );
   return lines.join('\n');
 }
 
@@ -293,7 +295,8 @@ Usage:
   kanby session run --client <name> [--task <ref>] -- <command> [args...]
   kanby next [--json]
   kanby task list [--status ideas|building|shipped] [--json]
-  kanby task get <ref> [--no-mark-read] [--json]
+  kanby task get <ref> [--no-mark-read] [--unread-limit 1..50] [--after <cursor>]
+                 [--thread-cursor <cursor>] [--thread-limit 1..50] [--json]
   kanby task comment <ref> <text>            (@login or @login/agent mentions notify)
   kanby task mention <ref> @login[/agent] [<text>]
   kanby task handoff <ref> --to @login|@login/agent|@login/<agent>|owner|self|none
@@ -455,16 +458,34 @@ async function main() {
   }
   if (command === 'get') {
     if (!first) throw new Error('Task ref is required');
-    const task = await api(
-      `/api/v1/tasks?id=${encodeURIComponent(first)}${has('no-mark-read') ? '&markRead=0' : ''}`,
-    );
+    const params = new URLSearchParams({ id: first });
+    if (has('no-mark-read')) params.set('markRead', '0');
+    for (const [flag, key] of [
+      ['unread-limit', 'unreadLimit'],
+      ['after', 'after'],
+      ['thread-cursor', 'threadCursor'],
+      ['thread-limit', 'threadLimit'],
+    ]) {
+      const value = option(flag, undefined);
+      if (value === true) throw new Error(`--${flag} requires a value`);
+      if (value !== undefined) params.set(key, value);
+    }
+    const task = await api(`/api/v1/tasks?${params}`);
     out(task, (item) =>
       [
         taskLine(item),
         turnLine(item.turn),
         item.unread?.length
-          ? `\nNew since your last read (${item.unread.length}${item.unreadTruncated ? '+' : ''}):\n${item.unread.map(eventLine).join('\n')}`
+          ? `\nNew since your last read (${item.unread.length}${item.unreadHasMore ? ', more remain' : ''}):\n${item.unread.map(eventLine).join('\n')}`
           : '\nNo new conversation since your last read',
+        item.unreadHasMore
+          ? has('no-mark-read')
+            ? `More unread: kanby task get ${first} --no-mark-read --after ${item.unreadNextCursor}`
+            : `More unread: run kanby task get ${first} again (only shown entries were marked read)`
+          : '',
+        item.threadNextCursor
+          ? `Older thread: kanby task get ${first} --no-mark-read --thread-cursor ${item.threadNextCursor}`
+          : '',
         '',
         item.note || '(no notes)',
         item.acceptanceCriteria?.length

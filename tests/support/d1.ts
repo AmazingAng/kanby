@@ -22,6 +22,11 @@ class TestPreparedStatement {
   }
 
   bind(...values: unknown[]) {
+    // Cloudflare D1 rejects statements with more than 100 bound parameters.
+    if (values.length > 100)
+      throw new Error(
+        `D1 allows at most 100 bound parameters; got ${values.length}`,
+      );
     const normalized = values.map((value): SQLInputValue => {
       if (typeof value === 'boolean') return value ? 1 : 0;
       if (value === undefined) return null;

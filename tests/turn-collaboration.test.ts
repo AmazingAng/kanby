@@ -678,3 +678,144 @@ describe('notification channel settings', () => {
     expect(ownDelete.status).toBe(204);
   });
 });
+
+describe('unread paging and D1 parameter limits', () => {
+  function seedComments(count: number, start: number) {
+    const insert = database.sqlite.prepare(
+      `INSERT INTO task_events (id, project_id, task_id, source, kind, actor_id, actor_name, actor_login, summary, body, created_at)
+       VALUES (?, 'project-1', 'task-00000001', 'user', 'comment.created', 'user-1', 'Alice', 'alice', 'Alice 发表了评论', ?, ?)`,
+    );
+    // Pairs share a timestamp so the cursor must order by (created_at, id).
+    for (let index = 0; index < count; index += 1)
+      insert.run(
+        `comment-${String(index).padStart(3, '0')}`,
+        `comment ${index}`,
+        start + Math.floor(index / 2),
+      );
+  }
+
+  async function read(query = '') {
+    const response = await tasksGET(
+      agentGet(bobToken, `/api/v1/tasks?id=task-00000001${query}`),
+    );
+    expect(response.status).toBe(200);
+    return (
+      (await response.json()) as {
+        data: {
+          unread: Array<{ id: string }>;
+          unreadHasMore: boolean;
+          unreadNextCursor: string | null;
+          thread: Array<{ id: string }>;
+          threadNextCursor: string | null;
+        };
+      }
+    ).data;
+  }
+
+  it('never marks undelivered comments as read', async () => {
+    seedComments(35, 1_000);
+    const first = await read();
+    expect(first.unread).toHaveLength(20);
+    expect(first.unreadHasMore).toBe(true);
+    const second = await read();
+    expect(second.unread).toHaveLength(15);
+    expect(second.unreadHasMore).toBe(false);
+    expect((await read()).unread).toEqual([]);
+    const delivered = [...first.unread, ...second.unread].map(
+      (event) => event.id,
+    );
+    expect(new Set(delivered).size).toBe(35);
+    expect(delivered).toEqual(
+      Array.from(
+        { length: 35 },
+        (_, index) => `comment-${String(index).padStart(3, '0')}`,
+      ),
+    );
+  });
+
+  it('pages unread without marking it and pages the thread backwards', async () => {
+    seedComments(35, 1_000);
+    const peek = await read('&markRead=0&unreadLimit=10');
+    expect(peek.unread).toHaveLength(10);
+    const next = await read(
+      `&markRead=0&unreadLimit=10&after=${encodeURIComponent(peek.unreadNextCursor!)}`,
+    );
+    expect(next.unread[0]!.id).toBe('comment-010');
+    // Peeking did not advance the cursor.
+    expect((await read('&markRead=0')).unread[0]!.id).toBe('comment-000');
+
+    const recent = await read('&markRead=0');
+    expect(recent.thread).toHaveLength(30);
+    expect(recent.thread.at(-1)!.id).toBe('comment-034');
+    const older = await read(
+      `&markRead=0&threadCursor=${encodeURIComponent(recent.threadNextCursor!)}`,
+    );
+    expect(older.thread.map((event) => event.id)).toEqual([
+      'comment-000',
+      'comment-001',
+      'comment-002',
+      'comment-003',
+      'comment-004',
+    ]);
+    expect(older.threadNextCursor).toBeNull();
+    expect(
+      (
+        await tasksGET(
+          agentGet(bobToken, '/api/v1/tasks?id=task-00000001&after=bad'),
+        )
+      ).status,
+    ).toBe(400);
+  });
+
+  it("does not let an agent's own comment skip a teammate's earlier one", async () => {
+    await read();
+    database.sqlite
+      .prepare(
+        `INSERT INTO task_events (id, project_id, task_id, source, kind, actor_id, actor_name, actor_login, summary, body, created_at)
+         VALUES ('human-late', 'project-1', 'task-00000001', 'user', 'comment.created', 'user-1', 'Alice', 'alice', 's', '请先看这个', ?)`,
+      )
+      .run(Date.now() - 10);
+    await patch(bobToken, {
+      id: 'task-00000001',
+      action: 'comment',
+      body: '我先回一句',
+    });
+    const after = await read();
+    expect(after.unread.map((event) => event.id)).toEqual(['human-late']);
+  });
+
+  it('keeps kanby next under 100 bound parameters for long queues', async () => {
+    const insert = database.sqlite.prepare(
+      `INSERT INTO tasks (id, project_id, title, note, tag, owner_id, owner_login, owner_name, status, position, created_at, updated_at, created_by,
+         turn_kind, turn_user_id, turn_reason, turn_since)
+       VALUES (?, 'project-1', ?, '', '产品', 'user-1', 'alice', 'Alice', 'building', 0, 1, 1, 'user-1', 'member', 'user-2', 'developing', ?)`,
+    );
+    const mention = database.sqlite.prepare(
+      `INSERT INTO task_mentions (id, project_id, task_id, event_id, target_user_id, target_token_id, target_kind, created_by, created_at, resolved_at)
+       VALUES (?, 'project-1', ?, 'event', 'user-2', NULL, 'member', 'user-1', ?, NULL)`,
+    );
+    for (let index = 0; index < 150; index += 1) {
+      insert.run(`bulk-${index}`, `Bulk ${index}`, index);
+      if (index >= 100) mention.run(`mention-${index}`, `bulk-${index}`, index);
+    }
+    const response = await nextGET(agentGet(bobToken, '/api/v1/next'));
+    expect(response.status).toBe(200);
+    const data = (
+      (await response.json()) as {
+        data: { turns: unknown[]; mentions: unknown[] };
+      }
+    ).data;
+    expect(data.turns).toHaveLength(100);
+    expect(data.mentions).toHaveLength(50);
+    const { unreadCounts } = await import('@/lib/turns');
+    const ids = Array.from({ length: 150 }, (_, index) => `bulk-${index}`);
+    await expect(
+      unreadCounts('project-1', ids, bobTokenId),
+    ).resolves.toBeInstanceOf(Map);
+    expect(() =>
+      database
+        .prepare('SELECT 1')
+        .bind(...Array.from({ length: 101 }, () => 1)),
+    ).toThrow('at most 100 bound parameters');
+  });
+});

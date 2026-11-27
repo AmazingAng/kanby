@@ -32,6 +32,7 @@ let calls: Array<{
   auth: string | null;
 }>;
 let sendResult: Record<string, unknown>;
+let statusGate: Promise<void> | null;
 
 function iLinkResponder(url: string, init?: RequestInit) {
   const parsed = new URL(url);
@@ -47,6 +48,15 @@ function iLinkResponder(url: string, init?: RequestInit) {
       qrcode: 'qr-handle',
       qrcode_img_content: 'https://liteapp.weixin.qq.com/q/test',
     });
+  if (path === 'ilink/bot/get_qrcode_status' && statusGate)
+    return statusGate.then(() =>
+      Response.json({
+        status: 'confirmed',
+        bot_token: botCredential,
+        ilink_bot_id: 'bot-1@im.bot',
+        ilink_user_id: 'owner@im.wechat',
+      }),
+    );
   if (path === 'ilink/bot/get_qrcode_status')
     return Response.json({
       status: 'confirmed',
@@ -121,6 +131,7 @@ beforeEach(() => {
   seedTask(database, { id: 'task-00000001', title: 'WeChat turn' });
   calls = [];
   sendResult = { ret: 0 };
+  statusGate = null;
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init?: RequestInit) => iLinkResponder(url, init)),
@@ -262,5 +273,51 @@ describe('WeChat binding flow', () => {
     expect(
       database.sqlite.prepare('SELECT status FROM weixin_accounts').get(),
     ).toEqual({ status: 'expired' });
+  });
+
+  it('ignores a QR confirmation that lands after the member unbound', async () => {
+    let release!: () => void;
+    statusGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = await POST(await web('POST', { action: 'start' }));
+    const { loginId } = (await started.json()) as { loginId: string };
+    const pending = POST(await web('POST', { action: 'check', loginId }));
+    // Let the check reach iLink, then unbind while it is waiting.
+    await vi.waitFor(() =>
+      expect(
+        calls.some((call) => call.path === 'ilink/bot/get_qrcode_status'),
+      ).toBe(true),
+    );
+    expect((await DELETE(await web('DELETE'))).status).toBe(204);
+    release();
+    const late = (await (await pending).json()) as {
+      progress: string;
+      account: unknown;
+    };
+    expect(late).toEqual({ progress: 'expired', account: null });
+    expect(
+      database.sqlite
+        .prepare('SELECT COUNT(*) AS n FROM weixin_accounts')
+        .get(),
+    ).toEqual({ n: 0 });
+  });
+
+  it('ignores a confirmation for a superseded login session', async () => {
+    const first = (await (
+      await POST(await web('POST', { action: 'start' }))
+    ).json()) as {
+      loginId: string;
+    };
+    await POST(await web('POST', { action: 'start' }));
+    const stale = (await (
+      await POST(await web('POST', { action: 'check', loginId: first.loginId }))
+    ).json()) as { progress: string };
+    expect(stale.progress).toBe('expired');
+    expect(
+      database.sqlite
+        .prepare('SELECT COUNT(*) AS n FROM weixin_accounts')
+        .get(),
+    ).toEqual({ n: 0 });
   });
 });

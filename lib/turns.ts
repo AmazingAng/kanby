@@ -105,8 +105,6 @@ export function activityVisibility(kind: string): 'conversation' | 'record' {
   return conversationKinds.has(kind) ? 'conversation' : 'record';
 }
 
-const conversationPlaceholders = CONVERSATION_KINDS.map(() => '?').join(', ');
-
 // --- Target and mention parsing ---------------------------------------------
 
 const LOGIN = '[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})';
@@ -524,78 +522,170 @@ function mapEventRow(row: Record<string, unknown>): TaskActivityEvent {
 
 // --- Agent reading: thread, unread and cursors ------------------------------
 
-export async function getReadCursor(taskId: string, readerId: string) {
+/** Stable position in a task's event stream: `<createdAt>:<eventId>`. */
+export type EventPosition = { createdAt: number; id: string };
+
+export function parseEventPosition(value: string | null | undefined) {
+  if (!value) return null;
+  const separator = value.indexOf(':');
+  const createdAt = Number(value.slice(0, separator));
+  const id = value.slice(separator + 1);
+  if (
+    separator < 1 ||
+    !Number.isSafeInteger(createdAt) ||
+    createdAt < 0 ||
+    !id ||
+    id.length > 120
+  )
+    return null;
+  return { createdAt, id };
+}
+
+export function formatEventPosition(position: EventPosition) {
+  return `${position.createdAt}:${position.id}`;
+}
+
+export async function getReadCursor(
+  taskId: string,
+  readerId: string,
+): Promise<EventPosition | null> {
   await ensureSchema();
   const row = await database()
     .prepare(
-      'SELECT read_at FROM task_read_cursors WHERE task_id = ? AND reader_id = ?',
+      'SELECT read_at, read_event_id FROM task_read_cursors WHERE task_id = ? AND reader_id = ?',
     )
     .bind(taskId, readerId)
-    .first<{ read_at: number }>();
-  return row ? Number(row.read_at) : null;
+    .first<{ read_at: number; read_event_id: string | null }>();
+  return row
+    ? { createdAt: Number(row.read_at), id: row.read_event_id ?? '' }
+    : null;
 }
 
+/**
+ * Advance the reader's cursor to an event that was actually delivered. The
+ * cursor only moves forward in (created_at, id) order, so concurrent readers
+ * and equal timestamps never skip entries.
+ */
 export async function markTaskRead(
   projectId: string,
   taskId: string,
   readerId: string,
-  at = Date.now(),
+  position: EventPosition,
 ) {
   if (recoverySnapshot()) return;
   await ensureSchema();
   await database()
     .prepare(
-      `INSERT INTO task_read_cursors (task_id, reader_id, project_id, read_at) VALUES (?, ?, ?, ?)
-       ON CONFLICT(task_id, reader_id) DO UPDATE SET read_at = MAX(task_read_cursors.read_at, excluded.read_at)`,
+      `INSERT INTO task_read_cursors (task_id, reader_id, project_id, read_at, read_event_id) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(task_id, reader_id) DO UPDATE SET
+         read_at = excluded.read_at, read_event_id = excluded.read_event_id
+       WHERE excluded.read_at > task_read_cursors.read_at
+          OR (excluded.read_at = task_read_cursors.read_at
+              AND excluded.read_event_id > COALESCE(task_read_cursors.read_event_id, ''))`,
     )
-    .bind(taskId, readerId, projectId, at)
+    .bind(taskId, readerId, projectId, position.createdAt, position.id)
     .run();
 }
 
 const EVENT_COLUMNS =
   'id, task_id, source, kind, actor_id, actor_name, actor_login, actor_avatar_url, summary, body, metadata, created_at';
 
-/** Conversation-level thread for an agent: recent entries plus what is new. */
+function clampLimit(value: number | undefined, fallback: number) {
+  return Math.min(Math.max(Math.trunc(value ?? fallback) || fallback, 1), 50);
+}
+
+/**
+ * Conversation-level view of a task for an agent.
+ * - `unread`: entries by others after the read cursor (or after `after`),
+ *   oldest first, one page of `unreadLimit`; `unreadNextCursor` continues it.
+ * - `thread`: the newest conversation entries (or those before
+ *   `threadCursor`), returned oldest first; `threadNextCursor` pages back.
+ */
 export async function agentTaskThread(input: {
   projectId: string;
   taskId: string;
   readerId: string;
-  limit?: number;
+  after?: EventPosition | null;
+  unreadLimit?: number;
+  threadCursor?: EventPosition | null;
+  threadLimit?: number;
 }) {
   await ensureSchema();
   const db = database();
-  const limit = Math.min(Math.max(input.limit ?? 30, 1), 50);
-  const lastReadAt = await getReadCursor(input.taskId, input.readerId);
+  const unreadLimit = clampLimit(input.unreadLimit, 20);
+  const threadLimit = clampLimit(input.threadLimit, 30);
+  const cursor = await getReadCursor(input.taskId, input.readerId);
+  const from = input.after ?? cursor;
+  const kinds = JSON.stringify(CONVERSATION_KINDS);
   const [recent, unread] = await Promise.all([
     db
       .prepare(
         `SELECT ${EVENT_COLUMNS} FROM task_events
-         WHERE project_id = ? AND task_id = ? AND kind IN (${conversationPlaceholders})
+         WHERE project_id = ? AND task_id = ? AND kind IN (SELECT value FROM json_each(?))
+           AND (? IS NULL OR created_at < ? OR (created_at = ? AND id < ?))
          ORDER BY created_at DESC, id DESC LIMIT ?`,
-      )
-      .bind(input.projectId, input.taskId, ...CONVERSATION_KINDS, limit)
-      .all<Record<string, unknown>>(),
-    db
-      .prepare(
-        `SELECT ${EVENT_COLUMNS} FROM task_events
-         WHERE project_id = ? AND task_id = ? AND kind IN (${conversationPlaceholders})
-           AND created_at > ? AND NOT (source = 'agent' AND actor_id = ?)
-         ORDER BY created_at DESC, id DESC LIMIT 21`,
       )
       .bind(
         input.projectId,
         input.taskId,
-        ...CONVERSATION_KINDS,
-        lastReadAt ?? -1,
+        kinds,
+        input.threadCursor ? 1 : null,
+        input.threadCursor?.createdAt ?? 0,
+        input.threadCursor?.createdAt ?? 0,
+        input.threadCursor?.id ?? '',
+        threadLimit + 1,
+      )
+      .all<Record<string, unknown>>(),
+    db
+      .prepare(
+        `SELECT ${EVENT_COLUMNS} FROM task_events
+         WHERE project_id = ? AND task_id = ? AND kind IN (SELECT value FROM json_each(?))
+           AND (? IS NULL OR created_at > ? OR (created_at = ? AND id > ?))
+           AND NOT (source = 'agent' AND actor_id = ?)
+         ORDER BY created_at ASC, id ASC LIMIT ?`,
+      )
+      .bind(
+        input.projectId,
+        input.taskId,
+        kinds,
+        from ? 1 : null,
+        from?.createdAt ?? 0,
+        from?.createdAt ?? 0,
+        from?.id ?? '',
         input.readerId,
+        unreadLimit + 1,
       )
       .all<Record<string, unknown>>(),
   ]);
+  const threadRows = recent.results.slice(0, threadLimit);
+  const unreadRows = unread.results.slice(0, unreadLimit);
+  const oldestThread = threadRows.at(-1);
+  const newestUnread = unreadRows.at(-1);
+  const unreadEnd = newestUnread
+    ? {
+        createdAt: Number(newestUnread.created_at),
+        id: String(newestUnread.id),
+      }
+    : null;
   return {
-    lastReadAt,
-    thread: recent.results.map(mapEventRow).reverse(),
-    unread: unread.results.slice(0, 20).map(mapEventRow).reverse(),
-    unreadTruncated: unread.results.length > 20,
+    lastRead: cursor ? formatEventPosition(cursor) : null,
+    lastReadAt: cursor?.createdAt ?? null,
+    thread: threadRows.map(mapEventRow).reverse(),
+    threadNextCursor:
+      recent.results.length > threadLimit && oldestThread
+        ? formatEventPosition({
+            createdAt: Number(oldestThread.created_at),
+            id: String(oldestThread.id),
+          })
+        : null,
+    unread: unreadRows.map(mapEventRow),
+    unreadHasMore: unread.results.length > unreadLimit,
+    unreadNextCursor:
+      unread.results.length > unreadLimit && unreadEnd
+        ? formatEventPosition(unreadEnd)
+        : null,
+    /** Last delivered unread entry: the only safe place to move the cursor. */
+    unreadEnd,
   };
 }
 
@@ -729,19 +819,28 @@ export async function unreadCounts(
 ) {
   await ensureSchema();
   const counts = new Map<string, number>();
-  const unique = [...new Set(taskIds)].slice(0, 100);
+  const unique = [...new Set(taskIds)];
   if (!unique.length) return counts;
+  // Task ids and kinds travel as JSON parameters so the statement stays far
+  // below D1's 100 bound-parameter limit however long the queue is.
   const result = await database()
     .prepare(
       `SELECT e.task_id, COUNT(*) AS unread FROM task_events e
        LEFT JOIN task_read_cursors c ON c.task_id = e.task_id AND c.reader_id = ?
-       WHERE e.project_id = ? AND e.task_id IN (${unique.map(() => '?').join(', ')})
-         AND e.kind IN (${conversationPlaceholders})
-         AND e.created_at > COALESCE(c.read_at, -1)
+       WHERE e.project_id = ? AND e.task_id IN (SELECT value FROM json_each(?))
+         AND e.kind IN (SELECT value FROM json_each(?))
+         AND (c.read_at IS NULL OR e.created_at > c.read_at
+              OR (e.created_at = c.read_at AND e.id > COALESCE(c.read_event_id, '')))
          AND NOT (e.source = 'agent' AND e.actor_id = ?)
        GROUP BY e.task_id`,
     )
-    .bind(readerId, projectId, ...unique, ...CONVERSATION_KINDS, readerId)
+    .bind(
+      readerId,
+      projectId,
+      JSON.stringify(unique),
+      JSON.stringify(CONVERSATION_KINDS),
+      readerId,
+    )
     .all<{ task_id: string; unread: number }>();
   for (const row of result.results) counts.set(row.task_id, Number(row.unread));
   return counts;

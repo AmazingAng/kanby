@@ -545,6 +545,9 @@ export const taskReadCursors = sqliteTable(
     readerId: text('reader_id').notNull(),
     projectId: text('project_id').notNull(),
     readAt: integer('read_at').notNull(),
+    // Id of the last delivered event, so (read_at, read_event_id) is a
+    // stable cursor even when events share a timestamp.
+    readEventId: text('read_event_id'),
   },
   (table) => [primaryKey({ columns: [table.taskId, table.readerId] })],
 );

@@ -117,7 +117,7 @@ whose turn it is: a member or a member's agent, with a reason
 
 ```bash
 kanby next --json
-kanby task get <ref> --json                 # turn, thread, unread since your last read
+kanby task get <ref> --json                 # turn, thread, unread since your last read (repeat while more remain)
 kanby task get <ref> --no-mark-read --json  # peek without advancing the cursor
 kanby task comment <ref> "@alice 需要你决定导出格式" --json
 kanby task handoff <ref> --to owner --reason awaiting_acceptance \

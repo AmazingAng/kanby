@@ -372,9 +372,9 @@ export async function sendTaskNotification(event: TaskNotification) {
       `SELECT id, project_id, user_id, kind, webhook_url, secret, enabled, updated_at
        FROM notification_channels
        WHERE project_id = ? AND enabled = 1
-         AND (user_id IS NULL OR user_id IN (${recipientIds.map(() => '?').join(', ')}))`,
+         AND (user_id IS NULL OR user_id IN (SELECT value FROM json_each(?)))`,
     )
-    .bind(event.projectId, ...recipientIds)
+    .bind(event.projectId, JSON.stringify(recipientIds))
     .all<ChannelRow>();
   await Promise.all(
     channels.results

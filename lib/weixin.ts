@@ -146,8 +146,10 @@ export async function checkWeixinLogin(
   switch (result.status) {
     case 'redirect':
       await db
-        .prepare('UPDATE weixin_logins SET base_url = ? WHERE id = ?')
-        .bind(result.baseUrl, loginId)
+        .prepare(
+          'UPDATE weixin_logins SET base_url = ? WHERE id = ? AND user_id = ?',
+        )
+        .bind(result.baseUrl, loginId, userId)
         .run();
       return 'scaned';
     case 'verify_code_blocked':
@@ -162,11 +164,16 @@ export async function checkWeixinLogin(
       return 'expired';
     case 'confirmed': {
       const now = Date.now();
-      await db.batch([
+      // The poll may have waited on iLink while the member unbound or started
+      // another login. Write only if this exact login session is still
+      // current, in the same transaction that consumes it; a stale confirm
+      // changes nothing.
+      const [written] = await db.batch([
         db
           .prepare(
             `INSERT INTO weixin_accounts (user_id, ilink_bot_id, ilink_user_enc, bot_token_enc, context_token_enc, base_url, updates_buf, status, last_error, activated_at, last_synced_at, created_at, updated_at)
-             VALUES (?, ?, ?, ?, NULL, ?, NULL, 'pending', NULL, NULL, NULL, ?, ?)
+             SELECT ?, ?, ?, ?, NULL, ?, NULL, 'pending', NULL, NULL, NULL, ?, ?
+             WHERE EXISTS (SELECT 1 FROM weixin_logins WHERE id = ? AND user_id = ? AND expires_at >= ?)
              ON CONFLICT(user_id) DO UPDATE SET
                ilink_bot_id = excluded.ilink_bot_id, ilink_user_enc = excluded.ilink_user_enc,
                bot_token_enc = excluded.bot_token_enc, context_token_enc = NULL,
@@ -181,10 +188,15 @@ export async function checkWeixinLogin(
             result.baseUrl,
             now,
             now,
+            loginId,
+            userId,
+            now,
           ),
-        db.prepare('DELETE FROM weixin_logins WHERE user_id = ?').bind(userId),
+        db
+          .prepare('DELETE FROM weixin_logins WHERE id = ? AND user_id = ?')
+          .bind(loginId, userId),
       ]);
-      return 'confirmed';
+      return Number(written?.meta.changes ?? 0) > 0 ? 'confirmed' : 'expired';
     }
     default:
       return result.status;
@@ -306,9 +318,9 @@ export async function activeWeixinUsers(userIds: string[]) {
   const result = await database()
     .prepare(
       `SELECT user_id FROM weixin_accounts WHERE status = 'active' AND context_token_enc IS NOT NULL
-       AND user_id IN (${userIds.map(() => '?').join(', ')})`,
+       AND user_id IN (SELECT value FROM json_each(?))`,
     )
-    .bind(...userIds)
+    .bind(JSON.stringify([...new Set(userIds)]))
     .all<{ user_id: string }>();
   return new Set(result.results.map((row) => row.user_id));
 }
