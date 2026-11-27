@@ -20,16 +20,17 @@ tokens.
 
 - `GET /api/v1/projects` — return the token's project.
 - `GET /api/v1/tasks?status=ideas` — list tasks.
-- `GET /api/v1/tasks?id=<ref>` — task detail, current claim, and agent activity.
+- `GET /api/v1/tasks?id=<ref>` — task detail, current claim, recent agent updates, `turn` (whose turn it is: a member or a member's agent, `reason`, `note`, `since`), `thread` (the 30 most recent conversation entries: comments, handoffs, progress, acceptance) and `unread` (conversation entries written by others since this token last read the card, at most 20, `unreadTruncated` when more exist). Reading advances the token's read cursor; add `&markRead=0` to peek.
+- `GET /api/v1/next` — the agent's queue: `turns` (cards whose turn is this token, any agent of its member, or the member personally) and `mentions` (open @mentions of the member or its agents), oldest first, each with `waitingMs` and `unreadCount`. Read-only.
 - `POST /api/v1/tasks` — create a task with `title`, optional `status`, `note`, and `due`. `due` is an optional `YYYY-MM-DD` calendar date stored with the initial task insert; omit it or pass an empty string for no deadline. Invalid dates, datetime strings, and non-string values return HTTP 400 `invalid_due` before a task is created.
-- `PATCH /api/v1/tasks` — mutate a task with `action`: `update`, `split`, `claim`, `heartbeat`, `progress`, `release`, `link`, or `complete`. An `update` may send ordered `ownerIds` with 1–3 current project-member IDs; legacy `ownerId` remains supported. `split` accepts `titles` with 1–20 child titles and is idempotent when the request supplies an `Idempotency-Key`.
+- `PATCH /api/v1/tasks` — mutate a task with `action`: `update`, `split`, `claim`, `heartbeat`, `progress`, `comment`, `handoff`, `release`, `link`, or `complete`. `comment` takes `body` (≤2000 characters); `@login` and `@login/agent` (or `@login/<agent name>`) mentions of project members create an open mention and a notification. `handoff` takes `to` (`@login`, `@login/agent`, `@login/<agent name>`, `owner`, `self`, or `none`), `reason` (`developing`, `awaiting_acceptance`, `awaiting_decision`, `blocked`, `awaiting_review`), optional `note` (≤500) and `release` (default `true`: also release this token's claim). Handing a card that awaits acceptance back with `developing` or `blocked` is recorded as `turn.rejected`. Claims guard code work only: `update`, `split`, `link`, `complete`, `archive` and `checklist.*` return `409 claimed_by_another_agent` while another token holds the claim; `progress`, `comment`, `handoff` and attachment uploads do not. An `update` may send ordered `ownerIds` with 1–3 current project-member IDs; legacy `ownerId` remains supported. `split` accepts `titles` with 1–20 child titles and is idempotent when the request supplies an `Idempotency-Key`.
 
 - `POST /api/v1/attachments` — upload a task attachment (`task:write`). Send
   `multipart/form-data` with `task` (task ref or ID in the token's project) and
   `file`, plus `Content-Length`. Files must be non-empty, at most 10 MB, with a
   name of at most 240 characters; a task holds at most 10 attachments
-  (`409 attachment_limit`). Archived or unknown tasks return `404`; a task
-  actively claimed by another Agent Token returns `409 claimed_by_another_agent`.
+  (`409 attachment_limit`). Archived or unknown tasks return `404`. Uploads are
+  accepted while another Agent Token holds the claim (review evidence).
   An optional `Idempotency-Key` replays the original `201` response for an
   identical retry (same task, name, type and content digest). Success records an
   `agent.attached` activity event and returns `{ id, name, contentType, size,

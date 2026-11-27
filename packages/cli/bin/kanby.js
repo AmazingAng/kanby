@@ -8,6 +8,13 @@ import { sessionCommand } from './session.js';
 
 const DEFAULT_URL = 'https://kanby.dev';
 const TASK_TAGS = ['产品', '设计', '代码', '增长'];
+const TURN_REASONS = [
+  'developing',
+  'awaiting_acceptance',
+  'awaiting_decision',
+  'blocked',
+  'awaiting_review',
+];
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const CONTENT_TYPES = {
   '.png': 'image/png',
@@ -195,6 +202,46 @@ function taskLine(task) {
   return `${task.ref}\t${task.status.padEnd(8)}\t${owner.padEnd(18)}\t${task.title}`;
 }
 
+function waited(ms) {
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 48 ? `${hours}h` : `${Math.floor(hours / 24)}d`;
+}
+
+function turnLine(turn) {
+  if (!turn) return 'Turn: nobody';
+  return `Turn: ${turn.label} · ${turn.reasonLabel} (${turn.reason}) since ${date(turn.since)}${turn.note ? `\n  ${turn.note}` : ''}`;
+}
+
+function eventLine(event) {
+  const who =
+    event.source === 'agent' && event.actor?.login
+      ? `${event.actor.login}/${event.actor.name}`
+      : event.actor?.name || event.source;
+  const body = event.body ? `\n    ${event.body.replace(/\n/g, '\n    ')}` : '';
+  return `- ${new Date(event.createdAt).toISOString()} ${who}: ${event.summary}${body}`;
+}
+
+function nextLines(data) {
+  const lines = [`${data.agent.label}`];
+  lines.push(
+    data.turns.length ? '\nYour turn:' : '\nYour turn: nothing waiting',
+  );
+  for (const item of data.turns)
+    lines.push(
+      `${item.ref}\t${item.turn?.reasonLabel ?? ''}\t${item.turn?.label ?? ''}\twaiting ${waited(item.waitingMs)}\t${item.unreadCount ? `${item.unreadCount} new` : ''}\t${item.title}${item.turn?.note ? `\n  ${item.turn.note}` : ''}`,
+    );
+  lines.push(data.mentions.length ? '\nMentions:' : '\nMentions: none open');
+  for (const item of data.mentions)
+    lines.push(
+      `${item.ref}\t@ by ${item.mention.by}\twaiting ${waited(item.waitingMs)}\t${item.title}${item.mention.body ? `\n  ${item.mention.body}` : ''}`,
+    );
+  if (data.turns.length || data.mentions.length)
+    lines.push('\nRead each card with: kanby task get <ref>');
+  return lines.join('\n');
+}
+
 function checklistLines(criteria = []) {
   return criteria.length
     ? criteria
@@ -244,8 +291,14 @@ Usage:
   kanby session end <session-id> --outcome completed|handed-off|cancelled|failed [--json]
   kanby session report --from YYYY-MM-DD --to YYYY-MM-DD [--timezone Asia/Shanghai] [--json]
   kanby session run --client <name> [--task <ref>] -- <command> [args...]
+  kanby next [--json]
   kanby task list [--status ideas|building|shipped] [--json]
-  kanby task get <ref> [--json]
+  kanby task get <ref> [--no-mark-read] [--json]
+  kanby task comment <ref> <text>            (@login or @login/agent mentions notify)
+  kanby task mention <ref> @login[/agent] [<text>]
+  kanby task handoff <ref> --to @login|@login/agent|@login/<agent>|owner|self|none
+                     [--reason developing|awaiting_acceptance|awaiting_decision|blocked|awaiting_review]
+                     [--note <what to check>] [--keep-claim]
   kanby task checklist <ref> [--json]
   kanby task checklist add <ref> <criterion>
   kanby task checklist edit <ref> <item-number-or-id> <criterion>
@@ -349,6 +402,11 @@ async function main() {
     );
     return;
   }
+  if (group === 'next') {
+    const data = await api('/api/v1/next');
+    out(data, nextLines);
+    return;
+  }
   if (group === 'auth' && command === 'login') {
     const token = String(option('token', process.env.KANBY_TOKEN || ''));
     const url = normalizeServerUrl(
@@ -397,10 +455,16 @@ async function main() {
   }
   if (command === 'get') {
     if (!first) throw new Error('Task ref is required');
-    const task = await api(`/api/v1/tasks?id=${encodeURIComponent(first)}`);
+    const task = await api(
+      `/api/v1/tasks?id=${encodeURIComponent(first)}${has('no-mark-read') ? '&markRead=0' : ''}`,
+    );
     out(task, (item) =>
       [
         taskLine(item),
+        turnLine(item.turn),
+        item.unread?.length
+          ? `\nNew since your last read (${item.unread.length}${item.unreadTruncated ? '+' : ''}):\n${item.unread.map(eventLine).join('\n')}`
+          : '\nNo new conversation since your last read',
         '',
         item.note || '(no notes)',
         item.acceptanceCriteria?.length
@@ -575,6 +639,47 @@ async function main() {
       data,
       (item) =>
         `${command === 'claim' ? 'Claimed' : 'Renewed'} ${item.task.ref} until ${date(item.claim.leaseExpiresAt)}`,
+    );
+    return;
+  }
+  if (command === 'comment' || command === 'mention') {
+    const text = rest.join(' ').trim();
+    if (command === 'mention' && !/^@?[A-Za-z0-9]/.test(rest[0] ?? ''))
+      throw new Error('mention requires @login or @login/agent');
+    const body =
+      command === 'mention'
+        ? `${rest[0].startsWith('@') ? '' : '@'}${text}`
+        : text || String(option('message', ''));
+    if (!body) throw new Error('Comment text is required');
+    const data = await mutate(first, 'comment', { body });
+    out(
+      data,
+      (item) =>
+        `Commented on ${first}${item.mentions.length ? ` and notified ${item.mentions.map((mention) => `@${mention.login}${mention.kind === 'agent' ? '/agent' : ''}`).join(', ')}` : ''}`,
+    );
+    return;
+  }
+  if (command === 'handoff') {
+    const to = option('to', undefined);
+    if (typeof to !== 'string')
+      throw new Error(
+        'handoff requires --to @login, @login/agent, @login/<agent>, owner, self, or none',
+      );
+    const reason = option('reason', to === 'none' ? undefined : 'developing');
+    if (reason !== undefined && !TURN_REASONS.includes(reason))
+      throw new Error(`Reason must be one of: ${TURN_REASONS.join(', ')}`);
+    const note = option('note', undefined);
+    if (note === true) throw new Error('--note requires text');
+    const data = await mutate(first, 'handoff', {
+      to,
+      reason,
+      note,
+      release: !has('keep-claim'),
+    });
+    out(
+      data,
+      (item) =>
+        `${item.turn ? `${item.rejected ? 'Rejected acceptance; handed' : 'Handed'} ${item.task.ref} to ${item.turn.label} · ${item.turn.reasonLabel}` : `Cleared the turn on ${item.task.ref}`}${item.released ? ' (claim released)' : ''}`,
     );
     return;
   }

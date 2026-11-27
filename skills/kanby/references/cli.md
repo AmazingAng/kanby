@@ -13,6 +13,10 @@ If `kanby` is not installed and a Kanby checkout is available, run `node package
 | Intent            | Command                                                                                                                               |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | Verify access     | `kanby auth status --json`                                                                                                            |
+| Your queue        | `kanby next --json`                                                                                                                   |
+| Comment / ask     | `kanby task comment <ref> "@login …" --json`                                                                                          |
+| Mention           | `kanby task mention <ref> @login[/agent] "…" --json`                                                                                  |
+| Hand off          | `kanby task handoff <ref> --to @login\|owner --reason awaiting_acceptance --note "…" --json`                                          |
 | List project      | `kanby project list --json`                                                                                                           |
 | List tasks        | `kanby task list [--status ideas\|building\|shipped] --json`                                                                          |
 | Inspect task      | `kanby task get <ref> --json`                                                                                                         |
@@ -90,7 +94,7 @@ Replace item placeholders with IDs from the current list. `check <ref> 1` also s
 CLI 0.6.0+ with a server that provides `/api/v1/attachments` can attach evidence
 files (screenshots, logs, reports) to a task. Each file is at most 10 MB and a task
 holds at most 10 attachments; empty files are rejected. Uploads need `task:write`,
-are refused with exit code `3` while another Agent Token holds the claim, and are
+are accepted while another Agent Token holds the claim (CLI 0.7.0 server), and are
 recorded in the task activity. Archived tasks cannot receive uploads. Listing and
 downloading need only `task:read`. `download` writes to the attachment name in the
 current directory unless `--output` is given and never overwrites an existing file
@@ -103,6 +107,31 @@ kanby task attach <ref> ./screenshots/after.png --json
 kanby task attachments <ref> --json
 kanby task download <attachment-id> --output ./after.png
 ```
+
+## Turns, comments and handoffs
+
+CLI 0.7.0+ with a server that provides `/api/v1/next`. Every open card can name
+whose turn it is: a member or a member's agent, with a reason
+(`developing`, `awaiting_acceptance`, `awaiting_decision`, `blocked`,
+`awaiting_review`), an optional note and the time the turn started.
+
+```bash
+kanby next --json
+kanby task get <ref> --json                 # turn, thread, unread since your last read
+kanby task get <ref> --no-mark-read --json  # peek without advancing the cursor
+kanby task comment <ref> "@alice 需要你决定导出格式" --json
+kanby task handoff <ref> --to owner --reason awaiting_acceptance \
+  --note "验收：1) 登录 2) 退出 3) 附件 report.html" --json
+kanby task handoff <ref> --to @bob/agent --reason awaiting_review --note "复核迁移" --json
+```
+
+`--to` accepts `@login` (a member), `@login/agent` (any agent of that member),
+`@login/<agent name>`, `owner` (your token's member), `self` or `none`. A
+handoff releases your claim unless `--keep-claim` is passed. A member handing a
+card that awaits acceptance back with `developing`/`blocked` records an
+acceptance rejection. Handoffs, rejections and @mentions notify the recipient
+through the project's Feishu/WeCom bots when configured. Comments, mentions,
+handoffs, progress and attachments never need the claim.
 
 ## Historical reports and unified activity
 
