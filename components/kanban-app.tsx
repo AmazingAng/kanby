@@ -90,6 +90,13 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { TaskMarkdown } from '@/components/task-markdown';
+import {
+  TurnChip,
+  TurnEditor,
+  TurnQueue,
+  type ClientTurn,
+  type TurnQueueEntry,
+} from '@/components/turn-panel';
 import { cn } from '@/lib/utils';
 import { mergePolledTasks, shouldCloseTaskEditor } from '@/lib/task-sync';
 import {
@@ -148,8 +155,10 @@ type Task = {
   attachments?: TaskAttachment[];
   acceptanceCriteria?: TaskAcceptanceCriterion[];
   githubLink?: TaskGitHubLink;
+  turn?: ClientTurn;
   agentState?: {
     agentName: string;
+    agentLabel?: string;
     leaseExpiresAt: number;
     lastHeartbeatAt: number;
     latestProgress: string | null;
@@ -701,13 +710,14 @@ function TaskCardBody({
           </div>
         </div>
       )}
+      {task.turn && task.status !== 'shipped' && <TurnChip turn={task.turn} />}
       {task.agentState && (
         <div className="mt-3 rounded-lg bg-acid/15 px-2.5 py-2">
           <p className="flex items-center gap-1.5 truncate text-[11px] font-medium text-ink">
             <span className="size-1.5 shrink-0 rounded-full bg-acid ring-2 ring-acid/25" />
             <Bot className="size-3 shrink-0" />
             <span className="truncate">
-              {task.agentState.agentName} 正在处理
+              {task.agentState.agentLabel ?? task.agentState.agentName} 正在处理
             </span>
           </p>
           {task.agentState.latestProgress && (
@@ -1092,6 +1102,13 @@ export function KanbanApp({
   const [search, setSearch] = useState('');
   const [mobileColumn, setMobileColumn] = useState<ColumnId>('ideas');
   const [memberFilter, setMemberFilter] = useState('all');
+  const [turnQueue, setTurnQueue] = useState<TurnQueueEntry[]>([]);
+  const [boardView, setBoardView] = useState<'turns' | 'board' | null>(null);
+  const pendingDeepLink = useRef<string | null>(
+    typeof window === 'undefined'
+      ? null
+      : new URLSearchParams(window.location.search).get('task'),
+  );
   const [composer, setComposer] = useState<ColumnId | null>(null);
   const [newTitle, setNewTitle] = useState('');
   const [taskDraft, setTaskDraft] = useState<TaskDraft | null>(null);
@@ -1312,6 +1329,7 @@ export function KanbanApp({
       if (cancelled) return;
       setTasks([]);
       setMembers([]);
+      setTurnQueue([]);
       setGithubActivity([]);
       setGithubConnected(false);
       setGithubAutomation(null);
@@ -1321,6 +1339,29 @@ export function KanbanApp({
       if (inFlight) return;
       inFlight = true;
       try {
+        void fetch(`/api/turns?projectId=${encodeURIComponent(projectId)}`, {
+          cache: 'no-store',
+        })
+          .then(async (response) => {
+            if (!response.ok || cancelled) return;
+            const payload = (await response.json()) as {
+              items: TurnQueueEntry[];
+            };
+            if (cancelled) return;
+            setTurnQueue(payload.items);
+            setBoardView((current) => {
+              if (current) return current;
+              let saved: string | null = null;
+              try {
+                saved = window.localStorage.getItem('kanby:view');
+              } catch {
+                saved = null;
+              }
+              if (saved === 'board' || saved === 'turns') return saved;
+              return payload.items.length > 0 ? 'turns' : 'board';
+            });
+          })
+          .catch(() => undefined);
         const [taskResponse, memberResponse, githubResponse] =
           await Promise.all([
             fetch(`/api/tasks?projectId=${encodeURIComponent(projectId)}`, {
@@ -1740,6 +1781,37 @@ export function KanbanApp({
       setTaskComment('');
     }
     setTaskDraft(draft);
+  }
+
+  const openDeepLinkedTask = useEffectEvent(() => {
+    const reference = pendingDeepLink.current;
+    if (!reference || tasks.length === 0) return;
+    pendingDeepLink.current = null;
+    const match = /^KANBY-(\d+)$/i.exec(reference);
+    const task = tasks.find((candidate) =>
+      match
+        ? candidate.number === Number(match[1])
+        : candidate.id.startsWith(reference),
+    );
+    if (task) openTask(task);
+  });
+
+  useEffect(() => {
+    openDeepLinkedTask();
+  }, [tasks]);
+
+  function openTaskById(taskId: string) {
+    const task = tasks.find((candidate) => candidate.id === taskId);
+    if (task) openTask(task);
+  }
+
+  function chooseView(view: 'turns' | 'board') {
+    setBoardView(view);
+    try {
+      window.localStorage.setItem('kanby:view', view);
+    } catch {
+      // Preference only; ignore unavailable storage.
+    }
   }
 
   async function openRelatedTask(task: Task) {
@@ -3049,6 +3121,43 @@ export function KanbanApp({
               {isDemo ? '示例看板' : `${activeProject?.name} 看板`}
             </h1>
             <div className="flex flex-wrap items-center gap-2 py-3">
+              {!isDemo && (
+                <div
+                  className="flex shrink-0 gap-1 rounded-xl bg-ink/[0.05] p-1"
+                  role="tablist"
+                  aria-label="视图"
+                >
+                  {(
+                    [
+                      [
+                        'turns',
+                        `轮到我${turnQueue.length ? ` ${turnQueue.length}` : ''}`,
+                      ],
+                      ['board', '看板'],
+                    ] as const
+                  ).map(([view, label]) => (
+                    <button
+                      key={view}
+                      type="button"
+                      role="tab"
+                      aria-selected={(boardView ?? 'board') === view}
+                      onClick={() => chooseView(view)}
+                      className={cn(
+                        'h-8 rounded-lg px-3 text-xs font-semibold transition-colors',
+                        (boardView ?? 'board') === view
+                          ? 'bg-card text-ink shadow-sm'
+                          : 'text-ink-subtle hover:text-ink',
+                        view === 'turns' &&
+                          turnQueue.length > 0 &&
+                          (boardView ?? 'board') !== view &&
+                          'text-ink',
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="relative min-w-0 flex-1 sm:max-w-72">
                 <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-subtle" />
                 <Input
@@ -3197,113 +3306,126 @@ export function KanbanApp({
                 <X className="size-3.5" />
               </button>
             )}
-            <nav
-              className="mb-3 grid grid-cols-3 gap-1 rounded-xl bg-ink/[0.05] p-1 sm:hidden"
-              aria-label="看板列快捷导航"
-            >
-              {columns.map((column) => (
-                <button
-                  key={column.id}
-                  onClick={() => {
-                    setMobileColumn(column.id);
-                    document
-                      .getElementById(`column-${column.id}`)
-                      ?.scrollIntoView({
-                        behavior: window.matchMedia(
-                          '(prefers-reduced-motion: reduce)',
-                        ).matches
-                          ? 'auto'
-                          : 'smooth',
-                        block: 'nearest',
-                        inline: 'start',
-                      });
-                  }}
-                  className={cn(
-                    'flex min-h-10 items-center justify-center gap-2 rounded-lg text-xs font-medium transition-colors',
-                    mobileColumn === column.id
-                      ? 'bg-card text-ink shadow-sm'
-                      : 'text-ink-subtle hover:text-ink',
-                  )}
-                  aria-current={mobileColumn === column.id ? 'true' : undefined}
-                  aria-controls={`column-${column.id}`}
+            {!isDemo && boardView === 'turns' ? (
+              <TurnQueue
+                items={turnQueue}
+                currentUserId={auth.user?.id ?? null}
+                onOpen={openTaskById}
+              />
+            ) : (
+              <>
+                <nav
+                  className="mb-3 grid grid-cols-3 gap-1 rounded-xl bg-ink/[0.05] p-1 sm:hidden"
+                  aria-label="看板列快捷导航"
                 >
-                  {column.title}
-                  <span className="text-ink-faint">
-                    {
-                      visibleTasks.filter((task) => task.status === column.id)
-                        .length
-                    }
-                  </span>
-                </button>
-              ))}
-            </nav>
-            <DndContext
-              id="kanby-board"
-              sensors={sensors}
-              collisionDetection={boardCollisionDetection}
-              onDragStart={handleDragStart}
-              onDragOver={handleDragOver}
-              onDragCancel={handleDragCancel}
-              onDragEnd={handleDragEnd}
-            >
-              <section
-                aria-label="任务看板"
-                onScroll={(event) => {
-                  const board = event.currentTarget;
-                  const left = board.getBoundingClientRect().left;
-                  const closest = columns.reduce(
-                    (best, column) => {
-                      const distance = Math.abs(
-                        (document
+                  {columns.map((column) => (
+                    <button
+                      key={column.id}
+                      onClick={() => {
+                        setMobileColumn(column.id);
+                        document
                           .getElementById(`column-${column.id}`)
-                          ?.getBoundingClientRect().left ?? Infinity) -
-                          left -
-                          16,
+                          ?.scrollIntoView({
+                            behavior: window.matchMedia(
+                              '(prefers-reduced-motion: reduce)',
+                            ).matches
+                              ? 'auto'
+                              : 'smooth',
+                            block: 'nearest',
+                            inline: 'start',
+                          });
+                      }}
+                      className={cn(
+                        'flex min-h-10 items-center justify-center gap-2 rounded-lg text-xs font-medium transition-colors',
+                        mobileColumn === column.id
+                          ? 'bg-card text-ink shadow-sm'
+                          : 'text-ink-subtle hover:text-ink',
+                      )}
+                      aria-current={
+                        mobileColumn === column.id ? 'true' : undefined
+                      }
+                      aria-controls={`column-${column.id}`}
+                    >
+                      {column.title}
+                      <span className="text-ink-faint">
+                        {
+                          visibleTasks.filter(
+                            (task) => task.status === column.id,
+                          ).length
+                        }
+                      </span>
+                    </button>
+                  ))}
+                </nav>
+                <DndContext
+                  id="kanby-board"
+                  sensors={sensors}
+                  collisionDetection={boardCollisionDetection}
+                  onDragStart={handleDragStart}
+                  onDragOver={handleDragOver}
+                  onDragCancel={handleDragCancel}
+                  onDragEnd={handleDragEnd}
+                >
+                  <section
+                    aria-label="任务看板"
+                    onScroll={(event) => {
+                      const board = event.currentTarget;
+                      const left = board.getBoundingClientRect().left;
+                      const closest = columns.reduce(
+                        (best, column) => {
+                          const distance = Math.abs(
+                            (document
+                              .getElementById(`column-${column.id}`)
+                              ?.getBoundingClientRect().left ?? Infinity) -
+                              left -
+                              16,
+                          );
+                          return distance < best.distance
+                            ? { id: column.id, distance }
+                            : best;
+                        },
+                        { id: mobileColumn, distance: Infinity },
                       );
-                      return distance < best.distance
-                        ? { id: column.id, distance }
-                        : best;
-                    },
-                    { id: mobileColumn, distance: Infinity },
-                  );
-                  setMobileColumn(closest.id);
-                }}
-                className={cn(
-                  '-mx-4 flex gap-2 overflow-x-auto px-4 pb-5 scroll-px-4 overscroll-x-contain [scrollbar-width:none] sm:-mx-2 sm:gap-3 sm:px-2 sm:pb-6 sm:scroll-px-2 [&::-webkit-scrollbar]:hidden',
-                  activeId ? 'snap-none' : 'snap-x snap-mandatory',
-                )}
-              >
-                {columns.map((column) => (
-                  <BoardColumn
-                    key={column.id}
-                    column={column}
-                    tasks={groupSameColumnTaskFamilies(
-                      orderedColumnTasks(visibleTasks, column.id),
-                      column.id,
+                      setMobileColumn(closest.id);
+                    }}
+                    className={cn(
+                      '-mx-4 flex gap-2 overflow-x-auto px-4 pb-5 scroll-px-4 overscroll-x-contain [scrollbar-width:none] sm:-mx-2 sm:gap-3 sm:px-2 sm:pb-6 sm:scroll-px-2 [&::-webkit-scrollbar]:hidden',
+                      activeId ? 'snap-none' : 'snap-x snap-mandatory',
                     )}
-                    onAdd={setComposer}
-                    onOpenTask={openTask}
-                    onArchiveTask={(task) => void archiveTaskFromCard(task)}
-                    archiveDisabled={taskLifecycleSaving}
-                    filtered={hasFilters}
-                    progressByParent={progressByParent}
-                    indicator={
-                      dropIndicator?.status === column.id
-                        ? dropIndicator
-                        : undefined
-                    }
-                  />
-                ))}
-              </section>
-              <DragOverlay dropAnimation={dropAnimation}>
-                {activeTask ? (
-                  <TaskCardOverlay
-                    task={activeTask}
-                    progress={progressByParent.get(activeTask.id)}
-                  />
-                ) : null}
-              </DragOverlay>
-            </DndContext>
+                  >
+                    {columns.map((column) => (
+                      <BoardColumn
+                        key={column.id}
+                        column={column}
+                        tasks={groupSameColumnTaskFamilies(
+                          orderedColumnTasks(visibleTasks, column.id),
+                          column.id,
+                        )}
+                        onAdd={setComposer}
+                        onOpenTask={openTask}
+                        onArchiveTask={(task) => void archiveTaskFromCard(task)}
+                        archiveDisabled={taskLifecycleSaving}
+                        filtered={hasFilters}
+                        progressByParent={progressByParent}
+                        indicator={
+                          dropIndicator?.status === column.id
+                            ? dropIndicator
+                            : undefined
+                        }
+                      />
+                    ))}
+                  </section>
+                  <DragOverlay dropAnimation={dropAnimation}>
+                    {activeTask ? (
+                      <TaskCardOverlay
+                        task={activeTask}
+                        progress={progressByParent.get(activeTask.id)}
+                      />
+                    ) : null}
+                  </DragOverlay>
+                </DndContext>
+              </>
+            )}
             <footer className="flex flex-col items-start justify-between gap-2 border-t border-ink/10 pt-4 text-[11px] text-ink-faint sm:flex-row sm:items-center">
               <p className="sm:hidden">轻点卡片编辑 · 长按整张卡推进任务</p>
               <p className="hidden sm:block">
@@ -4439,11 +4561,39 @@ export function KanbanApp({
                         <span className="size-1.5 shrink-0 rounded-full bg-acid" />
                         <Bot className="size-3 shrink-0" />
                         <span className="truncate">
-                          {editedTask.agentState.agentName} 正在处理
+                          {editedTask.agentState.agentLabel ??
+                            editedTask.agentState.agentName}{' '}
+                          正在处理
                         </span>
                       </span>
                     )}
                   </div>
+                  {!isDemo && editedTask && (
+                    <TurnEditor
+                      key={`${editedTask.id}:${editedTask.turn?.since ?? 0}`}
+                      projectId={activeProjectId}
+                      taskId={editedTask.id}
+                      turn={editedTask.turn}
+                      members={members}
+                      onError={setSyncError}
+                      onChanged={(turn) => {
+                        setTasks((current) =>
+                          current.map((task) =>
+                            task.id === editedTask.id
+                              ? { ...task, turn: turn ?? undefined }
+                              : task,
+                          ),
+                        );
+                        setTurnQueue((current) =>
+                          current.filter(
+                            (item) =>
+                              item.taskId !== editedTask.id ||
+                              item.type === 'mention',
+                          ),
+                        );
+                      }}
+                    />
+                  )}
                   <div className="rounded-2xl bg-canvas p-3">
                     {taskActivityLoading && taskActivity.length === 0 ? (
                       <div className="grid min-h-20 place-items-center">
@@ -4575,7 +4725,7 @@ export function KanbanApp({
                           }
                         }}
                         maxLength={2000}
-                        placeholder="写一条评论…"
+                        placeholder="写一条评论…（@login 提醒成员，@login/agent 提醒其 agent）"
                         className="min-h-11 resize-none rounded-xl border-ink/15 px-3 py-2.5 text-sm focus-visible:ring-0"
                       />
                     </div>
