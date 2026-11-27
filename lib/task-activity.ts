@@ -40,6 +40,8 @@ export type TaskActivityInput = {
 export type TaskAgentState = {
   taskId: string;
   agentName: string;
+  /** "<member> 的 <agent>" when the claiming token still exists. */
+  agentLabel: string;
   leaseExpiresAt: number;
   lastHeartbeatAt: number;
   latestProgress: string | null;
@@ -294,8 +296,10 @@ export async function listProjectAgentStates(
   const result = await database()
     .prepare(
       `SELECT c.task_id, c.agent_name, c.lease_expires_at, c.updated_at,
-        e.body AS latest_progress, e.created_at AS latest_progress_at
+        e.body AS latest_progress, e.created_at AS latest_progress_at, u.name AS owner_name
        FROM task_agent_claims c
+       LEFT JOIN agent_tokens at ON at.id = c.token_id
+       LEFT JOIN users u ON u.id = at.user_id
        LEFT JOIN task_events e ON e.id = (
          SELECT recent.id FROM task_events recent
          WHERE recent.project_id = c.project_id
@@ -315,10 +319,14 @@ export async function listProjectAgentStates(
       updated_at: number;
       latest_progress: string | null;
       latest_progress_at: number | null;
+      owner_name: string | null;
     }>();
   return result.results.map((row) => ({
     taskId: row.task_id,
     agentName: row.agent_name,
+    agentLabel: row.owner_name
+      ? `${row.owner_name} 的 ${row.agent_name}`
+      : row.agent_name,
     leaseExpiresAt: Number(row.lease_expires_at),
     lastHeartbeatAt: Number(row.updated_at),
     latestProgress: row.latest_progress,

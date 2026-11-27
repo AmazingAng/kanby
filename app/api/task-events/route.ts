@@ -8,12 +8,8 @@ import {
   isJsonContentType,
   readJsonObjectWithLimit,
 } from '@/lib/request-limits';
-import {
-  appendTaskActivity,
-  listProjectAgentStates,
-  listTaskActivity,
-  userActivityActor,
-} from '@/lib/task-activity';
+import { listProjectAgentStates, listTaskActivity } from '@/lib/task-activity';
+import { postTaskComment, userCollabActor } from '@/lib/turns';
 
 export const dynamic = 'force-dynamic';
 
@@ -93,14 +89,21 @@ export async function POST(request: Request) {
     !(await taskBelongsToProject(taskId, projectId))
   )
     return Response.json({ error: 'Forbidden' }, { status: 403 });
-  const event = await appendTaskActivity({
+  const { event, mentions } = await postTaskComment({
     projectId,
     taskId,
-    source: 'user',
-    kind: 'comment.created',
-    ...userActivityActor(user),
-    summary: `${user.name} 发表了评论`,
     body: comment,
+    actor: userCollabActor(user),
   });
-  return Response.json({ event }, { status: 201 });
+  return Response.json(
+    {
+      event,
+      mentions: mentions.map((mention) => ({
+        kind: mention.kind,
+        login: mention.login,
+        userId: mention.userId,
+      })),
+    },
+    { status: 201 },
+  );
 }

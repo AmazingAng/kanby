@@ -43,6 +43,21 @@ import {
 } from '@/lib/request-limits';
 
 import { parseTaskDueDate } from '@/lib/task-due';
+import {
+  agentCollabActor,
+  agentTaskThread,
+  isTurnReason,
+  markTaskRead,
+  MAX_COMMENT_LENGTH,
+  MAX_TURN_NOTE_LENGTH,
+  parseTargetSpec,
+  postTaskComment,
+  resolveTarget,
+  setTaskTurn,
+  TurnTaskNotFoundError,
+  type TurnTarget,
+} from '@/lib/turns';
+import type { AgentIdentity } from '@/lib/agent';
 
 export const dynamic = 'force-dynamic';
 
@@ -149,12 +164,56 @@ function replay(decision: Awaited<ReturnType<typeof idempotent>>) {
   return null;
 }
 
-async function detailedTask(task: TaskRecord) {
+async function detailedTask(
+  task: TaskRecord,
+  identity: AgentIdentity,
+  markRead: boolean,
+) {
+  const readAt = Date.now();
+  const [claim, updates, conversation] = await Promise.all([
+    getTaskClaim(task.id),
+    listAgentUpdates(task.id),
+    agentTaskThread({
+      projectId: identity.projectId,
+      taskId: task.id,
+      readerId: identity.tokenId,
+    }),
+  ]);
+  if (markRead)
+    await markTaskRead(identity.projectId, task.id, identity.tokenId, readAt);
   return {
     ...publicTask(task),
-    claim: await getTaskClaim(task.id),
-    updates: await listAgentUpdates(task.id),
+    claim,
+    updates,
+    turn: task.turn ?? null,
+    thread: conversation.thread,
+    unread: conversation.unread,
+    unreadTruncated: conversation.unreadTruncated,
+    lastReadAt: conversation.lastReadAt,
   };
+}
+
+/** `@login`, `@login/agent`, `@login/<agent>`, `owner`, `self` or `none`. */
+async function handoffTarget(
+  identity: AgentIdentity,
+  value: unknown,
+): Promise<TurnTarget | null | 'invalid'> {
+  if (typeof value !== 'string' || value.length > 100) return 'invalid';
+  const spec = value.trim();
+  if (spec === 'none') return null;
+  if (spec === 'owner')
+    return { kind: 'member', userId: identity.userId, tokenId: null };
+  if (spec === 'self')
+    return {
+      kind: 'agent',
+      userId: identity.userId,
+      tokenId: identity.tokenId,
+    };
+  const parsed = parseTargetSpec(spec);
+  if (!parsed) return 'invalid';
+  const target = await resolveTarget(identity.projectId, parsed);
+  if (!target) return 'invalid';
+  return { kind: target.kind, userId: target.userId, tokenId: target.tokenId };
 }
 
 export async function GET(request: Request) {
@@ -171,7 +230,10 @@ export async function GET(request: Request) {
         404,
       );
     return Response.json(
-      { ok: true, data: await detailedTask(task) },
+      {
+        ok: true,
+        data: await detailedTask(task, auth, params.get('markRead') !== '0'),
+      },
       { headers: { 'Cache-Control': 'no-store' } },
     );
   }
@@ -282,9 +344,9 @@ export async function PATCH(request: Request) {
       404,
     );
   if (
-    (['update', 'progress', 'link', 'complete', 'split', 'archive'].includes(
-      action,
-    ) ||
+    // Claims guard code work and card structure only. Progress, comments,
+    // handoffs and attachments stay open so reviewers can always speak.
+    (['update', 'link', 'complete', 'split', 'archive'].includes(action) ||
       checklistActions.has(action)) &&
     !(await canMutateTask(auth, task.id))
   ) {
@@ -374,16 +436,86 @@ export async function PATCH(request: Request) {
         task.id,
         'progress',
         message,
-        undefined,
-        true,
       );
-      if (!update)
-        return reject(
-          'claimed_by_another_agent',
-          'Task is actively claimed by another Agent Token',
-          409,
-        );
       response = { ok: true, data: update };
+    } else if (action === 'comment') {
+      const comment = typeof body.body === 'string' ? body.body.trim() : '';
+      if (!comment || comment.length > MAX_COMMENT_LENGTH)
+        return reject(
+          'invalid_comment',
+          `Comment body is required and must be at most ${MAX_COMMENT_LENGTH} characters`,
+          400,
+        );
+      const result = await postTaskComment({
+        projectId: auth.projectId,
+        taskId: task.id,
+        body: comment,
+        actor: agentCollabActor(auth),
+      });
+      await markTaskRead(auth.projectId, task.id, auth.tokenId);
+      response = {
+        ok: true,
+        data: {
+          event: result.event,
+          mentions: result.mentions.map((mention) => ({
+            kind: mention.kind,
+            login: mention.login,
+            userId: mention.userId,
+            tokenId: mention.tokenId,
+          })),
+        },
+      };
+    } else if (action === 'handoff') {
+      const target = await handoffTarget(auth, body.to);
+      if (target === 'invalid')
+        return reject(
+          'invalid_target',
+          'to must be @login, @login/agent, @login/<agent name>, owner, self, or none, naming a project member',
+          400,
+        );
+      const reason = body.reason === undefined ? 'developing' : body.reason;
+      const note = typeof body.note === 'string' ? body.note.trim() : '';
+      if (
+        (target && !isTurnReason(reason)) ||
+        (body.note !== undefined && typeof body.note !== 'string') ||
+        note.length > MAX_TURN_NOTE_LENGTH
+      )
+        return reject(
+          'invalid_handoff',
+          `reason must be developing, awaiting_acceptance, awaiting_decision, blocked, or awaiting_review; note at most ${MAX_TURN_NOTE_LENGTH} characters`,
+          400,
+        );
+      const result = await setTaskTurn({
+        projectId: auth.projectId,
+        taskId: task.id,
+        target,
+        reason: target && isTurnReason(reason) ? reason : null,
+        note: note || null,
+        actor: agentCollabActor(auth),
+      });
+      if (!result)
+        return reject('invalid_target', 'Handoff target is not available', 400);
+      const released =
+        body.release !== false &&
+        !(target?.kind === 'agent' && target.tokenId === auth.tokenId) &&
+        (await releaseTask(auth, task.id));
+      if (released)
+        await recordAgentUpdate(
+          auth,
+          task.id,
+          'released',
+          'Released task claim',
+        );
+      await markTaskRead(auth.projectId, task.id, auth.tokenId);
+      response = {
+        ok: true,
+        data: {
+          task: publicTask({ ...task, turn: result.turn ?? undefined }),
+          turn: result.turn,
+          rejected: result.rejected,
+          released,
+        },
+      };
     } else if (action === 'split') {
       const rawTitles = Array.isArray(body.titles) ? body.titles : [];
       const titles = rawTitles.map((title) =>
@@ -668,7 +800,7 @@ export async function PATCH(request: Request) {
     } else {
       return reject(
         'invalid_action',
-        'Action must be update, split, claim, heartbeat, progress, release, link, complete, archive, or checklist.*',
+        'Action must be update, split, claim, heartbeat, progress, comment, handoff, release, link, complete, archive, or checklist.*',
         400,
       );
     }
@@ -678,10 +810,13 @@ export async function PATCH(request: Request) {
       error instanceof AcceptanceCriterionRevisionConflictError ||
       error instanceof AcceptanceCriteriaLimitError ||
       error instanceof TaskClaimConflictError ||
-      error instanceof TaskHierarchyError
+      error instanceof TaskHierarchyError ||
+      error instanceof TurnTaskNotFoundError
     ) {
       if (idempotency.kind === 'acquired')
         await abortIdempotentRequest(idempotency.reservation);
+      if (error instanceof TurnTaskNotFoundError)
+        return fail('not_found', error.message, 404);
       return fail(
         error instanceof TaskClaimConflictError
           ? 'claimed_by_another_agent'

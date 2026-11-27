@@ -2,6 +2,13 @@ import { env } from 'cloudflare:workers';
 
 import type { AuthUser } from '@/lib/auth';
 import type { TaskAgentState } from '@/lib/task-activity';
+import {
+  mapTurn,
+  TURN_ROW_COLUMNS,
+  TURN_ROW_JOINS,
+  type TaskTurn,
+  type TurnRow,
+} from '@/lib/task-turn';
 
 export type ColumnId = 'ideas' | 'building' | 'shipped';
 export type TaskTag = '产品' | '设计' | '代码' | '增长';
@@ -37,6 +44,7 @@ export type TaskRecord = {
   acceptanceCriteria: TaskAcceptanceCriterionRecord[];
   githubLink?: TaskGitHubLinkRecord;
   agentState?: Omit<TaskAgentState, 'taskId'>;
+  turn?: TaskTurn;
 };
 
 export type TaskAcceptanceCriterionRecord = {
@@ -93,7 +101,7 @@ export type ProjectMemberRecord = {
   pending?: boolean;
 };
 
-type TaskRow = {
+type TaskRow = Partial<TurnRow> & {
   id: string;
   task_number: number | null;
   title: string;
@@ -268,6 +276,18 @@ function mapTask(
     acceptanceCriteria,
     githubLink,
     agentState,
+    turn: mapTurn({
+      turn_kind: row.turn_kind ?? null,
+      turn_user_id: row.turn_user_id ?? null,
+      turn_token_id: row.turn_token_id ?? null,
+      turn_reason: row.turn_reason ?? null,
+      turn_note: row.turn_note ?? null,
+      turn_since: row.turn_since ?? null,
+      turn_user_login: row.turn_user_login ?? null,
+      turn_user_name: row.turn_user_name ?? null,
+      turn_user_avatar_url: row.turn_user_avatar_url ?? null,
+      turn_agent_name: row.turn_agent_name ?? null,
+    }),
   };
 }
 
@@ -602,10 +622,11 @@ export async function listTasks(
   ] = await Promise.all([
     db
       .prepare(
-        `SELECT id, task_number, title, note, tag, owner_id, owner_login, owner_name, owner_avatar_url, due, status, position, updated_at, archived_at, parent_task_id
-         FROM tasks
-         WHERE project_id = ? AND archived_at IS ${archived ? 'NOT NULL' : 'NULL'}
-         ORDER BY ${archived ? 'archived_at DESC' : "CASE status WHEN 'ideas' THEN 0 WHEN 'building' THEN 1 ELSE 2 END, position ASC"}`,
+        `SELECT t.id, t.task_number, t.title, t.note, t.tag, t.owner_id, t.owner_login, t.owner_name, t.owner_avatar_url, t.due, t.status, t.position, t.updated_at, t.archived_at, t.parent_task_id,
+           ${TURN_ROW_COLUMNS}
+         FROM tasks t ${TURN_ROW_JOINS}
+         WHERE t.project_id = ? AND t.archived_at IS ${archived ? 'NOT NULL' : 'NULL'}
+         ORDER BY ${archived ? 't.archived_at DESC' : "CASE t.status WHEN 'ideas' THEN 0 WHEN 'building' THEN 1 ELSE 2 END, t.position ASC"}`,
       )
       .bind(projectId)
       .all<TaskRow>(),
@@ -1571,7 +1592,9 @@ export async function updateTask(
   }
   const updated = await db
     .prepare(
-      'SELECT id, task_number, title, note, tag, owner_id, owner_login, owner_name, owner_avatar_url, due, status, position, updated_at, archived_at, parent_task_id FROM tasks WHERE id = ? AND project_id = ? AND archived_at IS NULL',
+      `SELECT t.id, t.task_number, t.title, t.note, t.tag, t.owner_id, t.owner_login, t.owner_name, t.owner_avatar_url, t.due, t.status, t.position, t.updated_at, t.archived_at, t.parent_task_id,
+         ${TURN_ROW_COLUMNS}
+       FROM tasks t ${TURN_ROW_JOINS} WHERE t.id = ? AND t.project_id = ? AND t.archived_at IS NULL`,
     )
     .bind(input.id, projectId)
     .first<TaskRow>();
