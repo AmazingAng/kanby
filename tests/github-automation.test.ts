@@ -1,9 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PATCH as patchGitHubSettings } from '@/app/api/github/route';
 import { POST as importIssue } from '@/app/api/github/issue-task/route';
+import { DELETE as unlinkItem } from '@/app/api/github/task-link/route';
 import { POST as githubWebhook } from '@/app/api/github/webhook/route';
 import { createSessionToken, SESSION_COOKIE } from '@/lib/auth';
+import * as github from '@/lib/github';
 import {
   DEFAULT_GITHUB_AUTOMATION,
   extractKanbyTaskReference,
@@ -13,7 +16,11 @@ import {
   setProjectGitHubAutomation,
 } from '@/lib/github-automation';
 
-import { createMigratedDatabase, type TestD1Database } from './support/d1';
+import {
+  applyMigrations,
+  createMigratedDatabase,
+  TestD1Database,
+} from './support/d1';
 import {
   configureEnvironment,
   origin,
@@ -92,6 +99,9 @@ function pullRequestPayload(input: {
   merged?: boolean;
   branch?: string;
   headRepositoryId?: number;
+  number?: number;
+  at?: string;
+  base?: string;
 }) {
   return {
     action: input.action,
@@ -99,14 +109,18 @@ function pullRequestPayload(input: {
     repository: { id: 1, full_name: 'xapi-labs/kanby' },
     sender: { login: 'alice', avatar_url: 'https://avatars.test/alice.png' },
     pull_request: {
-      number: 42,
+      number: input.number ?? 42,
       title: 'Ship GitHub automation',
       body: input.taskReference
         ? `Implements the rules.\n\nKanby-Task: ${input.taskReference}`
         : 'No task marker',
-      html_url: 'https://github.com/xapi-labs/kanby/pull/42',
+      html_url: `https://github.com/xapi-labs/kanby/pull/${input.number ?? 42}`,
       state: input.action === 'closed' ? 'closed' : 'open',
       merged: input.merged ?? false,
+      updated_at: input.at,
+      merged_at: input.merged ? input.at : undefined,
+      base: { ref: input.base ?? 'main' },
+      user: { id: 123 },
       head: {
         ref: input.branch ?? 'github-automation',
         repo: { id: input.headRepositoryId ?? 1 },
@@ -114,6 +128,47 @@ function pullRequestPayload(input: {
     },
   };
 }
+
+it('upgrades a database with an imported Issue whose only visible link was replaced by a PR', () => {
+  const legacy = new TestD1Database();
+  try {
+    applyMigrations(legacy, 20);
+    seedProject(legacy);
+    seedGitHub(legacy);
+    const task = seedTask(legacy, { id: 'legacy-delivery-task' });
+    legacy.sqlite
+      .prepare(`INSERT INTO github_task_links VALUES (?, 'project-1', '1', 'pull_request', 42,
+      'work', 'https://github.com/xapi-labs/kanby/pull/42', 'Legacy PR', 'open', 'failure', 1)`)
+      .run(task.id);
+    legacy.sqlite
+      .prepare(`INSERT INTO github_issue_imports
+      (id, project_id, repository_id, item_number, task_id, created_by, created_at)
+      VALUES ('legacy-import', 'project-1', '1', 9, ?, 'user-1', 1)`)
+      .run(task.id);
+    const migration = readFileSync(
+      'drizzle/0021_github_delivery_pilot.sql',
+      'utf8',
+    );
+    legacy.exec(`BEGIN; ${migration} COMMIT;`);
+    expect(
+      legacy.sqlite
+        .prepare(
+          'SELECT kind, item_number, ci_status FROM github_task_links WHERE task_id = ? ORDER BY kind',
+        )
+        .all(task.id),
+    ).toEqual([
+      { kind: 'issue', item_number: 9, ci_status: null },
+      { kind: 'pull_request', item_number: 42, ci_status: 'failure' },
+    ]);
+    expect(
+      legacy.sqlite
+        .prepare('SELECT COUNT(*) AS count FROM github_delivery_repositories')
+        .get(),
+    ).toEqual({ count: 0 });
+  } finally {
+    legacy.close();
+  }
+});
 
 describe('project GitHub automation', () => {
   let database: TestD1Database;
@@ -126,6 +181,302 @@ describe('project GitHub automation', () => {
   });
 
   afterEach(() => database.close());
+
+  it('keeps a pilot card open when its only PR merges into a feature branch', async () => {
+    const task = seedTask(database, { id: 'pilot-nondefault-task' });
+    database.sqlite
+      .prepare(
+        "INSERT INTO github_delivery_repositories VALUES ('project-1', '1')",
+      )
+      .run();
+    database.sqlite
+      .prepare(`INSERT INTO github_task_links VALUES (?, 'project-1', '1', 'pull_request', 42,
+      'work', 'https://github.com/xapi-labs/kanby/pull/42', 'Non-default PR', 'open', NULL, 1)`)
+      .run(task.id);
+    const response = await signedWebhook(
+      'pull_request',
+      'pilot-nondefault-merge',
+      pullRequestPayload({
+        action: 'closed',
+        merged: true,
+        base: 'feature',
+        at: '2026-01-01T10:02:00Z',
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(
+      database.sqlite
+        .prepare('SELECT status, turn_reason FROM tasks WHERE id = ?')
+        .get(task.id),
+    ).toEqual({ status: 'ideas', turn_reason: null });
+    expect(
+      database.sqlite
+        .prepare('SELECT state FROM github_task_links WHERE task_id = ?')
+        .get(task.id),
+    ).toEqual({ state: 'merged' });
+  });
+
+  it('removes only the selected URL from a card with an Issue and two PRs', async () => {
+    const task = seedTask(database, { id: 'delivery-related-links' });
+    const add = database.sqlite.prepare(`INSERT INTO github_task_links VALUES
+      (?, 'project-1', '1', ?, ?, NULL, ?, 'Related item', 'open', NULL, 1)`);
+    const originRepo = 'https://github.com/xapi-labs/kanby';
+    add.run(task.id, 'issue', 2, `${originRepo}/issues/2`);
+    add.run(task.id, 'pull_request', 9, `${originRepo}/pull/9`);
+    add.run(task.id, 'pull_request', 8, `${originRepo}/pull/8`);
+    const session = await createSessionToken(
+      { id: 'user-1', login: 'alice', name: 'Alice', avatarUrl: null },
+      sessionSecret,
+    );
+    const response = await unlinkItem(
+      new Request(`${origin}/api/github/task-link`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          Cookie: `${SESSION_COOKIE}=${session}`,
+          Origin: origin,
+        },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          taskId: task.id,
+          url: `${originRepo}/pull/9`,
+        }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    const { links } = (await response.json()) as {
+      links: Array<{ number: number }>;
+    };
+    expect(links.map((link) => link.number)).toEqual([8, 2]);
+  });
+
+  it('imports an Issue URL through the selected installation and reuses the same card from activity', async () => {
+    const app = vi.spyOn(github, 'getGitHubAppConfig').mockReturnValue({
+      appId: '77',
+      slug: 'kanby',
+      privateKey: '',
+      webhookSecret: '',
+    });
+    const get = vi.spyOn(github, 'getGitHubLinkedItem').mockResolvedValue({
+      kind: 'issue',
+      number: 51,
+      title: 'A new Issue',
+      state: 'open',
+      url: 'https://github.com/xapi-labs/kanby/issues/51',
+      branch: null,
+      merged: false,
+    });
+    const session = await createSessionToken(
+      { id: 'user-1', login: 'alice', name: 'Alice', avatarUrl: null },
+      sessionSecret,
+    );
+    const request = (item: { url: string } | { eventId: string }) =>
+      new Request(`${origin}/api/github/issue-task`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Cookie: `${SESSION_COOKIE}=${session}`,
+          Origin: origin,
+        },
+        body: JSON.stringify({ projectId: 'project-1', ...item }),
+      });
+    try {
+      expect(
+        (
+          await importIssue(
+            request({ url: 'https://github.com/other/repo/issues/51' }),
+          )
+        ).status,
+      ).toBe(404);
+      expect(get).not.toHaveBeenCalled();
+      const created = await importIssue(
+        request({ url: 'https://github.com/xapi-labs/kanby/issues/51' }),
+      );
+      expect(created.status).toBe(201);
+      expect(get).toHaveBeenCalledWith(
+        expect.anything(),
+        '77',
+        'xapi-labs/kanby',
+        'issue',
+        51,
+      );
+      const { task } = (await created.json()) as {
+        task: { id: string; githubLinks: { number: number }[] };
+      };
+      expect(task.githubLinks.map((link) => link.number)).toEqual([51]);
+      database.exec(`INSERT INTO github_events (id, project_id, repository_id, kind, action, item_number, title, summary, url, actor_login, created_at)
+        VALUES ('issue-url-event', 'project-1', '1', 'issues', 'opened', 51, 'A new Issue', 'Issue', 'https://github.com/xapi-labs/kanby/issues/51', 'alice', 1)`);
+      const existing = await importIssue(
+        request({ eventId: 'issue-url-event' }),
+      );
+      expect(existing.status).toBe(200);
+      expect(await existing.json()).toMatchObject({
+        task: { id: task.id },
+        created: false,
+      });
+    } finally {
+      get.mockRestore();
+      app.mockRestore();
+    }
+  });
+
+  it('hands review and changes to the right people and waits for both PRs before acceptance', async () => {
+    const task = seedTask(database, { id: '12345678-pilot' });
+    database.exec(`
+      INSERT INTO users VALUES ('123', 'developer', 'Developer', NULL, 1, 1),
+                               ('234', 'reviewer', 'Reviewer', NULL, 1, 1);
+      INSERT INTO project_members VALUES ('project-1', '123', 'member', 1),
+                                         ('project-1', '234', 'member', 1);
+    `);
+    const ownerSession = await createSessionToken(
+      { id: 'user-1', login: 'alice', name: 'Alice', avatarUrl: null },
+      sessionSecret,
+    );
+    const settings = await patchGitHubSettings(
+      new Request(`${origin}/api/github`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Cookie: `${SESSION_COOKIE}=${ownerSession}`,
+          Origin: origin,
+        },
+        body: JSON.stringify({
+          projectId: 'project-1',
+          deliveryRepositoryId: '1',
+        }),
+      }),
+    );
+    expect(settings.status).toBe(200);
+    const getTurn = () =>
+      database.sqlite
+        .prepare(
+          'SELECT status, turn_user_id, turn_reason FROM tasks WHERE id = ?',
+        )
+        .get(task.id);
+    for (const number of [42, 43]) {
+      const response = await signedWebhook(
+        'pull_request',
+        `pilot-open-${number}`,
+        pullRequestPayload({
+          action: 'opened',
+          taskReference: '12345678',
+          number,
+        }),
+      );
+      expect(response.status).toBe(200);
+    }
+    const reviewRequest = {
+      ...pullRequestPayload({
+        action: 'review_requested',
+        at: '2026-01-01T10:00:00Z',
+      }),
+      requested_reviewer: { id: 234 },
+    };
+    await signedWebhook('pull_request', 'pilot-unmapped-review', {
+      ...reviewRequest,
+      requested_reviewer: { id: 999 },
+    });
+    expect(getTurn()).toEqual({
+      status: 'building',
+      turn_user_id: null,
+      turn_reason: null,
+    });
+    await signedWebhook('pull_request', 'pilot-review', reviewRequest);
+    expect(getTurn()).toEqual({
+      status: 'building',
+      turn_user_id: '234',
+      turn_reason: 'awaiting_review',
+    });
+    await signedWebhook('pull_request_review', 'pilot-foreign-changes', {
+      ...pullRequestPayload({ action: 'submitted' }),
+      review: {
+        state: 'changes_requested',
+        submitted_at: '2026-01-01T10:00:30Z',
+        user: { id: 999 },
+      },
+    });
+    expect(getTurn()).toMatchObject({
+      turn_user_id: '234',
+      turn_reason: 'awaiting_review',
+    });
+    await signedWebhook('pull_request_review', 'pilot-changes', {
+      ...pullRequestPayload({ action: 'submitted' }),
+      review: {
+        state: 'changes_requested',
+        submitted_at: '2026-01-01T10:01:00Z',
+        user: { id: 234 },
+      },
+    });
+    await signedWebhook('pull_request', 'pilot-old-review', reviewRequest);
+    expect(getTurn()).toEqual({
+      status: 'building',
+      turn_user_id: '123',
+      turn_reason: 'developing',
+    });
+    await signedWebhook(
+      'pull_request',
+      'pilot-first-merge',
+      pullRequestPayload({
+        action: 'closed',
+        merged: true,
+        at: '2026-01-01T10:02:00Z',
+      }),
+    );
+    expect(getTurn()).toEqual({
+      status: 'building',
+      turn_user_id: '123',
+      turn_reason: 'developing',
+    });
+    await signedWebhook(
+      'pull_request',
+      'pilot-last-merge',
+      pullRequestPayload({
+        action: 'closed',
+        merged: true,
+        number: 43,
+        base: 'feature',
+        at: '2026-01-01T10:03:00Z',
+      }),
+    );
+    expect(getTurn()).toEqual({
+      status: 'building',
+      turn_user_id: 'user-1',
+      turn_reason: 'awaiting_acceptance',
+    });
+    await signedWebhook(
+      'pull_request',
+      'pilot-last-merge',
+      pullRequestPayload({
+        action: 'closed',
+        merged: true,
+        number: 43,
+        base: 'feature',
+        at: '2026-01-01T10:03:00Z',
+      }),
+    );
+    expect(
+      database.sqlite
+        .prepare(
+          "SELECT COUNT(*) AS count FROM task_events WHERE task_id = ? AND kind = 'github.turn.awaiting_acceptance'",
+        )
+        .get(task.id),
+    ).toEqual({ count: 1 });
+    database.exec(`UPDATE tasks SET turn_kind = NULL, turn_user_id = NULL, turn_reason = NULL, turn_since = NULL WHERE id = '12345678-pilot';
+      INSERT INTO task_events (id, project_id, task_id, source, kind, actor_name, summary, created_at)
+      VALUES ('manual-clear', 'project-1', '12345678-pilot', 'user', 'turn.changed', 'Alice', 'Cleared', 1767261900000);`);
+    await signedWebhook(
+      'pull_request',
+      'pilot-late-merge',
+      pullRequestPayload({
+        action: 'closed',
+        merged: true,
+        number: 43,
+        base: 'feature',
+        at: '2026-01-01T10:03:00Z',
+      }),
+    );
+    expect(getTurn()).toMatchObject({ turn_reason: null });
+  });
 
   it('provides defaults and lets only the owner persist adjusted rules', async () => {
     expect(await getProjectGitHubAutomation('project-1')).toEqual(
@@ -489,6 +840,37 @@ describe('project GitHub automation', () => {
         )
         .get(),
     ).toEqual({ count: 0 });
+    database.exec(`UPDATE tasks SET task_number = 7 WHERE project_id IN ('project-1', 'project-2');
+      INSERT INTO github_project_installations (project_id, installation_id, connected_by, created_at)
+      VALUES ('project-2', '77', 'user-1', 1);`);
+    await signedWebhook(
+      'pull_request',
+      'delivery-ambiguous-number',
+      pullRequestPayload({ action: 'opened', taskReference: 'KANBY-7' }),
+    );
+    expect(
+      database.sqlite
+        .prepare('SELECT COUNT(*) AS count FROM github_task_links')
+        .get(),
+    ).toEqual({ count: 0 });
+    await signedWebhook(
+      'pull_request',
+      'delivery-qualified-number',
+      pullRequestPayload({
+        action: 'opened',
+        taskReference: 'project-two/KANBY-7',
+      }),
+    );
+    expect(
+      database.sqlite
+        .prepare('SELECT project_id, task_id FROM github_task_links')
+        .all(),
+    ).toEqual([
+      {
+        project_id: 'project-2',
+        task_id: 'feedbeef-2222-4222-8222-222222222222',
+      },
+    ]);
   });
 
   it('does not auto-link a marked PR when that project rule is off', async () => {
@@ -648,7 +1030,7 @@ describe('project GitHub automation', () => {
     ).toEqual({ status: 'shipped' });
   });
 
-  it('keeps the imported Issue completion association after a PR replaces the visible link', async () => {
+  it('keeps the imported Issue and its completion association after linking a PR', async () => {
     database.sqlite
       .prepare(
         `INSERT INTO github_events
@@ -672,9 +1054,11 @@ describe('project GitHub automation', () => {
     );
     expect(
       database.sqlite
-        .prepare('SELECT kind FROM github_task_links WHERE task_id = ?')
-        .get(imported.task.id),
-    ).toEqual({ kind: 'pull_request' });
+        .prepare(
+          'SELECT kind FROM github_task_links WHERE task_id = ? ORDER BY kind',
+        )
+        .all(imported.task.id),
+    ).toEqual([{ kind: 'issue' }, { kind: 'pull_request' }]);
 
     await signedWebhook('issues', 'delivery-imported-issue-closed', {
       action: 'closed',
@@ -695,9 +1079,14 @@ describe('project GitHub automation', () => {
     ).toEqual({ status: 'shipped' });
     expect(
       database.sqlite
-        .prepare('SELECT kind FROM github_task_links WHERE task_id = ?')
-        .get(imported.task.id),
-    ).toEqual({ kind: 'pull_request' });
+        .prepare(
+          'SELECT kind, state FROM github_task_links WHERE task_id = ? ORDER BY kind',
+        )
+        .all(imported.task.id),
+    ).toEqual([
+      { kind: 'issue', state: 'closed' },
+      { kind: 'pull_request', state: 'open' },
+    ]);
   });
 
   it('shows a failing CI conclusion without changing workflow status, then clears it', async () => {

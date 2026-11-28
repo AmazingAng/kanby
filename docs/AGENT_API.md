@@ -58,7 +58,7 @@ Agents must perform that verification workflow explicitly.
 
 Every successful Agent mutation is also written to the task's unified activity timeline. Repeated heartbeats for the same claim are coalesced, while progress messages remain visible to teammates and power the compact “Agent 正在处理” state on the board card. Releasing or completing a task clears the live card state; its history remains in the timeline.
 
-When an Agent creates a Pull Request, it should add `Kanby-Task: <task ref>` as a standalone trailer in the PR body or use a `kanby/<task ref>-description` branch. If the project's PR auto-link rule is enabled, the verified GitHub webhook associates that PR with the active task. The explicit `link` action remains available as a fallback.
+When an Agent creates a pull request, it should add `Kanby-Task: <task ref>` as a standalone line in the PR body or use a `kanby/<task ref>-description` branch. When multiple Kanby projects share the repository, use `Kanby-Task: <project-slug>/KANBY-123` to name the project explicitly. Each PR appears separately alongside the card’s Issue. The explicit `link` action remains available as a fallback.
 
 For retryable mutations, send a stable `Idempotency-Key` header between 8 and 128 characters. A claim is a renewable 1–60 minute lease. GitHub links are accepted only for repositories selected in the corresponding Kanby project.
 

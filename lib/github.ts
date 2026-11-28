@@ -426,7 +426,9 @@ export async function getGitHubLinkedItem(
     title: string;
     state: string;
     html_url: string;
+    pull_request?: object;
   }>(`/repos/${fullName}/issues/${number}`, token);
+  if (item.pull_request) throw new Error('Expected a GitHub Issue');
   return {
     kind,
     number: item.number,

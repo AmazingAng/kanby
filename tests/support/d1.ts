@@ -100,11 +100,12 @@ export class TestD1Database {
   }
 }
 
-export function applyMigrations(database: TestD1Database) {
+export function applyMigrations(database: TestD1Database, through = Infinity) {
   const files = readdirSync(join(process.cwd(), 'drizzle'))
     .filter((file) => /^\d{4}_.+\.sql$/.test(file))
     .sort();
   for (const [index, file] of files.entries()) {
+    if (index > through) break;
     const prefix = String(index).padStart(4, '0');
     if (!file.startsWith(prefix))
       throw new Error(`Migration order mismatch: ${file}`);

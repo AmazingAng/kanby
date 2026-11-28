@@ -214,6 +214,17 @@ export async function importGitHubIssueTask(
     .bind(eventId, projectId)
     .first<IssueEventRow>();
   if (!event) return null;
+  return importGitHubIssueSnapshot(projectId, event, user);
+}
+
+export async function importGitHubIssueSnapshot(
+  projectId: string,
+  event: IssueEventRow,
+  user: AuthUser,
+): Promise<GitHubIssueImportResult | null | 'disabled'> {
+  if (!(await getProjectGitHubAutomation(projectId)).issueTaskCreation)
+    return 'disabled';
+  const db = database();
 
   const existing = await db
     .prepare(
@@ -240,7 +251,8 @@ export async function importGitHubIssueTask(
       .prepare(
         `INSERT OR IGNORE INTO github_issue_imports
          (id, project_id, repository_id, item_number, task_id, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         SELECT ?, ?, ?, ?, ?, ?, ?
+         WHERE EXISTS (SELECT 1 FROM github_project_repositories WHERE project_id = ? AND repository_id = ?)`,
       )
       .bind(
         crypto.randomUUID(),
@@ -250,6 +262,8 @@ export async function importGitHubIssueTask(
         linked.task_id,
         user.id,
         Date.now(),
+        projectId,
+        event.repository_id,
       )
       .run();
     const task = await importedTask(projectId, linked.task_id);
@@ -267,7 +281,8 @@ export async function importGitHubIssueTask(
       .prepare(
         `INSERT OR IGNORE INTO github_issue_imports
          (id, project_id, repository_id, item_number, task_id, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         SELECT ?, ?, ?, ?, ?, ?, ?
+         WHERE EXISTS (SELECT 1 FROM github_project_repositories WHERE project_id = ? AND repository_id = ?)`,
       )
       .bind(
         importId,
@@ -277,6 +292,8 @@ export async function importGitHubIssueTask(
         taskId,
         user.id,
         now,
+        projectId,
+        event.repository_id,
       ),
     db
       .prepare(
@@ -369,6 +386,7 @@ export async function importGitHubIssueTask(
 }
 
 export async function autoLinkPullRequest(input: {
+  projectIds?: string[];
   repositoryId: string;
   number: number;
   title: string;
@@ -382,7 +400,12 @@ export async function autoLinkPullRequest(input: {
   actorAvatarUrl: string | null;
 }) {
   await ensureSchema();
-  const reference = extractKanbyTaskReference(input);
+  const qualified = input.body.match(
+    /^Kanby-Task:[ \t]*([a-z0-9-]{1,80})\/KANBY-(\d{1,9})[ \t]*\r?$/im,
+  );
+  const reference = qualified
+    ? `kanby-${Number(qualified[2])}`
+    : extractKanbyTaskReference(input);
   if (!reference) return 0;
   const numericReference = reference.match(/^kanby-(\d+)$/)?.[1] ?? null;
   const db = database();
@@ -395,6 +418,7 @@ export async function autoLinkPullRequest(input: {
        WHERE gpr.repository_id = ?
          AND COALESCE(gas.auto_link_pull_requests, 1) = 1
          AND t.archived_at IS NULL
+         AND (? IS NULL OR t.project_id = (SELECT id FROM projects WHERE lower(slug) = ?))
          AND (
            (? IS NOT NULL AND t.task_number = CAST(? AS INTEGER))
            OR (? IS NULL AND (lower(t.id) = ? OR lower(substr(t.id, 1, length(?))) = ?))
@@ -403,6 +427,8 @@ export async function autoLinkPullRequest(input: {
     )
     .bind(
       input.repositoryId,
+      qualified?.[1]?.toLowerCase() ?? null,
+      qualified?.[1]?.toLowerCase() ?? null,
       numericReference,
       numericReference,
       numericReference,
@@ -413,6 +439,7 @@ export async function autoLinkPullRequest(input: {
     .all<{ id: string; project_id: string; updated_at: number }>();
   if (candidates.results.length !== 1) return 0;
   const task = candidates.results[0];
+  if (input.projectIds && !input.projectIds.includes(task.project_id)) return 0;
   const now = Math.max(Date.now(), Number(task.updated_at) + 1);
   await db.batch([
     db
@@ -421,16 +448,13 @@ export async function autoLinkPullRequest(input: {
            (task_id, project_id, repository_id, kind, item_number, branch, url,
             title, state, ci_status, updated_at)
            VALUES (?, ?, ?, 'pull_request', ?, ?, ?, ?, ?, NULL, ?)
-           ON CONFLICT(task_id) DO UPDATE SET
-             repository_id = excluded.repository_id,
-             kind = excluded.kind,
-             item_number = excluded.item_number,
+           ON CONFLICT(task_id, repository_id, kind, item_number) DO UPDATE SET
              branch = excluded.branch,
              url = excluded.url,
              title = excluded.title,
              state = excluded.state,
-             ci_status = NULL,
-             updated_at = excluded.updated_at`,
+             updated_at = excluded.updated_at
+           WHERE github_task_links.state <> 'merged'`,
       )
       .bind(
         task.id,
@@ -476,6 +500,7 @@ export async function autoLinkPullRequest(input: {
 }
 
 export async function recordReferencedPush(input: {
+  projectIds?: string[];
   repositoryId: string;
   branch: string;
   commits: string[];
@@ -517,6 +542,7 @@ export async function recordReferencedPush(input: {
     .all<{ id: string; project_id: string; updated_at: number }>();
   if (candidates.results.length !== 1) return 0;
   const task = candidates.results[0];
+  if (input.projectIds && !input.projectIds.includes(task.project_id)) return 0;
   const now = Math.max(Date.now(), Number(task.updated_at) + 1);
   await db.batch([
     db

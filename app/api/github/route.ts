@@ -6,6 +6,7 @@ import {
 import { getProjectRole } from '@/lib/db';
 import {
   projectGitHubSettings,
+  setGitHubDeliveryRepository,
   setProjectGitHubRepositories,
 } from '@/lib/github-db';
 import {
@@ -62,6 +63,7 @@ export async function PATCH(request: Request) {
       ? (body.repositoryIds as string[])
       : null;
   const hasAutomation = body.automation !== undefined;
+  const deliveryRepositoryId = body.deliveryRepositoryId;
   const automation = hasAutomation
     ? parseGitHubAutomationSettings(body.automation)
     : null;
@@ -70,7 +72,15 @@ export async function PATCH(request: Request) {
     (body.repositoryIds !== undefined && !repositoryIds) ||
     (repositoryIds?.length ?? 0) > 500 ||
     (hasAutomation && !automation) ||
-    (body.repositoryIds === undefined && !hasAutomation)
+    (deliveryRepositoryId !== undefined &&
+      deliveryRepositoryId !== null &&
+      (typeof deliveryRepositoryId !== 'string' ||
+        !/^\d{1,39}$/.test(deliveryRepositoryId))) ||
+    (body.repositoryIds === undefined &&
+      !hasAutomation &&
+      deliveryRepositoryId === undefined) ||
+    (deliveryRepositoryId !== undefined &&
+      (body.repositoryIds !== undefined || hasAutomation))
   )
     return Response.json({ error: 'Invalid GitHub settings' }, { status: 400 });
   if ((await getProjectRole(projectId, user.id)) !== 'owner')
@@ -82,6 +92,17 @@ export async function PATCH(request: Request) {
     return Response.json({ error: 'Invalid repositories' }, { status: 400 });
   if (automation)
     await setProjectGitHubAutomation(projectId, user.id, automation);
+  if (
+    deliveryRepositoryId !== undefined &&
+    !(await setGitHubDeliveryRepository(
+      projectId,
+      deliveryRepositoryId as string | null,
+    ))
+  )
+    return Response.json(
+      { error: 'Select a connected repository first' },
+      { status: 400 },
+    );
   return Response.json({
     configured: true,
     connection: await projectGitHubSettings(projectId),

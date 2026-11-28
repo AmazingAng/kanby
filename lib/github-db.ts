@@ -226,28 +226,35 @@ export async function projectGitHubSettings(projectId: string) {
   const db = database();
   const installation = await projectGitHubInstallation(projectId);
   if (!installation) return null;
-  const [repositories, events, automation] = await Promise.all([
-    db
-      .prepare(
-        `SELECT gr.id, gr.name, gr.full_name, gr.html_url, gr.default_branch, gr.private,
+  const [repositories, events, automation, deliveryRepository] =
+    await Promise.all([
+      db
+        .prepare(
+          `SELECT gr.id, gr.name, gr.full_name, gr.html_url, gr.default_branch, gr.private,
         CASE WHEN gpr.repository_id IS NULL THEN 0 ELSE 1 END AS selected
        FROM github_repositories gr
        LEFT JOIN github_project_repositories gpr ON gpr.repository_id = gr.id AND gpr.project_id = ?
        WHERE gr.installation_id = ? AND gr.active = 1 ORDER BY gr.full_name`,
-      )
-      .bind(projectId, installation.installation_id)
-      .all<{
-        id: string;
-        name: string;
-        full_name: string;
-        html_url: string;
-        default_branch: string;
-        private: number;
-        selected: number;
-      }>(),
-    listGitHubActivity(projectId, 10),
-    getProjectGitHubAutomation(projectId),
-  ]);
+        )
+        .bind(projectId, installation.installation_id)
+        .all<{
+          id: string;
+          name: string;
+          full_name: string;
+          html_url: string;
+          default_branch: string;
+          private: number;
+          selected: number;
+        }>(),
+      listGitHubActivity(projectId, 10),
+      getProjectGitHubAutomation(projectId),
+      db
+        .prepare(
+          'SELECT repository_id FROM github_delivery_repositories WHERE project_id = ?',
+        )
+        .bind(projectId)
+        .first<{ repository_id: string }>(),
+    ]);
   return {
     installationId: installation.installation_id,
     accountLogin: installation.account_login,
@@ -267,7 +274,37 @@ export async function projectGitHubSettings(projectId: string) {
     ),
     events,
     automation,
+    deliveryRepositoryId:
+      repositories.results.find(
+        (row) => row.selected && row.id === deliveryRepository?.repository_id,
+      )?.id ?? null,
   };
+}
+
+export async function setGitHubDeliveryRepository(
+  projectId: string,
+  repositoryId: string | null,
+) {
+  const db = database();
+  if (repositoryId === null) {
+    await db
+      .prepare('DELETE FROM github_delivery_repositories WHERE project_id = ?')
+      .bind(projectId)
+      .run();
+    return true;
+  }
+  const result = await db
+    .prepare(`
+    INSERT INTO github_delivery_repositories (project_id, repository_id)
+    SELECT gpr.project_id, gpr.repository_id FROM github_project_repositories gpr
+    JOIN github_repositories gr ON gr.id = gpr.repository_id AND gr.active = 1
+    JOIN github_project_installations gpi ON gpi.project_id = gpr.project_id AND gpi.installation_id = gr.installation_id
+    WHERE gpr.project_id = ? AND gpr.repository_id = ?
+    ON CONFLICT(project_id) DO UPDATE SET repository_id = excluded.repository_id
+  `)
+    .bind(projectId, repositoryId)
+    .run();
+  return Number(result.meta.changes) === 1;
 }
 
 export async function setProjectGitHubRepositories(
@@ -304,6 +341,12 @@ export async function setProjectGitHubRepositories(
         .bind(projectId, repositoryId, now),
     ),
   );
+  statements.push(
+    db
+      .prepare(`DELETE FROM github_delivery_repositories AS pilot WHERE project_id = ?
+    AND NOT EXISTS (SELECT 1 FROM github_project_repositories gpr WHERE gpr.project_id = pilot.project_id AND gpr.repository_id = pilot.repository_id)`)
+      .bind(projectId),
+  );
   await runBatches(db, statements);
   return true;
 }
@@ -317,6 +360,7 @@ export async function selectedGitHubRepository(
     .prepare(
       `SELECT gr.id, gr.installation_id FROM github_repositories gr
      JOIN github_project_repositories gpr ON gpr.repository_id = gr.id AND gpr.project_id = ?
+     JOIN github_project_installations gpi ON gpi.project_id = gpr.project_id AND gpi.installation_id = gr.installation_id
      WHERE gr.active = 1 AND lower(gr.full_name) = lower(?) LIMIT 1`,
     )
     .bind(projectId, fullName)
@@ -333,48 +377,88 @@ export async function saveGitHubTaskLink(
   await ensureSchema();
   const now = Date.now();
   const tokenId = agentTokenId ?? null;
-  const result = await database()
-    .prepare(
-      `INSERT INTO github_task_links (task_id, project_id, repository_id, kind, item_number, branch, url, title, state, ci_status, updated_at)
+  const db = database();
+  const [result] = await db.batch([
+    db
+      .prepare(
+        `INSERT INTO github_task_links (task_id, project_id, repository_id, kind, item_number, branch, url, title, state, ci_status, updated_at)
      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?
-     WHERE ? IS NULL OR NOT EXISTS (
+     WHERE EXISTS (SELECT 1 FROM tasks WHERE id = ? AND project_id = ? AND archived_at IS NULL)
+       AND EXISTS (SELECT 1 FROM github_project_repositories WHERE project_id = ? AND repository_id = ?)
+       AND (? IS NULL OR NOT EXISTS (
        SELECT 1 FROM task_agent_claims
        WHERE task_id = ? AND project_id = ? AND lease_expires_at > ? AND token_id != ?
-     )
-     ON CONFLICT(task_id) DO UPDATE SET repository_id = excluded.repository_id, kind = excluded.kind, item_number = excluded.item_number, branch = excluded.branch, url = excluded.url, title = excluded.title, state = excluded.state, ci_status = NULL, updated_at = excluded.updated_at`,
-    )
-    .bind(
-      taskId,
-      projectId,
-      repositoryId,
-      item.kind,
-      item.number,
-      item.branch,
-      item.url,
-      item.title,
-      item.state,
-      now,
-      tokenId,
-      taskId,
-      projectId,
-      Date.now(),
-      tokenId,
-    )
-    .run();
+     ))
+     ON CONFLICT(task_id, repository_id, kind, item_number) DO UPDATE SET branch = excluded.branch, url = excluded.url,
+       title = excluded.title, state = CASE WHEN github_task_links.state = 'merged' THEN 'merged' ELSE excluded.state END,
+       updated_at = excluded.updated_at`,
+      )
+      .bind(
+        taskId,
+        projectId,
+        repositoryId,
+        item.kind,
+        item.number,
+        item.branch,
+        item.url,
+        item.title,
+        item.state,
+        now,
+        taskId,
+        projectId,
+        projectId,
+        repositoryId,
+        tokenId,
+        taskId,
+        projectId,
+        Date.now(),
+        tokenId,
+      ),
+    ...touchGitHubLinkTask(db, projectId, taskId, now),
+  ]);
   if (Number(result.meta.changes ?? 0) === 0) return null;
-  return getGitHubTaskLink(projectId, taskId);
+  const links = await listGitHubTaskLinks(projectId, taskId);
+  return (
+    links.find(
+      (link) =>
+        link.repositoryId === repositoryId &&
+        link.kind === item.kind &&
+        link.number === item.number,
+    ) ?? null
+  );
 }
 
-export async function getGitHubTaskLink(projectId: string, taskId: string) {
+function touchGitHubLinkTask(
+  db: D1Database,
+  projectId: string,
+  taskId: string,
+  now: number,
+) {
+  return [
+    db
+      .prepare(
+        'UPDATE tasks SET updated_at = MAX(updated_at + 1, ?) WHERE id = ? AND project_id = ? AND changes() > 0',
+      )
+      .bind(now, taskId, projectId),
+    db
+      .prepare(
+        'UPDATE projects SET updated_at = MAX(updated_at + 1, ?) WHERE id = ? AND changes() > 0',
+      )
+      .bind(now, projectId),
+  ];
+}
+
+export async function listGitHubTaskLinks(projectId: string, taskId: string) {
   await ensureSchema();
   const row = await database()
     .prepare(
       `SELECT gtl.task_id, gtl.repository_id, gr.full_name, gtl.kind, gtl.item_number, gtl.url, gtl.title, gtl.state, gtl.ci_status, gtl.updated_at
      FROM github_task_links gtl JOIN github_repositories gr ON gr.id = gtl.repository_id
-     WHERE gtl.project_id = ? AND gtl.task_id = ?`,
+     WHERE gtl.project_id = ? AND gtl.task_id = ?
+     ORDER BY (gtl.kind = 'pull_request') DESC, gtl.updated_at DESC, gtl.repository_id, gtl.item_number`,
     )
     .bind(projectId, taskId)
-    .first<{
+    .all<{
       task_id: string;
       repository_id: string;
       full_name: string;
@@ -386,30 +470,43 @@ export async function getGitHubTaskLink(projectId: string, taskId: string) {
       ci_status: string | null;
       updated_at: number;
     }>();
-  return row
-    ? ({
-        taskId: row.task_id,
-        repositoryId: row.repository_id,
-        repository: row.full_name,
-        kind: row.kind,
-        number: Number(row.item_number),
-        url: row.url,
-        title: row.title,
-        state: row.state,
-        ciStatus: row.ci_status,
-        updatedAt: Number(row.updated_at),
-      } satisfies GitHubTaskLinkRecord)
-    : null;
+  return row.results.map(
+    (row): GitHubTaskLinkRecord => ({
+      taskId: row.task_id,
+      repositoryId: row.repository_id,
+      repository: row.full_name,
+      kind: row.kind,
+      number: Number(row.item_number),
+      url: row.url,
+      title: row.title,
+      state: row.state,
+      ciStatus: row.ci_status,
+      updatedAt: Number(row.updated_at),
+    }),
+  );
 }
 
-export async function deleteGitHubTaskLink(projectId: string, taskId: string) {
+export async function getGitHubTaskLink(projectId: string, taskId: string) {
+  return (await listGitHubTaskLinks(projectId, taskId))[0] ?? null;
+}
+
+export async function deleteGitHubTaskLink(
+  projectId: string,
+  taskId: string,
+  url?: string,
+) {
   await ensureSchema();
-  await database()
-    .prepare(
-      'DELETE FROM github_task_links WHERE project_id = ? AND task_id = ?',
-    )
-    .bind(projectId, taskId)
-    .run();
+  const target = url ?? (await getGitHubTaskLink(projectId, taskId))?.url;
+  if (!target) return;
+  const db = database();
+  await db.batch([
+    db
+      .prepare(
+        'DELETE FROM github_task_links WHERE project_id = ? AND task_id = ? AND url = ?',
+      )
+      .bind(projectId, taskId, target),
+    ...touchGitHubLinkTask(db, projectId, taskId, Date.now()),
+  ]);
 }
 
 export async function listGitHubActivity(projectId: string, limit = 8) {
@@ -756,6 +853,7 @@ export async function projectsForGitHubRepository(
     .prepare(
       `SELECT gpr.project_id FROM github_project_repositories gpr
      JOIN github_project_installations gpi ON gpi.project_id = gpr.project_id
+     JOIN github_repositories gr ON gr.id = gpr.repository_id AND gr.installation_id = gpi.installation_id AND gr.active = 1
      WHERE gpi.installation_id = ? AND gpr.repository_id = ?`,
     )
     .bind(installationId, repositoryId)
@@ -801,6 +899,7 @@ export async function recordGitHubEvent(input: {
 }
 
 export async function updateLinkedTasksFromGitHub(input: {
+  projectIds?: string[];
   repositoryId: string;
   kind: 'issue' | 'pull_request';
   number: number;
@@ -824,7 +923,10 @@ export async function updateLinkedTasksFromGitHub(input: {
          SELECT task_id, project_id FROM github_issue_imports
          WHERE ? = 'issue' AND repository_id = ? AND item_number = ?
        )
-       SELECT linked_tasks.task_id, linked_tasks.project_id, t.status, t.updated_at
+       SELECT linked_tasks.task_id, linked_tasks.project_id, t.status, t.updated_at,
+         EXISTS (SELECT 1 FROM github_delivery_repositories pilot
+           JOIN github_task_links pilot_link ON pilot_link.project_id = pilot.project_id AND pilot_link.repository_id = pilot.repository_id
+           WHERE pilot.project_id = linked_tasks.project_id AND pilot_link.task_id = linked_tasks.task_id) AS delivery_pilot
        FROM linked_tasks JOIN tasks t
          ON t.id = linked_tasks.task_id AND t.project_id = linked_tasks.project_id`,
     )
@@ -841,11 +943,15 @@ export async function updateLinkedTasksFromGitHub(input: {
       project_id: string;
       status: ColumnId;
       updated_at: number;
+      delivery_pilot: number;
     }>();
+  const scopedLinks = links.results.filter(
+    (link) => !input.projectIds || input.projectIds.includes(link.project_id),
+  );
   const automation = new Map<string, GitHubAutomationSettings>();
   if (input.automationTrigger) {
     await Promise.all(
-      [...new Set(links.results.map((link) => link.project_id))].map(
+      [...new Set(scopedLinks.map((link) => link.project_id))].map(
         async (projectId) =>
           automation.set(
             projectId,
@@ -855,7 +961,7 @@ export async function updateLinkedTasksFromGitHub(input: {
     );
   }
   const { prepareTaskActivityStatement } = await import('@/lib/task-activity');
-  const statements = links.results.flatMap((link) => {
+  const statements = scopedLinks.flatMap((link) => {
     const taskUpdatedAt = Math.max(now, Number(link.updated_at) + 1);
     const settings = automation.get(link.project_id);
     const configuredStatus =
@@ -864,17 +970,23 @@ export async function updateLinkedTasksFromGitHub(input: {
         : input.automationTrigger === 'completed'
           ? settings?.completionStatus
           : undefined;
+    const preferredStatus = input.targetStatus ?? configuredStatus ?? null;
     const targetStatus =
-      input.automationTrigger === 'pull_request_opened' &&
-      link.status === 'shipped'
+      link.delivery_pilot && input.automationTrigger === 'completed'
         ? null
-        : (input.targetStatus ?? configuredStatus ?? null);
+        : input.automationTrigger === 'pull_request_opened' &&
+            link.status === 'shipped'
+          ? null
+          : link.delivery_pilot && preferredStatus === 'shipped'
+            ? 'building'
+            : preferredStatus;
     const updates: D1PreparedStatement[] = [
       db
         .prepare(
           `UPDATE github_task_links
            SET title = ?, state = ?, url = ?, branch = COALESCE(?, branch), updated_at = ?
-           WHERE task_id = ? AND repository_id = ? AND kind = ? AND item_number = ?`,
+           WHERE task_id = ? AND repository_id = ? AND kind = ? AND item_number = ?
+             AND (state <> 'merged' OR ? = 'merged')`,
         )
         .bind(
           input.title,
@@ -886,6 +998,7 @@ export async function updateLinkedTasksFromGitHub(input: {
           input.repositoryId,
           input.kind,
           input.number,
+          input.state,
         ),
       db
         .prepare(
@@ -934,13 +1047,14 @@ export async function updateLinkedTaskCi(
   branch: string,
   status: string,
   activity?: GitHubTaskActivityInput,
+  projectIds?: string[],
 ) {
   await ensureSchema();
   const db = database();
   const now = Date.now();
   const links = await db
     .prepare(
-      `SELECT gtl.task_id, gtl.project_id, t.updated_at
+      `SELECT DISTINCT gtl.task_id, gtl.project_id, t.updated_at
        FROM github_task_links gtl JOIN tasks t ON t.id = gtl.task_id AND t.project_id = gtl.project_id
        WHERE gtl.repository_id = ? AND gtl.branch = ? AND gtl.kind = 'pull_request'`,
     )
@@ -955,14 +1069,16 @@ export async function updateLinkedTaskCi(
   );
   const { prepareTaskActivityStatement } = await import('@/lib/task-activity');
   const statements = links.results.flatMap((link) => {
+    if (projectIds && !projectIds.includes(link.project_id)) return [];
     if (!automation.get(link.project_id)?.showCiFailures) return [];
     const taskUpdatedAt = Math.max(now, Number(link.updated_at) + 1);
     const updates: D1PreparedStatement[] = [
       db
         .prepare(
-          'UPDATE github_task_links SET ci_status = ?, updated_at = ? WHERE task_id = ? AND project_id = ?',
+          `UPDATE github_task_links SET ci_status = ?, updated_at = ? WHERE task_id = ? AND project_id = ?
+             AND repository_id = ? AND kind = 'pull_request' AND branch = ?`,
         )
-        .bind(status, now, link.task_id, link.project_id),
+        .bind(status, now, link.task_id, link.project_id, repositoryId, branch),
       db
         .prepare(
           'UPDATE tasks SET updated_at = ? WHERE id = ? AND project_id = ? AND archived_at IS NULL',
@@ -1004,13 +1120,14 @@ export async function recordLinkedTaskPush(
   repositoryId: string,
   branch: string,
   activity: GitHubTaskActivityInput,
+  projectIds?: string[],
 ) {
   await ensureSchema();
   const db = database();
   const now = Date.now();
   const links = await db
     .prepare(
-      `SELECT gtl.task_id, gtl.project_id, t.updated_at
+      `SELECT DISTINCT gtl.task_id, gtl.project_id, t.updated_at
        FROM github_task_links gtl JOIN tasks t ON t.id = gtl.task_id AND t.project_id = gtl.project_id
        WHERE gtl.repository_id = ? AND gtl.branch = ? AND gtl.kind = 'pull_request'
          AND t.archived_at IS NULL`,
@@ -1019,6 +1136,7 @@ export async function recordLinkedTaskPush(
     .all<{ task_id: string; project_id: string; updated_at: number }>();
   const { prepareTaskActivityStatement } = await import('@/lib/task-activity');
   const statements = links.results.flatMap((link) => {
+    if (projectIds && !projectIds.includes(link.project_id)) return [];
     const taskUpdatedAt = Math.max(now, Number(link.updated_at) + 1);
     return [
       db

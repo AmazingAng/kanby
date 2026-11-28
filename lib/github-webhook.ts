@@ -7,12 +7,14 @@ import {
 } from '@/lib/github-db';
 import {
   autoLinkPullRequest,
+  extractKanbyTaskReference,
   recordReferencedPush,
 } from '@/lib/github-automation';
 import {
   getGitHubAppConfig,
   listPullRequestCommitMessages,
 } from '@/lib/github';
+import { applyGitHubDeliverySignal } from '@/lib/github-delivery';
 
 type WebhookPayload = Record<string, unknown> & {
   action?: string;
@@ -74,12 +76,16 @@ export async function processGitHubWebhook(
       const headRepositoryId = String(number(object(head.repo).id));
       if (
         kind === 'pull_request' &&
-        ['opened', 'reopened'].includes(action) &&
+        (['opened', 'reopened', 'ready_for_review'].includes(action) ||
+          (action === 'closed' && item.merged === true)) &&
         headRepositoryId === repositoryId
       ) {
         const config = getGitHubAppConfig();
+        const body = text(item.body);
         const commits =
-          config && repoName !== 'repository'
+          config &&
+          repoName !== 'repository' &&
+          !extractKanbyTaskReference({ body, branch, title })
             ? await listPullRequestCommitMessages(
                 config,
                 installationId,
@@ -88,13 +94,14 @@ export async function processGitHubWebhook(
               ).catch(() => [])
             : [];
         await autoLinkPullRequest({
+          projectIds: projects,
           repositoryId,
           number: itemNumber,
           title,
           state: item.merged === true ? 'merged' : text(item.state, action),
           url: targetUrl,
           branch,
-          body: text(item.body),
+          body,
           commits,
           deliveryId,
           actorLogin,
@@ -112,6 +119,7 @@ export async function processGitHubWebhook(
             ? ('completed' as const)
             : undefined;
       await updateLinkedTasksFromGitHub({
+        projectIds: projects,
         repositoryId,
         kind,
         number: itemNumber,
@@ -122,6 +130,70 @@ export async function processGitHubWebhook(
         automationTrigger,
         activity: { deliveryId, action, actorLogin, actorAvatarUrl, summary },
       });
+      if (kind === 'pull_request' && !onlyProjectId) {
+        const merged = action === 'closed' && item.merged === true;
+        const reviewer = number(object(payload.requested_reviewer).id);
+        const eventAt = Date.parse(
+          text(merged ? item.merged_at : item.updated_at),
+        );
+        const base = text(object(item.base).ref);
+        if (
+          Number.isFinite(eventAt) &&
+          eventAt > 0 &&
+          ((merged && base) || (action === 'review_requested' && reviewer))
+        ) {
+          await applyGitHubDeliverySignal({
+            repositoryId,
+            projectIds: projects,
+            deliveryId,
+            number: itemNumber,
+            url: targetUrl,
+            eventAt,
+            actorLogin,
+            actorAvatarUrl,
+            signal: merged
+              ? { kind: 'merge', base }
+              : { kind: 'review', userId: String(reviewer) },
+          });
+        }
+      }
+    }
+  } else if (
+    event === 'pull_request_review' &&
+    action === 'submitted' &&
+    !onlyProjectId
+  ) {
+    const review = object(payload.review);
+    const pr = object(payload.pull_request);
+    const prNumber = number(pr.number);
+    const author = number(object(pr.user).id);
+    const reviewer = number(object(review.user).id);
+    const url = text(pr.html_url);
+    const eventAt = Date.parse(text(review.submitted_at));
+    if (
+      review.state === 'changes_requested' &&
+      prNumber &&
+      author &&
+      reviewer &&
+      url &&
+      Number.isFinite(eventAt) &&
+      eventAt > 0
+    ) {
+      await applyGitHubDeliverySignal({
+        repositoryId,
+        projectIds: projects,
+        deliveryId,
+        number: prNumber,
+        url,
+        eventAt,
+        actorLogin,
+        actorAvatarUrl,
+        signal: {
+          kind: 'changes',
+          userId: String(author),
+          reviewerId: String(reviewer),
+        },
+      });
     }
   } else if (event === 'workflow_run') {
     const run = object(payload.workflow_run);
@@ -131,13 +203,19 @@ export async function processGitHubWebhook(
     targetUrl = text(run.html_url) || null;
     summary = `${repoName} · ${branch || 'workflow'} · ${status}`;
     if (branch)
-      await updateLinkedTaskCi(repositoryId, branch, status, {
-        deliveryId,
-        action,
-        actorLogin,
-        actorAvatarUrl,
-        summary,
-      });
+      await updateLinkedTaskCi(
+        repositoryId,
+        branch,
+        status,
+        {
+          deliveryId,
+          action,
+          actorLogin,
+          actorAvatarUrl,
+          summary,
+        },
+        projects,
+      );
   } else if (event === 'push') {
     const commits = Array.isArray(payload.commits)
       ? payload.commits
@@ -153,14 +231,20 @@ export async function processGitHubWebhook(
     const branch = text(payload.ref).replace('refs/heads/', '');
     summary = `${repoName} · ${branch || 'push'}`;
     if (branch) {
-      await recordLinkedTaskPush(repositoryId, branch, {
-        deliveryId,
-        action,
-        actorLogin,
-        actorAvatarUrl,
-        summary,
-      });
+      await recordLinkedTaskPush(
+        repositoryId,
+        branch,
+        {
+          deliveryId,
+          action,
+          actorLogin,
+          actorAvatarUrl,
+          summary,
+        },
+        projects,
+      );
       await recordReferencedPush({
+        projectIds: projects,
         repositoryId,
         branch,
         commits,

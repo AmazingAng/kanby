@@ -11,6 +11,7 @@ function taskView(task) {
   return {
     ...task,
     ref: taskRef(task),
+    githubLinks: task.githubLinks || (task.githubLink ? [task.githubLink] : []),
     completedCount: criteria.filter((item) => item.completed).length,
     totalCount: criteria.length,
     hasLongNote: (task.note || '').length > 220,

@@ -148,6 +148,13 @@
       "when": 1795999200000,
       "tag": "0020_weixin_mini",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1795999200001,
+      "tag": "0021_github_delivery_pilot",
+      "breakpoints": true
     }
   ]
 }

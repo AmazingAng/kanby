@@ -43,6 +43,7 @@ export type TaskRecord = {
   attachments: TaskAttachmentRecord[];
   acceptanceCriteria: TaskAcceptanceCriterionRecord[];
   githubLink?: TaskGitHubLinkRecord;
+  githubLinks?: TaskGitHubLinkRecord[];
   agentState?: Omit<TaskAgentState, 'taskId'>;
   turn?: TaskTurn;
 };
@@ -241,7 +242,7 @@ function mapTask(
   attachments: TaskAttachmentRecord[] = [],
   acceptanceCriteria: TaskAcceptanceCriterionRecord[] = [],
   assignees: AuthUser[] = [],
-  githubLink?: TaskGitHubLinkRecord,
+  githubLinks?: TaskGitHubLinkRecord[],
   agentState?: Omit<TaskAgentState, 'taskId'>,
   parent?: ParentTaskRow,
 ): TaskRecord {
@@ -274,7 +275,8 @@ function mapTask(
       : undefined,
     attachments,
     acceptanceCriteria,
-    githubLink,
+    githubLink: githubLinks?.[0],
+    githubLinks,
     agentState,
     turn: mapTurn({
       turn_kind: row.turn_kind ?? null,
@@ -654,7 +656,8 @@ export async function listTasks(
     db
       .prepare(
         `SELECT gtl.task_id, gr.full_name, gtl.kind, gtl.item_number, gtl.url, gtl.title, gtl.state, gtl.ci_status
-       FROM github_task_links gtl JOIN github_repositories gr ON gr.id = gtl.repository_id WHERE gtl.project_id = ?`,
+       FROM github_task_links gtl JOIN github_repositories gr ON gr.id = gtl.repository_id WHERE gtl.project_id = ?
+       ORDER BY (gtl.kind = 'pull_request') DESC, gtl.updated_at DESC, gtl.repository_id, gtl.item_number`,
       )
       .bind(projectId)
       .all<TaskGitHubLinkRow>(),
@@ -670,9 +673,12 @@ export async function listTasks(
     current.push(attachment);
     attachmentsByTask.set(row.task_id, current);
   }
-  const linksByTask = new Map(
-    linkResult.results.map((row) => [row.task_id, mapTaskGitHubLink(row)]),
-  );
+  const linksByTask = new Map<string, TaskGitHubLinkRecord[]>();
+  for (const row of linkResult.results) {
+    const links = linksByTask.get(row.task_id) ?? [];
+    links.push(mapTaskGitHubLink(row));
+    linksByTask.set(row.task_id, links);
+  }
   const acceptanceByTask = new Map<string, TaskAcceptanceCriterionRecord[]>();
   for (const row of acceptanceResult.results) {
     const items = acceptanceByTask.get(row.task_id) ?? [];
@@ -1676,7 +1682,7 @@ async function hydrateTask(
   projectId: string,
   task: TaskRow,
 ): Promise<TaskRecord> {
-  const [attachments, acceptanceCriteria, assignees, githubLink, parent] =
+  const [attachments, acceptanceCriteria, assignees, githubLinks, parent] =
     await Promise.all([
       db
         .prepare(
@@ -1702,10 +1708,11 @@ async function hydrateTask(
       db
         .prepare(
           `SELECT gtl.task_id, gr.full_name, gtl.kind, gtl.item_number, gtl.url, gtl.title, gtl.state, gtl.ci_status
-     FROM github_task_links gtl JOIN github_repositories gr ON gr.id = gtl.repository_id WHERE gtl.task_id = ? AND gtl.project_id = ?`,
+     FROM github_task_links gtl JOIN github_repositories gr ON gr.id = gtl.repository_id WHERE gtl.task_id = ? AND gtl.project_id = ?
+     ORDER BY (gtl.kind = 'pull_request') DESC, gtl.updated_at DESC, gtl.repository_id, gtl.item_number`,
         )
         .bind(task.id, projectId)
-        .first<TaskGitHubLinkRow>(),
+        .all<TaskGitHubLinkRow>(),
       task.parent_task_id
         ? db
             .prepare(
@@ -1720,7 +1727,9 @@ async function hydrateTask(
     attachments.results.map(mapAttachment),
     acceptanceCriteria.results.map(mapAcceptanceCriterion),
     assignees.results.map(mapTaskAssignee),
-    githubLink ? mapTaskGitHubLink(githubLink) : undefined,
+    githubLinks.results.length
+      ? githubLinks.results.map(mapTaskGitHubLink)
+      : undefined,
     undefined,
     parent ?? undefined,
   );

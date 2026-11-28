@@ -6,7 +6,7 @@ import {
 import { getProjectRole, taskBelongsToProject } from '@/lib/db';
 import {
   deleteGitHubTaskLink,
-  getGitHubTaskLink,
+  listGitHubTaskLinks,
   saveGitHubTaskLink,
   selectedGitHubRepository,
 } from '@/lib/github-db';
@@ -39,8 +39,9 @@ export async function GET(request: Request) {
   const taskId = url.searchParams.get('taskId') ?? '';
   if (!(await authorized(request, projectId, taskId)))
     return Response.json({ error: 'Forbidden' }, { status: 403 });
+  const links = await listGitHubTaskLinks(projectId, taskId);
   return Response.json(
-    { link: await getGitHubTaskLink(projectId, taskId) },
+    { link: links[0] ?? null, links },
     { headers: { 'Cache-Control': 'no-store' } },
   );
 }
@@ -91,10 +92,14 @@ export async function POST(request: Request) {
       parsed.kind,
       parsed.number,
     );
+    const link = await saveGitHubTaskLink(
+      projectId,
+      taskId,
+      repository.id,
+      item,
+    );
     return Response.json(
-      {
-        link: await saveGitHubTaskLink(projectId, taskId, repository.id, item),
-      },
+      { link, links: await listGitHubTaskLinks(projectId, taskId) },
       { status: 201 },
     );
   } catch {
@@ -131,6 +136,15 @@ export async function DELETE(request: Request) {
     !(await taskBelongsToProject(taskId, projectId))
   )
     return Response.json({ error: 'Forbidden' }, { status: 403 });
-  await deleteGitHubTaskLink(projectId, taskId);
-  return Response.json({ ok: true });
+  const url = body.url;
+  if (
+    url !== undefined &&
+    (typeof url !== 'string' || url.length > 500 || !parseGitHubItemUrl(url))
+  )
+    return Response.json({ error: 'Invalid GitHub URL' }, { status: 400 });
+  await deleteGitHubTaskLink(projectId, taskId, url);
+  return Response.json({
+    ok: true,
+    links: await listGitHubTaskLinks(projectId, taskId),
+  });
 }

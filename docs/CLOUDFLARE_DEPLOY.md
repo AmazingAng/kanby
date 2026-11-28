@@ -107,7 +107,7 @@ repository activity. Replace `<origin>` below with the exact
 - Webhook secret: a new random secret
 - Repository permissions: Contents `Read-only`, Issues `Read-only`, Pull
   requests `Read-only`, Actions `Read-only`, and Metadata `Read-only`
-- Subscribe to: Push, Issues, Pull request, and Workflow run
+- Subscribe to: Push, Issues, Pull request, Pull request review, and Workflow run
 
 The App can be installed for selected repositories, including private ones.
 Set `GITHUB_APP_ID` and `GITHUB_APP_SLUG` as non-secret Worker variables during

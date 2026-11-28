@@ -28,6 +28,7 @@ import { NotificationSettings } from '@/components/notification-settings';
 import { WeixinSettings } from '@/components/weixin-settings';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { AppHeader, type AppUser } from '@/components/kanby-shell';
 import {
   resolveSettingsProject,
@@ -87,6 +88,7 @@ type GitHubConnection = {
   repositories: GitHubRepository[];
   events: GitHubActivity[];
   automation: GitHubAutomation;
+  deliveryRepositoryId?: string | null;
 };
 
 type GitHubDiagnostics = {
@@ -466,6 +468,38 @@ export function SettingsApp() {
       setGithubAutomation(payload.connection.automation);
     } catch {
       setError('GitHub 自动化规则保存失败。');
+    } finally {
+      setGithubSaving(false);
+    }
+  }
+
+  async function saveDeliveryRepository(repositoryId: string) {
+    if (!selectedProject || selectedProject.role !== 'owner') return;
+    setGithubSaving(true);
+    setError('');
+    try {
+      const response = await fetch('/api/github', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: selectedProject.id,
+          deliveryRepositoryId: repositoryId || null,
+        }),
+      });
+      if (!response.ok) throw new Error('GitHub delivery repository');
+      const payload = (await response.json()) as {
+        connection: GitHubConnection;
+      };
+      setGithubConnection((current) =>
+        current && current.installationId === payload.connection.installationId
+          ? {
+              ...current,
+              deliveryRepositoryId: payload.connection.deliveryRepositoryId,
+            }
+          : current,
+      );
+    } catch {
+      setError('交付试点仓库保存失败。');
     } finally {
       setGithubSaving(false);
     }
@@ -959,6 +993,34 @@ export function SettingsApp() {
                           </Button>
                         </div>
                       )}
+                      <div className="mt-6 space-y-2 border-t border-ink/10 pt-5">
+                        <Label htmlFor="github-delivery-repository">
+                          Review 与验收试点仓库
+                        </Label>
+                        <p className="text-xs leading-5 text-ink-faint">
+                          接收 GitHub Review 交接，交付 PR 合并后由负责人验收。
+                        </p>
+                        <select
+                          id="github-delivery-repository"
+                          value={githubConnection.deliveryRepositoryId ?? ''}
+                          disabled={
+                            githubSaving || selectedProject.role !== 'owner'
+                          }
+                          onChange={(event) =>
+                            void saveDeliveryRepository(event.target.value)
+                          }
+                          className="h-10 w-full rounded-xl border border-ink/10 bg-card px-3 text-sm"
+                        >
+                          <option value="">不启用试点</option>
+                          {githubConnection.repositories
+                            .filter((repo) => repo.selected)
+                            .map((repo) => (
+                              <option key={repo.id} value={repo.id}>
+                                {repo.fullName}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
                       {githubAutomation && (
                         <fieldset
                           disabled={selectedProject.role !== 'owner'}

@@ -156,6 +156,7 @@ type Task = {
   attachments?: TaskAttachment[];
   acceptanceCriteria?: TaskAcceptanceCriterion[];
   githubLink?: TaskGitHubLink;
+  githubLinks?: TaskGitHubLink[];
   turn?: ClientTurn;
   agentState?: {
     agentName: string;
@@ -627,7 +628,9 @@ function TaskCardBody({
   task: Task;
   progress?: { done: number; total: number; percent: number };
 }) {
-  const ciFailed = isFailingCiStatus(task.githubLink?.ciStatus);
+  const ciFailed = (task.githubLinks ?? [task.githubLink]).some((link) =>
+    isFailingCiStatus(link?.ciStatus),
+  );
   const hierarchy = taskHierarchyKind(task, progress);
   const acceptance = acceptanceProgress(task.acceptanceCriteria);
   const cardNote = clearStarterTaskNote(task.note);
@@ -748,6 +751,9 @@ function TaskCardBody({
           {task.githubLink && (
             <span className="flex items-center gap-1 text-[11px] text-ink-faint">
               <GitBranch className="size-3" />#{task.githubLink.number}
+              {(task.githubLinks?.length ?? 0) > 1
+                ? ` +${task.githubLinks!.length - 1}`
+                : ''}
             </span>
           )}
           {Boolean(task.attachments?.length) && (
@@ -1126,6 +1132,18 @@ export function KanbanApp({
   const [githubAutomation, setGithubAutomation] =
     useState<GitHubAutomation | null>(null);
   const [githubIssueImporting, setGithubIssueImporting] = useState('');
+  const [githubIssueDraft, setGithubIssueDraft] = useState<{
+    projectId: string | null;
+    url: string;
+  } | null>(null);
+  const githubIssueUrl =
+    githubIssueDraft?.projectId === activeProjectId
+      ? (githubIssueDraft?.url ?? '')
+      : '';
+  const githubProjectRef = useRef(activeProjectId);
+  useEffect(() => {
+    githubProjectRef.current = activeProjectId;
+  }, [activeProjectId]);
   const [attachmentUploading, setAttachmentUploading] = useState(false);
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
   const [taskActivity, setTaskActivity] = useState<TaskActivityEvent[]>([]);
@@ -1770,7 +1788,7 @@ export function KanbanApp({
     setLastSavedFingerprint(lastSavedTask.current);
     latestTaskRevision.current.set(task.id, task.updatedAt);
     taskEditSessionId.current = crypto.randomUUID();
-    setGithubLinkUrl(task.githubLink?.url ?? '');
+    setGithubLinkUrl('');
     setSplitTitles('');
     setAcceptanceDraft('');
     setNoteEditing(false);
@@ -2554,15 +2572,12 @@ export function KanbanApp({
     }
   }
 
-  async function createTaskFromGitHubIssue(activity: GitHubActivity) {
-    if (
-      !activeProjectId ||
-      activity.kind !== 'issues' ||
-      activity.itemNumber == null ||
-      githubIssueImporting
-    )
-      return;
-    setGithubIssueImporting(activity.id);
+  async function createTaskFromGitHubIssue(
+    input: { eventId: string } | { url: string },
+  ) {
+    if (!activeProjectId || githubIssueImporting) return;
+    const eventId = 'eventId' in input ? input.eventId : '';
+    setGithubIssueImporting(eventId || 'url');
     mutationInFlight.current = true;
     try {
       const response = await fetch('/api/github/issue-task', {
@@ -2570,12 +2585,13 @@ export function KanbanApp({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           projectId: activeProjectId,
-          eventId: activity.id,
+          ...input,
         }),
       });
       if (!response.ok)
         throw new Error(response.status === 409 ? 'disabled' : 'import');
       const payload = (await response.json()) as { task: Task };
+      if (githubProjectRef.current !== activeProjectId) return;
       latestTaskRevision.current.set(payload.task.id, payload.task.updatedAt);
       setTasks((current) => [
         ...current.filter((task) => task.id !== payload.task.id),
@@ -2583,9 +2599,13 @@ export function KanbanApp({
       ]);
       setGithubActivity((current) =>
         current.map((item) =>
-          item.id === activity.id ? { ...item, taskId: payload.task.id } : item,
+          item.id === eventId ? { ...item, taskId: payload.task.id } : item,
         ),
       );
+      if ('url' in input) {
+        setGithubIssueDraft(null);
+        openTask(payload.task);
+      }
     } catch (error) {
       setSyncError(
         error instanceof Error && error.message === 'disabled'
@@ -2602,6 +2622,7 @@ export function KanbanApp({
     if (!taskDraft || !activeProjectId || !githubLinkUrl.trim() || isDemo)
       return;
     setGithubLinkSaving(true);
+    const editSession = taskEditSessionId.current;
     try {
       const response = await fetch('/api/github/task-link', {
         method: 'POST',
@@ -2614,16 +2635,21 @@ export function KanbanApp({
       });
       if (!response.ok) throw new Error('link');
       const payload = (await response.json()) as {
-        link: TaskGitHubLink & { taskId: string };
+        links: TaskGitHubLink[];
       };
+      if (githubProjectRef.current !== activeProjectId) return;
       setTasks((current) =>
         current.map((task) =>
           task.id === taskDraft.id
-            ? { ...task, githubLink: payload.link }
+            ? {
+                ...task,
+                githubLink: payload.links[0],
+                githubLinks: payload.links,
+              }
             : task,
         ),
       );
-      setGithubLinkUrl(payload.link.url);
+      if (taskEditSessionId.current === editSession) setGithubLinkUrl('');
     } catch {
       setSyncError(
         '关联失败：请确认这是已启用仓库中的 Issue 或 Pull Request。',
@@ -2633,7 +2659,7 @@ export function KanbanApp({
     }
   }
 
-  async function unlinkGitHubItem() {
+  async function unlinkGitHubItem(url: string) {
     if (!taskDraft || !activeProjectId || isDemo) return;
     setGithubLinkSaving(true);
     try {
@@ -2643,15 +2669,23 @@ export function KanbanApp({
         body: JSON.stringify({
           projectId: activeProjectId,
           taskId: taskDraft.id,
+          url,
         }),
       });
       if (!response.ok) throw new Error('unlink');
+      const payload = (await response.json()) as { links: TaskGitHubLink[] };
+      if (githubProjectRef.current !== activeProjectId) return;
       setTasks((current) =>
         current.map((task) =>
-          task.id === taskDraft.id ? { ...task, githubLink: undefined } : task,
+          task.id === taskDraft.id
+            ? {
+                ...task,
+                githubLink: payload.links[0],
+                githubLinks: payload.links,
+              }
+            : task,
         ),
       );
-      setGithubLinkUrl('');
     } catch {
       setSyncError('GitHub 关联移除失败。');
     } finally {
@@ -3221,6 +3255,45 @@ export function KanbanApp({
                         设置
                       </Link>
                     </div>
+                    {githubAutomation?.issueTaskCreation && (
+                      <form
+                        className="my-2 flex gap-2"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          if (githubIssueUrl.trim())
+                            void createTaskFromGitHubIssue({
+                              url: githubIssueUrl.trim(),
+                            });
+                        }}
+                      >
+                        <Input
+                          value={githubIssueUrl}
+                          onChange={(event) =>
+                            setGithubIssueDraft({
+                              projectId: activeProjectId,
+                              url: event.target.value,
+                            })
+                          }
+                          aria-label="GitHub Issue 链接"
+                          placeholder="粘贴 GitHub Issue 链接"
+                          maxLength={500}
+                          className="min-w-0 text-xs"
+                        />
+                        <Button
+                          type="submit"
+                          size="sm"
+                          disabled={
+                            !githubIssueUrl.trim() ||
+                            Boolean(githubIssueImporting)
+                          }
+                        >
+                          {githubIssueImporting === 'url' ? (
+                            <LoaderCircle className="animate-spin" />
+                          ) : null}{' '}
+                          导入
+                        </Button>
+                      </form>
+                    )}
                     <div className="max-h-[min(24rem,60dvh)] space-y-2 overflow-y-auto">
                       {githubActivity.length > 0 ? (
                         githubActivity.slice(0, 4).map((activity) => (
@@ -3255,7 +3328,9 @@ export function KanbanApp({
                                     githubIssueImporting === activity.id
                                   }
                                   onClick={() =>
-                                    void createTaskFromGitHubIssue(activity)
+                                    void createTaskFromGitHubIssue({
+                                      eventId: activity.id,
+                                    })
                                   }
                                   className="mt-1.5 flex items-center gap-1 text-[10px] font-semibold text-ink disabled:text-ink-faint"
                                 >
@@ -4333,25 +4408,25 @@ export function KanbanApp({
                       </div>
                       <GitBranch className="size-4 text-ink-faint" />
                     </div>
-                    {editedTask?.githubLink ? (
-                      <div className="rounded-xl bg-card p-3">
+                    {(
+                      editedTask?.githubLinks ??
+                      (editedTask?.githubLink ? [editedTask.githubLink] : [])
+                    ).map((link) => (
+                      <div key={link.url} className="rounded-xl bg-card p-3">
                         <div className="flex items-start justify-between gap-3">
                           <a
-                            href={editedTask.githubLink.url}
+                            href={link.url}
                             target="_blank"
                             rel="noreferrer"
                             className="min-w-0"
                           >
                             <p className="truncate text-xs font-semibold">
-                              {editedTask.githubLink.title}
+                              {link.title}
                             </p>
                             <p className="mt-1 truncate text-[10px] text-ink-faint">
-                              {editedTask.githubLink.repository} #
-                              {editedTask.githubLink.number} ·{' '}
-                              {editedTask.githubLink.state}
-                              {editedTask.githubLink.ciStatus
-                                ? ` · CI ${editedTask.githubLink.ciStatus}`
-                                : ''}
+                              {link.kind === 'issue' ? 'Issue' : 'PR'} ·{' '}
+                              {link.repository} #{link.number} · {link.state}
+                              {link.ciStatus ? ` · CI ${link.ciStatus}` : ''}
                             </p>
                           </a>
                           <Button
@@ -4359,37 +4434,36 @@ export function KanbanApp({
                             variant="ghost"
                             size="sm"
                             disabled={githubLinkSaving}
-                            onClick={() => void unlinkGitHubItem()}
+                            onClick={() => void unlinkGitHubItem(link.url)}
                             className="shrink-0 rounded-full text-ink-faint"
                           >
                             移除
                           </Button>
                         </div>
                       </div>
-                    ) : (
-                      <div className="flex gap-2">
-                        <Input
-                          id="github-item-url"
-                          value={githubLinkUrl}
-                          onChange={(event) =>
-                            setGithubLinkUrl(event.target.value)
-                          }
-                          placeholder="https://github.com/org/repo/issues/123"
-                          className="h-10 rounded-xl border-ink/15 bg-card px-3 text-xs focus-visible:ring-0"
-                        />
-                        <Button
-                          type="button"
-                          disabled={githubLinkSaving || !githubLinkUrl.trim()}
-                          onClick={() => void linkGitHubItem()}
-                          className="h-10 shrink-0 rounded-xl bg-ink text-background"
-                        >
-                          {githubLinkSaving && (
-                            <LoaderCircle className="animate-spin" />
-                          )}
-                          关联
-                        </Button>
-                      </div>
-                    )}
+                    ))}
+                    <div className="flex gap-2">
+                      <Input
+                        id="github-item-url"
+                        value={githubLinkUrl}
+                        onChange={(event) =>
+                          setGithubLinkUrl(event.target.value)
+                        }
+                        placeholder="https://github.com/org/repo/issues/123"
+                        className="h-10 rounded-xl border-ink/15 bg-card px-3 text-xs focus-visible:ring-0"
+                      />
+                      <Button
+                        type="button"
+                        disabled={githubLinkSaving || !githubLinkUrl.trim()}
+                        onClick={() => void linkGitHubItem()}
+                        className="h-10 shrink-0 rounded-xl bg-ink text-background"
+                      >
+                        {githubLinkSaving && (
+                          <LoaderCircle className="animate-spin" />
+                        )}
+                        关联
+                      </Button>
+                    </div>
                     {!editedTask?.githubLink && (
                       <Link
                         href={`/settings?project=${encodeURIComponent(activeProjectId ?? '')}`}

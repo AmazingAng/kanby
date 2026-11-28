@@ -4,6 +4,38 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 const mutations = [
   {
+    name: 'GitHub delivery waits for every linked PR',
+    file: 'lib/github-delivery.ts',
+    from: "pending.kind = 'pull_request' AND pending.state <> 'merged'",
+    to: "pending.kind = 'pull_request' AND pending.state = 'unreachable'",
+    test: 'tests/github-automation.test.ts',
+    testName: 'hands review and changes to the right people',
+  },
+  {
+    name: 'GitHub changes requested must come from a project member',
+    file: 'lib/github-delivery.ts',
+    from: 'reviewer.user_id = ?',
+    to: 'reviewer.user_id IS NOT ?',
+    test: 'tests/github-automation.test.ts',
+    testName: 'hands review and changes to the right people',
+  },
+  {
+    name: 'GitHub delivery preserves a later manual turn change',
+    file: 'lib/github-delivery.ts',
+    from: 'manual.created_at >= ?',
+    to: 'manual.created_at < ?',
+    test: 'tests/github-automation.test.ts',
+    testName: 'hands review and changes to the right people',
+  },
+  {
+    name: 'GitHub migration preserves the original PR row and CI',
+    file: 'drizzle/0021_github_delivery_pilot.sql',
+    from: 'SELECT * FROM github_task_links;',
+    to: 'SELECT * FROM github_task_links WHERE 1 = 0;',
+    test: 'tests/github-automation.test.ts',
+    testName: 'upgrades a database with an imported Issue',
+  },
+  {
     name: 'mini board client cache account isolation',
     file: 'miniprogram/pages/index/index.js',
     from: 'canWrite() {\n    this.detailCache();',
@@ -506,8 +538,8 @@ const mutations = [
   {
     name: 'GitHub PR marker exact trailer',
     file: 'lib/github-automation.ts',
-    from: 'Kanby-Task:',
-    to: 'Kanby_Task:',
+    from: '\\s*Kanby-Task:\\s*',
+    to: '\\s*Kanby_Task:\\s*',
     test: 'tests/github-automation.test.ts',
   },
   {

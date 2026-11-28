@@ -94,10 +94,10 @@
           <button size="mini" wx:if="{{task.status === 'building'}}" class="primary accept-button" disabled="{{busy || !detailReady || task.completedCount !== task.totalCount}}" bindtap="accept">确认验收完成<text>↗</text></button>
           <view wx:if="{{task.status === 'building' && task.completedCount !== task.totalCount}}" class="caption">检查并勾选全部验收项后，即可确认完成</view>
         </view>
-        <view wx:if="{{task.attachments.length || task.githubLink}}" class="detail-section">
+        <view wx:if="{{task.attachments.length || task.githubLinks.length}}" class="detail-section">
           <view class="section-label">相关资源</view>
           <button size="mini" wx:for="{{task.attachments}}" wx:key="id" class="resource-link" data-url="{{item.url}}" bindtap="copyResource"><text class="resource-name">{{item.name}}</text><text>复制链接 ↗</text></button>
-          <button size="mini" wx:if="{{task.githubLink}}" class="resource-link" data-url="{{task.githubLink.url}}" bindtap="copyResource"><text class="resource-name">{{task.githubLink.repository}} #{{task.githubLink.number}}</text><text>↗</text></button>
+          <button size="mini" wx:for="{{task.githubLinks}}" wx:key="url" class="resource-link" data-url="{{item.url}}" bindtap="copyResource"><text class="resource-name">{{item.kind === 'issue' ? 'Issue' : 'PR'}} · {{item.repository}} #{{item.number}}{{item.ciStatus ? ' · CI ' + item.ciStatus : ''}}</text><text>复制链接 ↗</text></button>
         </view>
         <view class="detail-section activity-section">
           <view class="section-header"><view class="section-label">交流与记录</view><text class="section-count">{{activity.length}}</text></view>

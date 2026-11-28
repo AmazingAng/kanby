@@ -264,7 +264,7 @@ export const githubProjectRepositories = sqliteTable(
 export const githubTaskLinks = sqliteTable(
   'github_task_links',
   {
-    taskId: text('task_id').primaryKey(),
+    taskId: text('task_id').notNull(),
     projectId: text('project_id').notNull(),
     repositoryId: text('repository_id').notNull(),
     kind: text('kind').notNull(),
@@ -277,6 +277,9 @@ export const githubTaskLinks = sqliteTable(
     updatedAt: integer('updated_at').notNull(),
   },
   (table) => [
+    primaryKey({
+      columns: [table.taskId, table.repositoryId, table.kind, table.itemNumber],
+    }),
     index('idx_github_task_links_project').on(table.projectId, table.updatedAt),
     index('idx_github_task_links_item').on(
       table.repositoryId,
@@ -284,6 +287,24 @@ export const githubTaskLinks = sqliteTable(
       table.itemNumber,
     ),
   ],
+);
+
+export const githubDeliveryRepositories = sqliteTable(
+  'github_delivery_repositories',
+  {
+    projectId: text('project_id').primaryKey().notNull(),
+    repositoryId: text('repository_id').notNull(),
+  },
+);
+
+export const githubDeliveryDefaultMerges = sqliteTable(
+  'github_delivery_default_merges',
+  {
+    repositoryId: text('repository_id').notNull(),
+    itemNumber: integer('item_number').notNull(),
+    mergedAt: integer('merged_at').notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.repositoryId, table.itemNumber] })],
 );
 
 export const githubEvents = sqliteTable(
@@ -784,7 +805,7 @@ export const createGitHubProjectRepositoriesTableSql = `
 
 export const createGitHubTaskLinksTableSql = `
   CREATE TABLE IF NOT EXISTS github_task_links (
-    task_id TEXT PRIMARY KEY NOT NULL,
+    task_id TEXT NOT NULL,
     project_id TEXT NOT NULL,
     repository_id TEXT NOT NULL,
     kind TEXT NOT NULL,
@@ -794,7 +815,8 @@ export const createGitHubTaskLinksTableSql = `
     title TEXT NOT NULL,
     state TEXT NOT NULL,
     ci_status TEXT,
-    updated_at INTEGER NOT NULL
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (task_id, repository_id, kind, item_number)
   )
 `;
 

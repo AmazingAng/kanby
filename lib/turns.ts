@@ -96,6 +96,9 @@ const CONVERSATION_KINDS = [
   'acceptance.completed',
   'acceptance.reopened',
   'github.pull_request.closed',
+  'github.turn.awaiting_review',
+  'github.turn.developing',
+  'github.turn.awaiting_acceptance',
   'github.issues.closed',
 ] as const;
 const conversationKinds = new Set<string>(CONVERSATION_KINDS);

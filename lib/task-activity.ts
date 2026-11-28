@@ -148,6 +148,7 @@ export function prepareTaskActivityStatement(
     onlyIfTaskUpdatedAt?: number;
     onlyIfTaskAssigneeRevision?: string;
     onlyIfAgentUpdateId?: string;
+    onlyIfPreviousStatementChanged?: boolean;
   },
 ) {
   const input = storedInput(rawInput);
@@ -172,6 +173,7 @@ export function prepareTaskActivityStatement(
            SELECT 1 FROM task_agent_updates
            WHERE id = ? AND task_id = ? AND project_id = ?
          ))
+         AND (? = 0 OR changes() > 0)
        ON CONFLICT(project_id, dedupe_key) DO UPDATE SET
          source = excluded.source,
          kind = excluded.kind,
@@ -211,6 +213,7 @@ export function prepareTaskActivityStatement(
       requiredAgentUpdateId,
       input.taskId,
       input.projectId,
+      options?.onlyIfPreviousStatementChanged ? 1 : 0,
     );
 }
 

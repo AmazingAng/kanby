@@ -131,7 +131,7 @@ It covers tests, enforced coverage, types, lint, formatting, mutation checks, th
 
 GitHub OAuth authenticates Kanby users. Repository access is deliberately handled by a separate GitHub App so each installation can grant access to selected public or private repositories without storing a long-lived installation token.
 
-The GitHub App needs read-only access to Contents, Issues, Pull requests, Actions, and Metadata. Subscribe it to Push, Issues, Pull request, and Workflow run events. See [the Cloudflare deployment guide](docs/CLOUDFLARE_DEPLOY.md) for exact URLs and environment variables.
+The GitHub App needs read-only access to Contents, Issues, Pull requests, Actions, and Metadata. Subscribe it to Push, Issues, Pull request, Pull request review, and Workflow run events. A project owner can select one connected repository to route PR reviews and merges into Kanby handoffs. See [the Cloudflare deployment guide](docs/CLOUDFLARE_DEPLOY.md) for exact URLs and environment variables.
 
 ## Cloudflare deployment
 
