@@ -1952,46 +1952,113 @@ export async function permanentlyDeleteArchivedTask(
   return attachments.results.map((attachment) => attachment.object_key);
 }
 
+/**
+ * Applies a drag-and-drop reorder.
+ *
+ * Only the moved card is a content change: it may change column, carries the
+ * client's revision (`expectedUpdatedAt`) and bumps `updated_at` when its
+ * column changes. Neighbours only receive position shifts inside the column the
+ * server currently has them in, never a status change, and keep their
+ * `updated_at`, so an open editor on a neighbour is not invalidated by someone
+ * else's drag. Rows whose stored status/position already match are skipped.
+ */
 export async function reorderTasks(
   projectId: string,
   items: { id: string; status: ColumnId; position: number }[],
-  activity?: { movedTaskId: string; actor: TaskActivityActor },
-): Promise<void> {
+  activity?: {
+    movedTaskId: string;
+    actor: TaskActivityActor;
+    expectedUpdatedAt?: number;
+  },
+): Promise<{ id: string; updatedAt: number } | null> {
   await ensureSchema();
   const db = database();
   const movedBefore = activity
     ? await db
         .prepare(
-          'SELECT status, updated_at FROM tasks WHERE id = ? AND project_id = ? AND archived_at IS NULL',
+          'SELECT status, position, updated_at FROM tasks WHERE id = ? AND project_id = ? AND archived_at IS NULL',
         )
         .bind(activity.movedTaskId, projectId)
-        .first<{ status: ColumnId; updated_at: number }>()
+        .first<{ status: ColumnId; position: number; updated_at: number }>()
     : null;
   const movedAfter = activity
     ? items.find((item) => item.id === activity.movedTaskId)
     : undefined;
+  const expected = activity?.expectedUpdatedAt;
+  if (movedBefore && expected !== undefined) {
+    if (Number(movedBefore.updated_at) !== expected)
+      throw new TaskRevisionConflictError(Number(movedBefore.updated_at));
+  }
+  const statusChanged = Boolean(
+    movedBefore && movedAfter && movedBefore.status !== movedAfter.status,
+  );
   const now = Math.max(
     Date.now(),
     movedBefore ? Number(movedBefore.updated_at) + 1 : 0,
   );
-  const statements: D1PreparedStatement[] = [
-    ...items.map((item) =>
+  const movedUpdatedAt =
+    movedBefore && statusChanged ? now : Number(movedBefore?.updated_at ?? 0);
+  const guard =
+    movedBefore && movedAfter && expected !== undefined
+      ? {
+          sql: ' AND EXISTS (SELECT 1 FROM tasks m WHERE m.id = ? AND m.project_id = ? AND m.status = ? AND m.position = ? AND m.updated_at = ?)',
+          values: [
+            activity!.movedTaskId,
+            projectId,
+            movedAfter.status,
+            movedAfter.position,
+            movedUpdatedAt,
+          ],
+        }
+      : { sql: '', values: [] as unknown[] };
+  const statements: D1PreparedStatement[] = [];
+  if (movedBefore && movedAfter) {
+    statements.push(
       db
         .prepare(
-          'UPDATE tasks SET status = ?, position = ?, updated_at = ? WHERE id = ? AND project_id = ? AND archived_at IS NULL',
+          `UPDATE tasks SET status = ?, position = ?, updated_at = ?
+           WHERE id = ? AND project_id = ? AND archived_at IS NULL AND updated_at = ?
+             AND (status != ? OR position != ?)`,
         )
-        .bind(item.status, item.position, now, item.id, projectId),
-    ),
+        .bind(
+          movedAfter.status,
+          movedAfter.position,
+          movedUpdatedAt,
+          movedAfter.id,
+          projectId,
+          Number(movedBefore.updated_at),
+          movedAfter.status,
+          movedAfter.position,
+        ),
+    );
+  }
+  const neighbours = items.filter((item) => item.id !== movedAfter?.id);
+  if (neighbours.length > 0) {
+    // One statement with a JSON parameter keeps large columns under D1's
+    // 100-bound-parameter limit.
+    const payload = JSON.stringify(
+      neighbours.map(({ id, status, position }) => ({ id, status, position })),
+    );
+    statements.push(
+      db
+        .prepare(
+          `UPDATE tasks SET position = (
+             SELECT CAST(json_extract(j.value, '$.position') AS INTEGER)
+             FROM json_each(?) j WHERE json_extract(j.value, '$.id') = tasks.id)
+           WHERE project_id = ? AND archived_at IS NULL
+             AND id IN (SELECT json_extract(j.value, '$.id') FROM json_each(?) j
+                        WHERE json_extract(j.value, '$.status') = tasks.status
+                          AND CAST(json_extract(j.value, '$.position') AS INTEGER) != tasks.position)${guard.sql}`,
+        )
+        .bind(payload, projectId, payload, ...guard.values),
+    );
+  }
+  statements.push(
     db
       .prepare('UPDATE projects SET updated_at = ? WHERE id = ?')
       .bind(now, projectId),
-  ];
-  if (
-    activity &&
-    movedBefore &&
-    movedAfter &&
-    movedBefore.status !== movedAfter.status
-  ) {
+  );
+  if (activity && movedBefore && movedAfter && statusChanged) {
     const { prepareTaskActivityStatement } =
       await import('@/lib/task-activity');
     statements.push(
@@ -2015,4 +2082,22 @@ export async function reorderTasks(
     );
   }
   await db.batch(statements);
+  if (!movedBefore || !movedAfter) return null;
+  const after = await db
+    .prepare(
+      'SELECT status, position, updated_at FROM tasks WHERE id = ? AND project_id = ?',
+    )
+    .bind(movedAfter.id, projectId)
+    .first<{ status: ColumnId; position: number; updated_at: number }>();
+  if (
+    expected !== undefined &&
+    (!after ||
+      after.status !== movedAfter.status ||
+      Number(after.position) !== movedAfter.position ||
+      Number(after.updated_at) !== movedUpdatedAt)
+  )
+    throw new TaskRevisionConflictError(Number(after?.updated_at ?? 0));
+  return after
+    ? { id: movedAfter.id, updatedAt: Number(after.updated_at) }
+    : null;
 }

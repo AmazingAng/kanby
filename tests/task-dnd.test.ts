@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  changedTaskPlacements,
   columnAtPoint,
   keyboardInsertAfter,
   projectTaskDrop,
@@ -104,5 +105,32 @@ describe('task drag projection', () => {
     expect(columnAtPoint(columns, { x: 740, y: 220 })).toBe('shipped');
     expect(columnAtPoint(columns, { x: 450, y: 220 })).toBe('building');
     expect(columnAtPoint(columns, { x: 940, y: 220 })).toBeNull();
+  });
+});
+
+describe('changedTaskPlacements', () => {
+  const before = [
+    { id: 'a', status: 'ideas' as const, position: 0 },
+    { id: 'b', status: 'ideas' as const, position: 1 },
+    { id: 'c', status: 'building' as const, position: 0 },
+  ];
+
+  it('sends only the moved card and neighbours whose placement changed', () => {
+    const after = projectTaskDrop(before, 'a', 'c');
+    expect(changedTaskPlacements(before, after, 'a')).toEqual([
+      { id: 'a', status: 'building', position: 0 },
+      { id: 'b', status: 'ideas', position: 0 },
+      { id: 'c', status: 'building', position: 1 },
+    ]);
+  });
+
+  it('always includes the moved card and skips unknown rows', () => {
+    expect(
+      changedTaskPlacements(
+        before,
+        [...before, { id: 'z', status: 'ideas', position: 9 }],
+        'a',
+      ),
+    ).toEqual([{ id: 'a', status: 'ideas', position: 0 }]);
   });
 });

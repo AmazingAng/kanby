@@ -114,3 +114,28 @@ export function columnAtPoint<T extends string>(
     )?.id ?? null
   );
 }
+
+/**
+ * Rows a drag actually changed: the moved card (always, so the server can check
+ * its revision) plus neighbours whose column or position differs from the
+ * board as it was when the drag started.
+ */
+export function changedTaskPlacements<T extends PositionedTask>(
+  before: T[],
+  after: T[],
+  movedId: string,
+): PositionedTask[] {
+  const previous = new Map(before.map((task) => [task.id, task]));
+  return after.flatMap(({ id, status, position }) => {
+    const old = previous.get(id);
+    if (
+      id !== movedId &&
+      old &&
+      old.status === status &&
+      old.position === position
+    )
+      return [];
+    if (id !== movedId && !old) return [];
+    return [{ id, status, position }];
+  });
+}
