@@ -71,7 +71,6 @@ describe('GitHub installation boundaries', () => {
       id,
       account: { id: id + 1, login: `account-${id}`, type: 'Organization' },
       repository_selection: 'selected',
-      html_url: null,
     });
     const repository = (id: number, name: string) => ({
       id,

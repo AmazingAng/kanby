@@ -65,7 +65,9 @@ describe('GitHub history backfill', () => {
     expect(status()).toBe('ideas');
     expect(
       database.sqlite
-        .prepare("SELECT state FROM github_task_links WHERE task_id = 'task-issue'")
+        .prepare(
+          "SELECT state FROM github_task_links WHERE task_id = 'task-issue'",
+        )
         .get(),
     ).toEqual({ state: 'closed' });
     expect(
