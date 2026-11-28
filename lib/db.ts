@@ -701,12 +701,30 @@ export async function removeProjectMember(
       .run();
     return;
   }
-  await db
-    .prepare(
-      "DELETE FROM project_members WHERE project_id = ? AND user_id = ? AND role != 'owner'",
-    )
-    .bind(projectId, memberId)
-    .run();
+  const now = Date.now();
+  const removed = `NOT EXISTS (SELECT 1 FROM project_members WHERE project_id = ? AND user_id = ?)`;
+  // Removing a member revokes their Agent Tokens for this project and frees
+  // their claims, so re-adding the member later cannot revive old tokens.
+  await db.batch([
+    db
+      .prepare(
+        "DELETE FROM project_members WHERE project_id = ? AND user_id = ? AND role != 'owner'",
+      )
+      .bind(projectId, memberId),
+    db
+      .prepare(
+        `DELETE FROM task_agent_claims WHERE project_id = ? AND token_id IN (
+           SELECT id FROM agent_tokens WHERE project_id = ? AND user_id = ? AND revoked_at IS NULL
+         ) AND ${removed}`,
+      )
+      .bind(projectId, projectId, memberId, projectId, memberId),
+    db
+      .prepare(
+        `UPDATE agent_tokens SET revoked_at = ?
+         WHERE project_id = ? AND user_id = ? AND revoked_at IS NULL AND ${removed}`,
+      )
+      .bind(now, projectId, memberId, projectId, memberId),
+  ]);
 }
 
 export async function listTasks(
