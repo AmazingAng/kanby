@@ -100,7 +100,11 @@ import {
 } from '@/components/turn-panel';
 import { cn } from '@/lib/utils';
 import { mergePolledTasks, shouldCloseTaskEditor } from '@/lib/task-sync';
-import { FOCUSABLE_SELECTOR, trappedFocusTarget } from '@/lib/dialog-focus';
+import {
+  dialogEscapeAction,
+  FOCUSABLE_SELECTOR,
+  trappedFocusTarget,
+} from '@/lib/dialog-focus';
 import {
   changedTaskPlacements,
   createSerialQueue,
@@ -2999,8 +3003,22 @@ export function KanbanApp({
     if (!(event.target instanceof Node) || !dialog.contains(event.target))
       return;
     if (event.key === 'Escape') {
-      if (event.defaultPrevented || duePickerOpen) return;
+      const target = event.target;
+      const action = dialogEscapeAction({
+        defaultPrevented: event.defaultPrevented,
+        popoverOpen: duePickerOpen,
+        inTextField:
+          target instanceof HTMLTextAreaElement ||
+          (target instanceof HTMLInputElement &&
+            !['checkbox', 'radio', 'button', 'submit'].includes(target.type)),
+      });
+      if (action === 'ignore') return;
       event.preventDefault();
+      if (action === 'leave-field') {
+        // A second Escape, now on the dialog itself, closes it.
+        dialog.focus();
+        return;
+      }
       // Saves first and stays open when the save fails or conflicts, so
       // Escape never silently discards edits.
       void closeTaskEditor();
@@ -4345,6 +4363,10 @@ export function KanbanApp({
                                   event.currentTarget.blur();
                                 }
                                 if (event.key === 'Escape') {
+                                  // Cancels this edit only; must not reach
+                                  // the dialog and close the whole editor.
+                                  event.preventDefault();
+                                  event.stopPropagation();
                                   event.currentTarget.value = item.body;
                                   event.currentTarget.blur();
                                 }

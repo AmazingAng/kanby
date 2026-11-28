@@ -22,3 +22,20 @@ export function trappedFocusTarget<T>(
   if (!shiftKey && active === last) return first;
   return null;
 }
+
+export type DialogEscapeAction = 'ignore' | 'leave-field' | 'close';
+
+/**
+ * What Escape does inside the task editor. A field that handled Escape itself
+ * (defaultPrevented) or an open popover keeps it; Escape in a text field only
+ * leaves the field (so an unsent comment or a half-typed checklist item is
+ * not closed away); otherwise it closes the dialog.
+ */
+export function dialogEscapeAction(input: {
+  defaultPrevented: boolean;
+  popoverOpen: boolean;
+  inTextField: boolean;
+}): DialogEscapeAction {
+  if (input.defaultPrevented || input.popoverOpen) return 'ignore';
+  return input.inTextField ? 'leave-field' : 'close';
+}

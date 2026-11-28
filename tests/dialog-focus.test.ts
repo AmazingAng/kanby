@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { trappedFocusTarget } from '@/lib/dialog-focus';
+import { dialogEscapeAction, trappedFocusTarget } from '@/lib/dialog-focus';
 
 describe('modal focus trap', () => {
   const items = ['a', 'b', 'c'];
@@ -19,5 +19,27 @@ describe('modal focus trap', () => {
     expect(trappedFocusTarget(items, 'dialog', false, 'dialog')).toBe('a');
     expect(trappedFocusTarget(items, 'outside', true, 'dialog')).toBe('c');
     expect(trappedFocusTarget([], 'dialog', false, 'dialog')).toBe('dialog');
+  });
+});
+
+describe('task editor Escape', () => {
+  const base = {
+    defaultPrevented: false,
+    popoverOpen: false,
+    inTextField: false,
+  };
+
+  it('leaves a field that handled Escape (checklist edit) alone', () => {
+    expect(dialogEscapeAction({ ...base, defaultPrevented: true })).toBe(
+      'ignore',
+    );
+    expect(dialogEscapeAction({ ...base, popoverOpen: true })).toBe('ignore');
+  });
+
+  it('only leaves a text field, and closes from anywhere else', () => {
+    expect(dialogEscapeAction({ ...base, inTextField: true })).toBe(
+      'leave-field',
+    );
+    expect(dialogEscapeAction(base)).toBe('close');
   });
 });
