@@ -1,4 +1,34 @@
 const { api, tokenKey } = require('../../utils/api');
+function taskView(task) {
+  const criteria = task.acceptanceCriteria || [];
+  return {
+    ...task,
+    completedCount: criteria.filter((item) => item.completed).length,
+    totalCount: criteria.length,
+    hasLongNote: (task.note || '').length > 220,
+    stateLabel:
+      task.status === 'shipped'
+        ? '已完成'
+        : task.turn?.reasonLabel ||
+          (task.status === 'building' ? '开发中' : '想法'),
+  };
+}
+function activityView(item) {
+  const body = typeof item.body === 'string' ? item.body : '';
+  const date = new Date(item.createdAt);
+  const pad = (value) => String(value).padStart(2, '0');
+  return {
+    ...item,
+    body,
+    expanded: false,
+    isLong: body.length > 180,
+    initial: (item.actorName || 'K').slice(0, 1),
+    timeLabel:
+      item.createdAt && Number.isFinite(date.getTime())
+        ? `${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+        : '',
+  };
+}
 Page({
   data: {
     authenticated: false,
@@ -16,6 +46,8 @@ Page({
     pairingCode: '',
     pairingUntil: '',
     user: null,
+    userInitial: '',
+    descriptionExpanded: false,
   },
   async onLoad(query) {
     this.setData({
@@ -71,6 +103,7 @@ Page({
     this.setData({
       authenticated: true,
       user: result.user,
+      userInitial: (result.user?.name || 'K').slice(0, 1),
       projects: result.projects,
     });
     if (!result.projects.length) {
@@ -91,8 +124,8 @@ Page({
       path += `&taskId=${encodeURIComponent(this.data.taskId)}`;
       const result = await api(path);
       this.setData({
-        task: result.task,
-        activity: result.activity.items,
+        task: taskView(result.task),
+        activity: result.activity.items.map(activityView),
         nextCursor: result.activity.nextCursor,
       });
     } else {
@@ -102,6 +135,12 @@ Page({
         items: result.items.map((item, index) => ({
           ...item,
           key: `${item.type}-${item.taskId}-${index}`,
+          displayReason:
+            item.type === 'mention'
+              ? '提到了你'
+              : item.turn?.reasonLabel || '轮到你',
+          displayNote: item.mention?.body || item.turn?.note || '',
+          needsAcceptance: item.turn?.reason === 'awaiting_acceptance',
         })),
       });
     }
@@ -114,17 +153,27 @@ Page({
       projectId: this.data.projects[index].id,
       taskId: '',
       comment: '',
+      descriptionExpanded: false,
     });
     await this.run(() => this.loadContent());
   },
   async openTask(event) {
     if (this.data.busy) return;
-    this.setData({ taskId: event.currentTarget.dataset.id, comment: '' });
+    this.setData({
+      taskId: event.currentTarget.dataset.id,
+      comment: '',
+      descriptionExpanded: false,
+    });
     await this.run(() => this.loadContent());
   },
   async back() {
     if (this.data.busy) return;
-    this.setData({ taskId: '', task: null, comment: '' });
+    this.setData({
+      taskId: '',
+      task: null,
+      comment: '',
+      descriptionExpanded: false,
+    });
     await this.run(() => this.loadContent());
   },
   async refresh() {
@@ -195,13 +244,37 @@ Page({
         `tasks?projectId=${encodeURIComponent(this.data.projectId)}&taskId=${encodeURIComponent(this.data.task.id)}&cursor=${encodeURIComponent(this.data.nextCursor)}`,
       );
       this.setData({
-        activity: [...this.data.activity, ...result.activity.items],
+        activity: [
+          ...this.data.activity,
+          ...result.activity.items.map(activityView),
+        ],
         nextCursor: result.activity.nextCursor,
       });
     });
   },
   copyPair() {
     wx.setClipboardData({ data: this.data.pairingCode });
+  },
+  toggleDescription() {
+    this.setData({ descriptionExpanded: !this.data.descriptionExpanded });
+  },
+  toggleActivity(event) {
+    this.setData({
+      activity: this.data.activity.map((item) =>
+        item.id === event.currentTarget.dataset.id
+          ? { ...item, expanded: !item.expanded }
+          : item,
+      ),
+    });
+  },
+  accountMenu() {
+    if (this.data.busy) return;
+    wx.showActionSheet({
+      itemList: ['退出登录'],
+      success: (result) => {
+        if (result.tapIndex === 0) void this.logout();
+      },
+    });
   },
   copyLink() {
     const { origin } = require('../../config');

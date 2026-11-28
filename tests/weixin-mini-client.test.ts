@@ -63,14 +63,14 @@ describe('native mini page behavior', () => {
     const tag = template.match(selector)?.[0];
     if (!tag) throw new Error('Missing template region');
     const value = tag.match(/wx:(?:if|elif)="([^"]*)"/)?.[1];
-    if (value === undefined) throw new Error('Missing visibility condition');
+    if (value === undefined) return true;
     const expression = value.match(/^\{\{([\s\S]*)\}\}$/)?.[1];
     return expression === undefined
       ? Boolean(value)
       : Boolean(runInNewContext(expression, data, { timeout: 100 }));
   }
-  const loginRegion = /<view\b[^>]*wx:if="[^"]*"[^>]*class="card"[^>]*>/;
-  const pairingRegion = /<block\b[^>]*wx:if="[^"]*"[^>]*>/;
+  const loginRegion = /<view\b[^>]*id="login-panel"[^>]*>/;
+  const pairingRegion = /<block\b[^>]*id="pairing-panel"[^>]*>/;
   it('binds all dynamic conditional directives instead of treating names as literal strings', () => {
     const values = [...template.matchAll(/wx:(?:if|elif)="([^"]*)"/g)].map(
       (match) => match[1],
@@ -115,6 +115,14 @@ describe('native mini page behavior', () => {
     expect(visible(acceptButton, { task: { status: 'building' } })).toBe(true);
     expect(visible(acceptButton, { task: { status: 'shipped' } })).toBe(false);
     expect(visible(acceptButton, { task: { status: 'ideas' } })).toBe(false);
+  });
+  it('omits absent activity bodies instead of rendering null', () => {
+    const activityBody = /<text\b[^>]*class="event-body[^"]*"[^>]*>/;
+    expect(visible(activityBody, { item: { body: null } })).toBe(false);
+    expect(visible(activityBody, { item: { body: '' } })).toBe(false);
+    expect(visible(activityBody, { item: { body: 'A real comment' } })).toBe(
+      true,
+    );
   });
   it('preserves notification task through first login and loads its detail', async () => {
     const api = vi.fn(async (path: string) =>
