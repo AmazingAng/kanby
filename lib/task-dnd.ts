@@ -139,3 +139,16 @@ export function changedTaskPlacements<T extends PositionedTask>(
     return [{ id, status, position }];
   });
 }
+
+/**
+ * Runs async jobs one at a time in submission order; a failing job does not
+ * stop later ones. Used to send board reorders sequentially.
+ */
+export function createSerialQueue() {
+  let tail: Promise<unknown> = Promise.resolve();
+  return function enqueue<T>(job: () => Promise<T>): Promise<T> {
+    const run = tail.then(job, job);
+    tail = run.catch(() => undefined);
+    return run;
+  };
+}

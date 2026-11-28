@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   changedTaskPlacements,
+  createSerialQueue,
   columnAtPoint,
   keyboardInsertAfter,
   projectTaskDrop,
@@ -132,5 +133,35 @@ describe('changedTaskPlacements', () => {
         'a',
       ),
     ).toEqual([{ id: 'a', status: 'ideas', position: 0 }]);
+  });
+});
+
+describe('createSerialQueue', () => {
+  it('runs reorders one at a time in order, even after a failure', async () => {
+    const enqueue = createSerialQueue();
+    const log: string[] = [];
+    let release!: () => void;
+    const first = enqueue(
+      () =>
+        new Promise<void>((resolve) => {
+          log.push('first:start');
+          release = () => {
+            log.push('first:end');
+            resolve();
+          };
+        }),
+    );
+    const second = enqueue(async () => {
+      log.push('second');
+      throw new Error('409');
+    });
+    const third = enqueue(async () => log.push('third'));
+    await Promise.resolve();
+    expect(log).toEqual(['first:start']);
+    release();
+    await first;
+    await expect(second).rejects.toThrow('409');
+    await third;
+    expect(log).toEqual(['first:start', 'first:end', 'second', 'third']);
   });
 });

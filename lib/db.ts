@@ -727,7 +727,7 @@ export async function listTasks(
            ${TURN_ROW_COLUMNS}
          FROM tasks t ${TURN_ROW_JOINS}
          WHERE t.project_id = ? AND t.archived_at IS ${archived ? 'NOT NULL' : 'NULL'}
-         ORDER BY ${archived ? 't.archived_at DESC' : "CASE t.status WHEN 'ideas' THEN 0 WHEN 'building' THEN 1 ELSE 2 END, t.position ASC"}`,
+         ORDER BY ${archived ? 't.archived_at DESC, t.id ASC' : "CASE t.status WHEN 'ideas' THEN 0 WHEN 'building' THEN 1 ELSE 2 END, t.position ASC, t.created_at ASC, t.id ASC"}`,
       )
       .bind(projectId)
       .all<TaskRow>(),
@@ -2102,12 +2102,11 @@ export async function reorderTasks(
   const guard =
     movedBefore && movedAfter && expected !== undefined
       ? {
-          sql: ' AND EXISTS (SELECT 1 FROM tasks m WHERE m.id = ? AND m.project_id = ? AND m.status = ? AND m.position = ? AND m.updated_at = ?)',
+          sql: ' AND EXISTS (SELECT 1 FROM tasks m WHERE m.id = ? AND m.project_id = ? AND m.status = ? AND m.updated_at = ?)',
           values: [
             activity!.movedTaskId,
             projectId,
             movedAfter.status,
-            movedAfter.position,
             movedUpdatedAt,
           ],
         }
@@ -2154,6 +2153,24 @@ export async function reorderTasks(
         .bind(payload, projectId, payload, ...guard.values),
     );
   }
+  // Concurrent drops into one column can leave equal positions; renumber the
+  // touched columns 0..n-1 (ties broken by creation time, then id) so every
+  // client sees the same, stable order. Position-only: updated_at is kept.
+  const columns = new Set<ColumnId>(items.map((item) => item.status));
+  if (movedBefore) columns.add(movedBefore.status);
+  for (const column of columns)
+    statements.push(
+      db
+        .prepare(
+          `UPDATE tasks SET position = (
+             SELECT r.rank FROM (
+               SELECT id, ROW_NUMBER() OVER (ORDER BY position, created_at, id) - 1 AS rank
+               FROM tasks WHERE project_id = ? AND status = ? AND archived_at IS NULL
+             ) r WHERE r.id = tasks.id)
+           WHERE project_id = ? AND status = ? AND archived_at IS NULL${guard.sql}`,
+        )
+        .bind(projectId, column, projectId, column, ...guard.values),
+    );
   statements.push(
     db
       .prepare('UPDATE projects SET updated_at = ? WHERE id = ?')
@@ -2194,7 +2211,6 @@ export async function reorderTasks(
     expected !== undefined &&
     (!after ||
       after.status !== movedAfter.status ||
-      Number(after.position) !== movedAfter.position ||
       Number(after.updated_at) !== movedUpdatedAt)
   )
     throw new TaskRevisionConflictError(Number(after?.updated_at ?? 0));

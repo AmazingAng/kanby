@@ -92,7 +92,8 @@ describe('drag reorder', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(row(database, 'a')).toMatchObject({ status: 'ideas', position: 2 });
+    // The column is renumbered without the gap "c" left behind.
+    expect(row(database, 'a')).toMatchObject({ status: 'ideas', position: 1 });
     expect(row(database, 'b')).toEqual({
       status: 'ideas',
       position: 0,
@@ -213,5 +214,29 @@ describe('drag reorder', () => {
       items: [],
     });
     expect(response.status).toBe(400);
+  });
+
+  it('renumbers equal positions from concurrent drops into one stable order', async () => {
+    insertTask(database, 'x', 'building', 0);
+    insertTask(database, 'y', 'building', 0);
+    database.sqlite
+      .prepare("UPDATE tasks SET created_at = 5 WHERE id = 'y'")
+      .run();
+    insertTask(database, 'z', 'ideas', 0);
+    await reorderTasks(
+      'project-1',
+      [{ id: 'z', status: 'building', position: 0 }],
+      { movedTaskId: 'z', actor, expectedUpdatedAt: 1_000 },
+    );
+    const order = database.sqlite
+      .prepare(
+        "SELECT id, position FROM tasks WHERE status = 'building' ORDER BY position",
+      )
+      .all();
+    expect(order).toEqual([
+      { id: 'x', position: 0 },
+      { id: 'z', position: 1 },
+      { id: 'y', position: 2 },
+    ]);
   });
 });

@@ -102,6 +102,7 @@ import { cn } from '@/lib/utils';
 import { mergePolledTasks, shouldCloseTaskEditor } from '@/lib/task-sync';
 import {
   changedTaskPlacements,
+  createSerialQueue,
   columnAtPoint,
   keyboardInsertAfter,
   orderedColumnTasks,
@@ -1183,6 +1184,8 @@ export function KanbanApp({
   // not let a poll overwrite another's optimistic state, and bump an epoch on
   // every start/finish so a poll that began before a mutation is discarded.
   const mutationState = useRef<MutationState>({ inFlight: 0, epoch: 0 });
+  const reorderQueue = useRef(createSerialQueue());
+  const reorderSequence = useRef(0);
   const taskSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const queuedTaskSaves = useRef(new Map<string, Promise<boolean>>());
   const lastSavedTask = useRef('');
@@ -1629,25 +1632,34 @@ export function KanbanApp({
       if (changed.length === 0) return;
       const moved = snapshot.find((task) => task.id === movedTaskId);
       const endMutation = beginMutation(mutationState.current);
-      void fetch('/api/tasks', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: activeProjectId,
-          movedTaskId,
-          ...(moved
-            ? {
-                expectedUpdatedAt:
-                  latestTaskRevision.current.get(movedTaskId) ??
-                  moved.updatedAt,
-              }
-            : {}),
-          items: changed,
-        }),
-      })
-        .then(async (response) => {
+      const projectId = activeProjectId;
+      const sequence = ++reorderSequence.current;
+      // Reorders are sent one at a time, in drag order: each request reads the
+      // moved card's revision only after the previous response updated it, so
+      // a quick second drag of the same card never conflicts with the first,
+      // and responses cannot arrive out of order.
+      void reorderQueue
+        .current(async () => {
+          const response = await fetch('/api/tasks', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              projectId,
+              movedTaskId,
+              ...(moved
+                ? {
+                    expectedUpdatedAt:
+                      latestTaskRevision.current.get(movedTaskId) ??
+                      moved.updatedAt,
+                  }
+                : {}),
+              items: changed,
+            }),
+          });
           if (response.status === 409) {
-            setTasks(snapshot);
+            // Only the newest drag may restore its snapshot; an older one
+            // would undo later drags. The next poll reloads the server order.
+            if (sequence === reorderSequence.current) setTasks(snapshot);
             setSyncError(
               '这张卡片刚被其他成员或 Agent 修改，已恢复，请再拖一次。',
             );
