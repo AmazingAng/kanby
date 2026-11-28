@@ -246,6 +246,7 @@ const card = (id: string): CardEvent => ({
   currentTarget: { dataset: { id } },
 });
 const board = { currentTarget: { dataset: { view: 'board' } } };
+const queue = { currentTarget: { dataset: { view: 'queue' } } };
 function detail(id = 't', title = 'Fresh card') {
   return {
     task: {
@@ -278,7 +279,7 @@ function readyPage(api: ReturnType<typeof vi.fn>) {
 }
 
 describe('mini board and fresh detail navigation', () => {
-  it('loads board groups with enriched tasks, counts and the full user name', async () => {
+  it('preloads the board, shares an in-flight request, and switches instantly once both lists are fresh', async () => {
     const pending = deferred<{ tasks: ClientTask[] }>();
     const api = vi
       .fn()
@@ -290,6 +291,10 @@ describe('mini board and fresh detail navigation', () => {
       .mockReturnValueOnce(pending.promise);
     const { instance } = page(api);
     await instance.onLoad({ projectId: 'p', taskId: '' });
+    expect(api).toHaveBeenLastCalledWith('tasks?projectId=p&view=board');
+    expect(instance.data.viewMode).toBe('queue');
+    expect(instance.data.loaded).toBe(true);
+    expect(instance.data.busy).toBe(false);
     const request = instance.switchView(board);
     expect(instance.data.viewMode).toBe('board');
     expect(instance.data.loaded).toBe(false);
@@ -302,7 +307,7 @@ describe('mini board and fresh detail navigation', () => {
       ],
     });
     await request;
-    expect(api).toHaveBeenLastCalledWith('tasks?projectId=p&view=board');
+    expect(api).toHaveBeenCalledTimes(3);
     expect(
       instance.data.boardColumns.map(({ id, count }) => ({ id, count })),
     ).toEqual([
@@ -318,6 +323,41 @@ describe('mini board and fresh detail navigation', () => {
     expect(instance.data.boardTasks).toHaveLength(3);
     expect(instance.data.user?.name).toBe('Alice Full Nickname');
     expect(instance.data.loaded).toBe(true);
+    const toQueue = instance.switchView(queue);
+    expect(instance.data.loaded).toBe(true);
+    await toQueue;
+    const toBoard = instance.switchView(board);
+    expect(instance.data.loaded).toBe(true);
+    expect(instance.data.busy).toBe(false);
+    await toBoard;
+    expect(api).toHaveBeenCalledTimes(3);
+
+    api.mockResolvedValueOnce({ tasks: [] });
+    await instance.refresh();
+    expect(api).toHaveBeenCalledTimes(4);
+    expect(instance.data.boardTasks).toEqual([]);
+  });
+
+  it('clears a warm queue when the background board request loses project access', async () => {
+    const prefetch = deferred<{ tasks: ClientTask[] }>();
+    const api = vi
+      .fn()
+      .mockResolvedValueOnce({ projects: [{ id: 'p', name: 'Project' }] })
+      .mockResolvedValueOnce({
+        items: [{ taskId: 't', title: 'Private card' }],
+      })
+      .mockReturnValueOnce(prefetch.promise);
+    const { instance } = page(api);
+    await instance.onLoad({ projectId: 'p', taskId: '' });
+    expect(instance.data.items).toHaveLength(1);
+    prefetch.reject(
+      Object.assign(new Error('项目访问权限已变更'), { status: 403 }),
+    );
+    await vi.waitFor(() =>
+      expect(instance.data.error).toBe('项目访问权限已变更'),
+    );
+    expect(instance.data.items).toEqual([]);
+    expect(instance.data.loaded).toBe(false);
   });
 
   it('keeps the chosen board column through card navigation and resets it for a new project', async () => {
@@ -578,12 +618,14 @@ describe('mini board and fresh detail navigation', () => {
     const newList = deferred<{ tasks: ClientTask[] }>();
     const retry = deferred<ReturnType<typeof detail>>();
     const api = vi
-      .fn()
+      .fn(async (path: string) => {
+        if (path === 'tasks?projectId=q&view=board') return newList.promise;
+        if (path === 'tasks?projectId=p&view=board') return { tasks: [] };
+        if (path.endsWith('&taskId=t')) return retry.promise;
+        return { items: [] };
+      })
       .mockResolvedValueOnce(detail())
-      .mockReturnValueOnce(oldList.promise)
-      .mockReturnValueOnce(newList.promise)
-      .mockResolvedValueOnce({ tasks: [] })
-      .mockReturnValueOnce(retry.promise);
+      .mockReturnValueOnce(oldList.promise);
     const { instance } = readyPage(api);
     await instance.openTask(card('t'));
     const switching = instance.switchView(board);

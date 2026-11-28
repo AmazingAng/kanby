@@ -1,4 +1,8 @@
 const { api, tokenKey } = require('../../utils/api');
+const listFreshnessMs = 30_000;
+function listIsFresh(entry) {
+  return entry?.updatedAt && Date.now() - entry.updatedAt < listFreshnessMs;
+}
 function taskRef(task) {
   return task?.ref || (task?.number != null ? `KANBY-${task.number}` : '');
 }
@@ -117,6 +121,7 @@ Page({
     });
   },
   clearContent() {
+    this._lists = {};
     this._detailCache = new Map();
     this._cacheToken = wx.getStorageSync(tokenKey);
     this.clearDetail();
@@ -146,6 +151,20 @@ Page({
       (!task.projectId || task.projectId === context.projectId)
     );
   },
+  showRequestError(error) {
+    if ([401, 403, 404].includes(error.status)) this.clearContent();
+    if (error.status === 401)
+      this.setData({
+        authenticated: false,
+        user: null,
+        userInitial: '',
+        projects: [],
+      });
+    this.setData({
+      detailReady: false,
+      error: error.message || '操作失败，请重试',
+    });
+  },
   async run(action, writing = false) {
     if (this.data.busy || this.data.writing) return;
     this._generation = (this._generation || 0) + 1;
@@ -161,18 +180,7 @@ Page({
         (!sessionExpired && !this.isCurrent(context, false))
       )
         return;
-      if ([401, 403, 404].includes(error.status)) this.clearContent();
-      if (error.status === 401)
-        this.setData({
-          authenticated: false,
-          user: null,
-          userInitial: '',
-          projects: [],
-        });
-      this.setData({
-        detailReady: false,
-        error: error.message || '操作失败，请重试',
-      });
+      this.showRequestError(error);
     } finally {
       // Transport may remove the token on 401; generation still owns the spinner.
       if (context.generation === this._generation)
@@ -236,21 +244,24 @@ Page({
     }
     if (index < 0) index = 0;
     this.setData({ projectIndex: index, projectId: result.projects[index].id });
-    await this.loadContent();
+    await this.loadContent({ preload: true });
   },
-  async loadContent() {
+  async loadContent({ force = false, preload = false } = {}) {
     if (!this.data.projectId) return;
     const context = this.requestContext();
     const cache = this.detailCache();
-    this.setData({ loaded: false, detailReady: false });
-    let path = `tasks?projectId=${encodeURIComponent(context.projectId)}`;
+    const loaded =
+      !context.taskId && Boolean(this._lists?.[context.viewMode]?.updatedAt);
+    this.setData({ loaded, detailReady: false });
+    const path = `tasks?projectId=${encodeURIComponent(context.projectId)}`;
     if (context.taskId) {
       const key = this.cacheKey(context.projectId, context.taskId);
       const cached = cache.get(key);
       if (cached && this.matchesTask(cached.task, context))
         this.setData(cached);
-      path += `&taskId=${encodeURIComponent(context.taskId)}`;
-      const result = await api(path);
+      const result = await api(
+        `${path}&taskId=${encodeURIComponent(context.taskId)}`,
+      );
       if (!this.isCurrent(context)) return;
       if (!this.matchesTask(result.task, context)) {
         this.clearContent();
@@ -270,45 +281,100 @@ Page({
         detailReady: true,
         loaded: true,
       });
-    } else if (context.viewMode === 'board') {
-      const result = await api(`${path}&view=board`);
-      if (!this.isCurrent(context)) return;
-      const tasks = result.tasks
-        .filter(
-          (task) =>
-            ['ideas', 'building', 'shipped'].includes(task.status) &&
-            !task.archivedAt &&
-            (!task.projectId || task.projectId === context.projectId),
-        )
-        .map(taskView);
-      this.setData({
-        boardTasks: tasks,
-        boardColumns: boardColumns(tasks),
-        loaded: true,
-      });
     } else {
-      const result = await api(path);
-      if (!this.isCurrent(context)) return;
-      this.setData({
-        loaded: true,
-        items: result.items.map((item, index) => ({
-          ...item,
-          key: `${item.type}-${item.taskId}-${index}`,
-          displayReason:
-            item.type === 'mention'
-              ? '提到了你'
-              : item.turn?.reasonLabel || '轮到你',
-          displayNote: item.mention?.body || item.turn?.note || '',
-          needsAcceptance: item.turn?.reason === 'awaiting_acceptance',
-        })),
-      });
+      const active = this.loadList(context.viewMode, force);
+      if (preload) {
+        const other = context.viewMode === 'board' ? 'queue' : 'board';
+        // An offline prefetch is retried when the user opens the other view.
+        void this.loadList(other).catch(() => {});
+      }
+      if ((await active) && this.isCurrent(context))
+        this.setData({ loaded: true });
     }
+  },
+  async loadList(viewMode, force = false) {
+    const { projectId, token } = this.requestContext();
+    const lists = (this._lists ||= {});
+    const entry = (lists[viewMode] ||= {});
+    if (entry.pending) return entry.pending;
+    if (!force && listIsFresh(entry)) return true;
+
+    const board = viewMode === 'board';
+    const path = `tasks?projectId=${encodeURIComponent(projectId)}${board ? '&view=board' : ''}`;
+    const sameProject = () =>
+      lists === this._lists && projectId === this.data.projectId;
+    entry.pending = (async () => {
+      try {
+        const result = await api(path);
+        if (!sameProject() || token !== wx.getStorageSync(tokenKey))
+          return false;
+        if (board) {
+          const tasks = result.tasks
+            .filter(
+              (task) =>
+                ['ideas', 'building', 'shipped'].includes(task.status) &&
+                !task.archivedAt &&
+                (!task.projectId || task.projectId === projectId),
+            )
+            .map(taskView);
+          this.setData({
+            boardTasks: tasks,
+            boardColumns: boardColumns(tasks),
+          });
+        } else {
+          this.setData({
+            items: result.items.map((item, index) => ({
+              ...item,
+              key: `${item.type}-${item.taskId}-${index}`,
+              displayReason:
+                item.type === 'mention'
+                  ? '提到了你'
+                  : item.turn?.reasonLabel || '轮到你',
+              displayNote: item.mention?.body || item.turn?.note || '',
+              needsAcceptance: item.turn?.reason === 'awaiting_acceptance',
+            })),
+          });
+        }
+        entry.updatedAt = Date.now();
+        return true;
+      } catch (error) {
+        const currentToken = wx.getStorageSync(tokenKey);
+        // A request for the old project can still expire the same login session.
+        const expired =
+          error.status === 401 &&
+          !currentToken &&
+          this.data.authenticated &&
+          this._cacheToken === token;
+        if (!expired && (!sameProject() || token !== currentToken))
+          return false;
+        if (![401, 403].includes(error.status)) throw error;
+        this.cancelRead();
+        this.showRequestError(error);
+        return false;
+      }
+    })().finally(() => {
+      entry.pending = null;
+    });
+    return entry.pending;
   },
   async switchView(event) {
     const viewMode = event.currentTarget.dataset.view;
-    if (!['queue', 'board'].includes(viewMode) || !this.cancelRead()) return;
+    if (
+      !['queue', 'board'].includes(viewMode) ||
+      viewMode === this.data.viewMode ||
+      !this.cancelRead()
+    )
+      return;
+    this.detailCache();
+    const entry = this._lists?.[viewMode];
     this.clearDetail();
-    this.setData({ viewMode, taskId: '', comment: '' });
+    this.setData({
+      viewMode,
+      taskId: '',
+      comment: '',
+      loaded: Boolean(entry?.updatedAt),
+    });
+    if (!entry?.pending && listIsFresh(entry)) return;
     await this.run(() => this.loadContent());
   },
   selectBoardColumn(event) {
@@ -339,7 +405,7 @@ Page({
       taskId: '',
       comment: '',
     });
-    await this.run(() => this.loadContent());
+    await this.run(() => this.loadContent({ preload: true }));
   },
   async openTask(event) {
     const taskId = event.currentTarget.dataset.id;
@@ -372,7 +438,7 @@ Page({
   async refresh() {
     await this.run(() =>
       this.data.projects.length && this.data.projectId
-        ? this.loadContent()
+        ? this.loadContent({ force: true })
         : this.loadProjects(),
     );
   },
@@ -448,7 +514,10 @@ Page({
         taskId: task.id,
         updatedAt: task.updatedAt,
       });
-      if (this.isCurrent(context)) await this.loadContent();
+      if (this.isCurrent(context)) {
+        this._lists = {};
+        await this.loadContent();
+      }
     }, true);
   },
   async more() {
