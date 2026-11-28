@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   NOTIFICATION_COALESCE_MS,
   NOTIFICATION_HOURLY_CAP,
+  NOTIFICATION_TURN_HOURLY_CAP,
   sendMemberNotice,
   sendTaskNotification,
   type TaskNotification,
@@ -92,7 +93,7 @@ describe('notification rate limiting', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
-  it('caps mentions per sender and project, never turn changes or other projects', async () => {
+  it('caps mentions per sender and project, not turn changes or other projects', async () => {
     const insert = database.sqlite.prepare(
       `INSERT INTO notification_deliveries (id, project_id, channel_id, task_id, event_kind, status, error, recipient_key, sender_key, created_at)
        VALUES (?, 'project-1', 'alice-bot', ?, 'mention', 'sent', NULL, 'user:user-1', 'spammer', ?)`,
@@ -128,6 +129,34 @@ describe('notification rate limiting', () => {
     await sendTaskNotification({
       ...mention('spammer', 'fresh-4'),
       projectId: 'project-2',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('caps turn changes from one sender separately and more loosely', async () => {
+    const insert = database.sqlite.prepare(
+      `INSERT INTO notification_deliveries (id, project_id, channel_id, task_id, event_kind, status, error, recipient_key, sender_key, created_at)
+       VALUES (?, 'project-1', 'alice-bot', ?, 'turn.changed', 'sent', NULL, 'user:user-1', 'bouncer', ?)`,
+    );
+    // Below the turn cap a sender's handoffs keep arriving, even past the
+    // mention cap; reaching it stops only that sender's handoffs.
+    for (let index = 0; index < NOTIFICATION_TURN_HOURLY_CAP - 1; index += 1)
+      insert.run(`turn-${index}`, `card-${index}`, Date.now() - 10 * 60_000);
+    await sendTaskNotification({ ...event('fresh-a'), actorId: 'bouncer' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await sendTaskNotification({ ...event('fresh-b'), actorId: 'bouncer' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(deliveries(database).at(-1)).toMatchObject({
+      status: 'suppressed',
+      error: 'hourly_cap',
+    });
+    // Other senders' handoffs and the bouncer's mentions are unaffected.
+    await sendTaskNotification({ ...event('fresh-c'), actorId: 'colleague' });
+    await sendTaskNotification({
+      ...event('fresh-d'),
+      kind: 'mention',
+      actorId: 'bouncer',
     });
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });

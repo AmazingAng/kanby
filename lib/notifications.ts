@@ -374,13 +374,22 @@ function outcomeOf(error: string | null): DeliveryOutcome {
 export const NOTIFICATION_COALESCE_MS = 2 * 60_000;
 /**
  * @-mentions from one sender in one project reach one member at most this
- * many times per rolling hour, so nobody can silence another member's other
- * notifications. Turn changes (assignment/handoff) and account notices are
- * never capped, only coalesced.
+ * many times per rolling hour. Caps are counted per sender, project and kind
+ * (mentions and turn changes separately), so nobody can use up the budget
+ * that other senders' or other kinds of notifications need. Account notices
+ * are never capped.
  */
 export const NOTIFICATION_HOURLY_CAP = 20;
-/** Project bot channels are shared, so they get their own, higher cap. */
+/**
+ * Turn changes (assignment/handoff) are part of normal work, so their cap is
+ * looser; it only stops one sender bouncing cards at a member in a loop.
+ */
+export const NOTIFICATION_TURN_HOURLY_CAP = 60;
+/** Project bot channels are shared, so they get their own, higher caps. */
 export const NOTIFICATION_CHANNEL_HOURLY_CAP = 60;
+export const NOTIFICATION_TURN_CHANNEL_HOURLY_CAP = 180;
+
+const isTurnKind = (kind: string) => kind.startsWith('turn.');
 
 export type SuppressionReason = 'coalesced' | 'hourly_cap';
 
@@ -420,14 +429,20 @@ export async function throttleRecipients(
         row.event_kind === event.kind &&
         Number(row.created_at) > now - NOTIFICATION_COALESCE_MS,
     );
-    const cap = key.startsWith('channel:')
-      ? NOTIFICATION_CHANNEL_HOURLY_CAP
-      : NOTIFICATION_HOURLY_CAP;
+    const turn = isTurnKind(event.kind);
+    const channel = key.startsWith('channel:');
+    const cap = turn
+      ? channel
+        ? NOTIFICATION_TURN_CHANNEL_HOURLY_CAP
+        : NOTIFICATION_TURN_HOURLY_CAP
+      : channel
+        ? NOTIFICATION_CHANNEL_HOURLY_CAP
+        : NOTIFICATION_HOURLY_CAP;
     const capped =
-      event.kind === 'mention' &&
       rows.filter(
         (row) =>
-          row.event_kind === 'mention' && row.sender_key === event.senderKey,
+          isTurnKind(row.event_kind) === turn &&
+          row.sender_key === event.senderKey,
       ).length >= cap;
     decisions.set(key, coalesced ? 'coalesced' : capped ? 'hourly_cap' : null);
   }

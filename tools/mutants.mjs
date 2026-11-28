@@ -857,6 +857,20 @@ const mutations = [
     to: "source = readFileSync(resolve(process.cwd(), file), 'utf8');",
     test: 'tests/public-release.test.ts',
   },
+  {
+    name: 'idempotency treats a failing write as possibly committed',
+    file: 'app/api/v1/tasks/route.ts',
+    from: 'if (!isExpectedWriteConflict(error)) committed = true;',
+    to: 'if (false) committed = true;',
+    test: 'tests/agent-concurrency.test.ts',
+  },
+  {
+    name: 'turn changes are capped per sender',
+    file: 'lib/notifications.ts',
+    from: 'isTurnKind(row.event_kind) === turn &&',
+    to: "row.event_kind === 'mention' && !turn &&",
+    test: 'tests/notification-throttle.test.ts',
+  },
 ];
 
 function hash(value) {
