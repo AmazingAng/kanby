@@ -484,3 +484,48 @@ export function parseGitHubItemUrl(value: string) {
     return null;
   }
 }
+
+/**
+ * Resolves a GitHub login to the account that currently holds it. Uses an
+ * installation token when one is available (higher rate limit) and falls back
+ * to an unauthenticated request. Any failure other than 404 is "unavailable".
+ */
+export async function resolveGitHubLogin(
+  login: string,
+  token?: string | null,
+): Promise<
+  | { kind: 'found'; id: string; login: string }
+  | { kind: 'not_found' }
+  | { kind: 'unavailable' }
+> {
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,38})$/i.test(login))
+    return { kind: 'not_found' };
+  try {
+    const path = `/users/${encodeURIComponent(login)}`;
+    const request = token
+      ? githubApiRequest(path, token)
+      : new Request(new URL(path, 'https://api.github.com'), {
+          headers: {
+            Accept: 'application/vnd.github+json',
+            'User-Agent': 'kanby-github-app',
+            'X-GitHub-Api-Version': '2022-11-28',
+          },
+          redirect: 'manual',
+        });
+    const response = await fetch(request);
+    if (response.status === 404) return { kind: 'not_found' };
+    if (!response.ok) return { kind: 'unavailable' };
+    const profile = (await response.json()) as {
+      id?: unknown;
+      login?: unknown;
+    };
+    if (
+      (typeof profile.id !== 'number' && typeof profile.id !== 'string') ||
+      typeof profile.login !== 'string'
+    )
+      return { kind: 'unavailable' };
+    return { kind: 'found', id: String(profile.id), login: profile.login };
+  } catch {
+    return { kind: 'unavailable' };
+  }
+}

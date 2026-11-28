@@ -333,6 +333,17 @@ export async function hasActiveProjectMembership(
   return Boolean(row?.found);
 }
 
+/** Placeholder logins start with "#", which GitHub logins never contain. */
+export const STALE_LOGIN_PREFIX = '#';
+
+function releaseStaleLogin(db: D1Database, login: string, ownerId: string) {
+  return db
+    .prepare(
+      `UPDATE users SET login = '${STALE_LOGIN_PREFIX}' || id WHERE login = ? AND id != ?`,
+    )
+    .bind(login, ownerId);
+}
+
 export async function registerUserAndAcceptInvitations(
   user: AuthUser,
   emails: string[] = [],
@@ -340,21 +351,26 @@ export async function registerUserAndAcceptInvitations(
   await ensureSchema();
   const db = database();
   const now = Date.now();
-  await db
-    .prepare(
-      `INSERT INTO users (id, login, name, avatar_url, created_at, updated_at)
+  // Users are keyed by the immutable GitHub user id. GitHub logins can be
+  // renamed and reused, so another row still holding this login is stale:
+  // release it (to a value no GitHub login can take) before claiming it.
+  await db.batch([
+    releaseStaleLogin(db, user.login.toLowerCase(), user.id),
+    db
+      .prepare(
+        `INSERT INTO users (id, login, name, avatar_url, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET login = excluded.login, name = excluded.name, avatar_url = excluded.avatar_url, updated_at = excluded.updated_at`,
-    )
-    .bind(
-      user.id,
-      user.login.toLowerCase(),
-      user.name,
-      user.avatarUrl,
-      now,
-      now,
-    )
-    .run();
+      )
+      .bind(
+        user.id,
+        user.login.toLowerCase(),
+        user.name,
+        user.avatarUrl,
+        now,
+        now,
+      ),
+  ]);
 
   const identities = [user.login, ...emails]
     .map((identity) => identity.trim().toLowerCase())
@@ -549,29 +565,55 @@ export async function listProjectMembers(
   ];
 }
 
+export type GitHubLoginResolution =
+  | { kind: 'found'; id: string; login: string }
+  | { kind: 'not_found' }
+  | { kind: 'unavailable' };
+
+export type InviteResult = 'added' | 'invited' | 'not_found';
+
+/**
+ * Invites by e-mail or GitHub login. A login is resolved through GitHub to the
+ * account that holds it now: a local row whose stored login is stale (renamed
+ * since its last sign-in) is never added in its place. When GitHub cannot be
+ * reached the invitation stays pending and is accepted only by whoever signs
+ * in with that login.
+ */
 export async function inviteProjectMember(
   projectId: string,
   invitedBy: string,
   identity: string,
-): Promise<void> {
+  resolveLogin?: (login: string) => Promise<GitHubLoginResolution>,
+): Promise<InviteResult> {
   await ensureSchema();
   const normalized = identity.trim().toLowerCase().replace(/^@/, '');
   const db = database();
-  const existingUser = normalized.includes('@')
-    ? null
-    : await db
-        .prepare('SELECT id FROM users WHERE login = ?')
-        .bind(normalized)
-        .first<{ id: string }>();
   const now = Date.now();
-  if (existingUser) {
-    await db
-      .prepare(
-        "INSERT OR IGNORE INTO project_members (project_id, user_id, role, created_at) VALUES (?, ?, 'member', ?)",
-      )
-      .bind(projectId, existingUser.id, now)
-      .run();
-    return;
+  if (!normalized.includes('@')) {
+    const resolution = resolveLogin
+      ? await resolveLogin(normalized)
+      : ({ kind: 'unavailable' } as const);
+    if (resolution.kind === 'not_found') return 'not_found';
+    if (resolution.kind === 'found') {
+      const holder = await db
+        .prepare('SELECT id FROM users WHERE id = ?')
+        .bind(resolution.id)
+        .first<{ id: string }>();
+      const statements = [releaseStaleLogin(db, normalized, resolution.id)];
+      if (holder)
+        statements.push(
+          db
+            .prepare('UPDATE users SET login = ? WHERE id = ?')
+            .bind(resolution.login.toLowerCase(), holder.id),
+          db
+            .prepare(
+              "INSERT OR IGNORE INTO project_members (project_id, user_id, role, created_at) VALUES (?, ?, 'member', ?)",
+            )
+            .bind(projectId, holder.id, now),
+        );
+      await db.batch(statements);
+      if (holder) return 'added';
+    }
   }
   await db
     .prepare(
@@ -581,6 +623,7 @@ export async function inviteProjectMember(
     )
     .bind(crypto.randomUUID(), projectId, normalized, invitedBy, now)
     .run();
+  return 'invited';
 }
 
 export async function removeProjectMember(

@@ -1786,7 +1786,8 @@ export function KanbanApp({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: activeProjectId, identity }),
       });
-      if (!response.ok) throw new Error('invite');
+      if (!response.ok)
+        throw new Error(response.status === 404 ? 'not_found' : 'invite');
       const payload = (await response.json()) as { members: ProjectMember[] };
       setMembers(payload.members);
       setProjects((current) =>
@@ -1797,8 +1798,12 @@ export function KanbanApp({
         ),
       );
       setNewMemberIdentity('');
-    } catch {
-      setSyncError('成员添加失败，请检查 GitHub 用户名或邮箱。');
+    } catch (error) {
+      setSyncError(
+        error instanceof Error && error.message === 'not_found'
+          ? 'GitHub 上找不到这个用户名，请检查拼写。'
+          : '成员添加失败，请检查 GitHub 用户名或邮箱。',
+      );
     } finally {
       endMutation();
     }
