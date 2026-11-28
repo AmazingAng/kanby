@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createNotificationChannel,
+  deleteNotificationChannel,
   listNotificationChannels,
   sendMemberNotice,
 } from '@/lib/notifications';
@@ -83,9 +84,21 @@ describe('notification channel secrets at rest', () => {
     // A different key cannot open the row: it is skipped, nothing is sent.
     runtime.WEIXIN_CREDENTIAL_KEY = Buffer.alloc(32, 9).toString('base64');
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    expect(await listNotificationChannels('project-1', 'user-1')).toEqual([]);
+    const [unreadable] = await listNotificationChannels('project-1', 'user-1');
+    expect(unreadable).toMatchObject({ id: 'legacy', unreadable: true });
+    expect(JSON.stringify(unreadable)).not.toContain('v1.');
     await sendMemberNotice('user-1', 'test', 'hello');
     expect(fetchMock).not.toHaveBeenCalled();
+    // It can be deleted, which frees its slot for re-adding the bot.
+    expect(
+      await deleteNotificationChannel({
+        projectId: 'project-1',
+        channelId: 'legacy',
+        userId: 'user-1',
+        isOwner: false,
+      }),
+    ).toBe(true);
+    expect(await listNotificationChannels('project-1', 'user-1')).toEqual([]);
   });
 
   it('keeps plaintext when no key is configured', async () => {

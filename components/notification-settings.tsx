@@ -13,6 +13,7 @@ type Channel = {
   target: string;
   signed: boolean;
   enabled: boolean;
+  unreadable?: boolean;
 };
 
 const kindLabel = { feishu: '飞书', wecom: '企业微信' } as const;
@@ -127,7 +128,13 @@ export function NotificationSettings({
               {channel.scope === 'project' ? '项目群' : '我的'} ·{' '}
               {kindLabel[channel.kind]}
             </span>
-            <span className="truncate text-ink-subtle">
+            <span
+              className={
+                channel.unreadable
+                  ? 'truncate text-[#9d3026]'
+                  : 'truncate text-ink-subtle'
+              }
+            >
               {channel.target}
               {channel.signed ? ' · 已签名' : ''}
             </span>

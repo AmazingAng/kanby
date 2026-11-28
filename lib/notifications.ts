@@ -18,6 +18,8 @@ export type NotificationChannelRecord = {
   signed: boolean;
   enabled: boolean;
   updatedAt: number;
+  /** Stored with another key (e.g. after rotation): never sent, only deletable. */
+  unreadable?: boolean;
 };
 
 type ChannelRow = {
@@ -125,7 +127,15 @@ async function openChannelField(
  * cannot be decrypted (wrong or missing key) is skipped, never sent.
  */
 async function openChannels(rows: ChannelRow[]): Promise<ChannelRow[]> {
-  const opened = await Promise.all(
+  return (await openChannelsWithFailures(rows)).filter(
+    (row): row is ChannelRow => !('unreadable' in row),
+  );
+}
+
+async function openChannelsWithFailures(
+  rows: ChannelRow[],
+): Promise<(ChannelRow | (ChannelRow & { unreadable: true }))[]> {
+  return Promise.all(
     rows.map(async (row) => {
       try {
         const channel = {
@@ -144,11 +154,10 @@ async function openChannels(rows: ChannelRow[]): Promise<ChannelRow[]> {
         return channel;
       } catch {
         console.error(`Kanby channel ${row.id} could not be decrypted`);
-        return null;
+        return { ...row, unreadable: true as const };
       }
     }),
   );
-  return opened.filter((row): row is ChannelRow => row !== null);
 }
 
 async function resealChannel(stored: ChannelRow, plain: ChannelRow) {
@@ -170,7 +179,21 @@ async function resealChannel(stored: ChannelRow, plain: ChannelRow) {
     .run();
 }
 
-function mapChannel(row: ChannelRow): NotificationChannelRecord {
+function mapChannel(
+  row: ChannelRow & { unreadable?: true },
+): NotificationChannelRecord {
+  if (row.unreadable)
+    return {
+      id: row.id,
+      scope: row.user_id ? 'member' : 'project',
+      userId: row.user_id,
+      kind: row.kind,
+      target: '无法读取，请删除后重新添加',
+      signed: false,
+      enabled: false,
+      updatedAt: Number(row.updated_at),
+      unreadable: true,
+    };
   return {
     id: row.id,
     scope: row.user_id ? 'member' : 'project',
@@ -197,7 +220,9 @@ export async function listNotificationChannels(
     )
     .bind(projectId, viewerUserId)
     .all<ChannelRow>();
-  return (await openChannels(result.results)).map(mapChannel);
+  // Unreadable channels are listed (and still count toward the per-scope
+  // limit) so they can be deleted and the bot added again.
+  return (await openChannelsWithFailures(result.results)).map(mapChannel);
 }
 
 const MAX_CHANNELS_PER_SCOPE = 3;
