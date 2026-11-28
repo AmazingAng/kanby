@@ -56,7 +56,7 @@ or a lifecycle integration is not active.
 
 ## Find or create a task
 
-1. Run `kanby auth status --json`. If authentication is missing, tell the user to create a project Agent Token in Kanby Settings and expose it as `KANBY_TOKEN`; never ask them to paste it into chat.
+1. Run `kanby auth status --json`. If authentication is missing, tell the user to create a project Agent Token in Kanby Settings and either expose it as `KANBY_TOKEN` or run `kanby auth login` themselves (it reads the token from a hidden prompt or stdin); never ask them to paste it into chat. Saved tokens (CLI 0.8.0+) apply only to the server origin they were saved for, so a different `KANBY_URL` needs its own login or `KANBY_TOKEN`.
 2. Run `kanby task list --json` and select a task that clearly matches the user's request. When the user asks to create a card, use `kanby task create "<title>" --note "<context>" --due YYYY-MM-DD --json`, omitting `--due` when no deadline was given. Use the returned `ref` for subsequent commands. Do not silently create a duplicate or switch projects.
 3. Set deadlines only from the user or authoritative task context. Use a concrete `YYYY-MM-DD` calendar date without timezone conversion; if the date is ambiguous, report the ambiguity rather than guessing. For existing tasks, use `kanby task update <ref> --due YYYY-MM-DD --json`; clear a date with `--due ""` only when requested.
 4. Claim the task before editing code: `kanby task claim <ref> --lease 15 --json`. Then read its full context with `kanby task get <ref> --json`. The claim only means "I am changing this code" and prevents two agents from editing the same work; comments, review notes, progress, handoffs and attachments do not need it, so reviewers can always write on a card another agent holds.
@@ -83,7 +83,7 @@ Finishing an agent's current work session, passing local tests, opening or mergi
 
 Archive only when the user asks to remove a task from the active board: `kanby task archive <ref> --json`. Archiving is recoverable; Agent Tokens cannot permanently delete tasks. When handing unfinished work to a teammate or their agent, use `handoff --to @login[/agent] --reason developing --note "<done, remaining, risks, attachments>"`. If abandoning work, release the claim instead of marking the task complete.
 
-Use a stable `--idempotency-key` when retrying a mutation whose prior response is unknown. Never print, log, commit, or place `KANBY_TOKEN` in command arguments.
+Use a stable `--idempotency-key` when retrying a mutation whose prior response is unknown. Never print, log, commit, or place `KANBY_TOKEN` in command arguments (do not use `kanby auth login --token`).
 
 ## Review a team's delivery
 

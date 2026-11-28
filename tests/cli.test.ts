@@ -134,6 +134,94 @@ describe('Kanby CLI credential contract', () => {
     });
   });
 
+  it('reads the login token from stdin, stores it per origin and never sends it elsewhere', async () => {
+    const authorizations: (string | undefined)[] = [];
+    let server: Server | undefined;
+    const port = await new Promise<number>((resolve) => {
+      server = createServer((request, response) => {
+        authorizations.push(request.headers.authorization);
+        response.writeHead(request.headers.authorization ? 200 : 401, {
+          'Content-Type': 'application/json',
+        });
+        response.end(
+          JSON.stringify(
+            request.headers.authorization
+              ? { ok: true, data: [{ name: 'P', slug: 'p' }] }
+              : { ok: false, error: { message: 'Unauthorized' } },
+          ),
+        );
+      }).listen(0, '127.0.0.1', () => {
+        const address = server!.address();
+        resolve(typeof address === 'object' && address ? address.port : 0);
+      });
+    });
+    const configRoot = temporaryConfigRoot();
+    const token = `kby_${'p'.repeat(48)}`;
+    const environment = {
+      ...process.env,
+      XDG_CONFIG_HOME: configRoot,
+      KANBY_TOKEN: '',
+    };
+    const login = spawn(
+      process.execPath,
+      [cli, 'auth', 'login', '--url', `http://127.0.0.1:${port}`],
+      { env: environment },
+    );
+    let loginError = '';
+    login.stderr.setEncoding('utf8').on('data', (chunk) => {
+      loginError += chunk;
+    });
+    login.stdin.end(`${token}\n`);
+    const loginStatus = await new Promise<number | null>((resolve) =>
+      login.on('close', resolve),
+    );
+    expect(loginStatus).toBe(0);
+    expect(loginError).not.toContain('Warning');
+    const saved = JSON.parse(
+      readFileSync(join(configRoot, 'kanby', 'config.json'), 'utf8'),
+    ) as { url: string; servers: Record<string, { token: string }> };
+    expect(saved.servers[`http://127.0.0.1:${port}`]?.token).toBe(token);
+
+    // Pointing KANBY_URL at another origin must not reuse the saved token.
+    const other = await runCli(['auth', 'status', '--json'], {
+      ...environment,
+      KANBY_URL: 'http://localhost:1',
+    });
+    expect(other.status).toBe(2);
+    const same = await runCli(['auth', 'status', '--json'], environment);
+    expect(same.status).toBe(0);
+
+    const flagged = await runCli(
+      ['auth', 'login', '--token', token, '--url', `http://127.0.0.1:${port}`],
+      environment,
+    );
+    expect(flagged.stderr).toContain('Warning: --token');
+    await new Promise<void>((resolve, reject) =>
+      server!.close((error) => (error ? reject(error) : resolve())),
+    );
+    expect(authorizations.filter(Boolean).length).toBe(3);
+  });
+
+  it('reads a legacy single-token config only for its own URL', async () => {
+    const configRoot = temporaryConfigRoot();
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(join(configRoot, 'kanby'), { recursive: true });
+    writeFileSync(
+      join(configRoot, 'kanby', 'config.json'),
+      JSON.stringify({ token: 'kby_legacy', url: 'https://legacy.test' }),
+    );
+    const result = await runCli(['task', 'list', '--json'], {
+      ...process.env,
+      XDG_CONFIG_HOME: configRoot,
+      KANBY_TOKEN: '',
+      KANBY_URL: 'http://127.0.0.1:9',
+    });
+    expect(result.status).toBe(2);
+    expect(JSON.parse(result.stderr)).toMatchObject({
+      error: { status: 401 },
+    });
+  });
+
   it('does not send an Agent Token to an insecure non-loopback origin', () => {
     const token = `kby_${'s'.repeat(48)}`;
     const result = spawnSync(
