@@ -112,7 +112,13 @@ export async function processGitHubWebhook(
         kind === 'pull_request' &&
         ['opened', 'reopened', 'ready_for_review'].includes(action)
           ? ('pull_request_opened' as const)
-          : (kind === 'issue' && action === 'closed') ||
+          : // An issue closed as "not planned" (or a duplicate) was not
+            // delivered, so it must not complete the card.
+            (kind === 'issue' &&
+                action === 'closed' &&
+                !['not_planned', 'duplicate'].includes(
+                  text(item.state_reason),
+                )) ||
               (kind === 'pull_request' &&
                 action === 'closed' &&
                 item.merged === true)

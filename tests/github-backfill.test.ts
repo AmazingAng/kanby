@@ -10,7 +10,7 @@ import {
   seedTask,
 } from './support/fixtures';
 
-function closedIssue() {
+function closedIssue(stateReason?: string) {
   return JSON.stringify({
     action: 'closed',
     installation: { id: 77 },
@@ -21,6 +21,7 @@ function closedIssue() {
       title: 'Old issue',
       html_url: 'https://github.com/test/repo/issues/9',
       state: 'closed',
+      state_reason: stateReason,
     },
   });
 }
@@ -77,6 +78,21 @@ describe('GitHub history backfill', () => {
 
   it('still applies completion automation to live webhooks', async () => {
     await processGitHubWebhook('issues', 'live-delivery', closedIssue());
+    expect(status()).toBe('shipped');
+  });
+
+  it('does not complete a card when the issue was closed as not planned', async () => {
+    await processGitHubWebhook(
+      'issues',
+      'live-not-planned',
+      closedIssue('not_planned'),
+    );
+    expect(status()).toBe('ideas');
+    await processGitHubWebhook(
+      'issues',
+      'live-completed',
+      closedIssue('completed'),
+    );
     expect(status()).toBe('shipped');
   });
 });
