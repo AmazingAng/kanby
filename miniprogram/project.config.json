@@ -2,7 +2,7 @@
   "description": "Kanby personal mini program",
   "miniprogramRoot": "./",
   "compileType": "miniprogram",
-  "appid": "touristappid",
+  "appid": "wx358a6eafff0c9884",
   "projectname": "kanby",
   "setting": { "es6": true, "minified": true, "urlCheck": true }
 }

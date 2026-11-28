@@ -41,7 +41,9 @@
         "GITHUB_CLIENT_SECRET",
         "GITHUB_WEBHOOK_SECRET",
         "SESSION_SECRET",
-        "WEIXIN_CREDENTIAL_KEY"
+        "WEIXIN_CREDENTIAL_KEY",
+        "WEIXIN_MINI_APP_ID",
+        "WEIXIN_MINI_APP_SECRET"
       ]
     },
     "production": {
@@ -69,7 +71,9 @@
         "GITHUB_CLIENT_SECRET",
         "GITHUB_WEBHOOK_SECRET",
         "SESSION_SECRET",
-        "WEIXIN_CREDENTIAL_KEY"
+        "WEIXIN_CREDENTIAL_KEY",
+        "WEIXIN_MINI_APP_ID",
+        "WEIXIN_MINI_APP_SECRET"
       ]
     }
   }
