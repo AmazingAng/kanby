@@ -1,4 +1,4 @@
-<view class="page">
+<view class="page {{authenticated && projects.length && !taskId && viewMode === 'board' ? 'page-board' : ''}}">
   <view class="workspace-bar">
     <image class="brand-icon" src="/assets/kanby.png" mode="aspectFit" />
     <picker wx:if="{{authenticated && projects.length}}" class="workspace-picker" mode="selector" range="{{projects}}" range-key="name" value="{{projectIndex}}" bindchange="switchProject" disabled="{{busy}}">
@@ -34,7 +34,7 @@
     <block wx:elif="{{!taskId}}">
       <view class="view-toolbar"><view class="view-switch"><button size="mini" class="view-tab {{viewMode === 'queue' ? 'view-tab-active' : ''}}" data-view="queue" bindtap="switchView" disabled="{{writing}}">轮到我<text>{{items.length}}</text></button><button size="mini" class="view-tab {{viewMode === 'board' ? 'view-tab-active' : ''}}" data-view="board" bindtap="switchView" disabled="{{writing}}">看板</button></view><view class="sync-state"><text class="sync-dot {{busy ? 'sync-dot-loading' : ''}}" />{{busy ? '同步中' : error ? '待刷新' : loaded ? '已同步' : '待同步'}}</view></view>
       <view class="queue-heading"><view><view class="eyebrow">{{viewMode === 'board' ? 'TEAM WORKSPACE' : 'YOUR NEXT MOVE'}}</view><view class="queue-title">{{viewMode === 'board' ? '团队看板' : '接下来，轮到你'}}<text class="count-badge">{{viewMode === 'board' ? boardTasks.length : items.length}}</text></view></view></view>
-      <view wx:if="{{busy && !loaded}}" class="loading-panel"><view class="skeleton skeleton-wide" /><view class="skeleton skeleton-short" /><view class="loading-caption">正在同步任务…</view></view>
+      <view wx:if="{{busy && !loaded && (viewMode === 'queue' || (!boardTasks.length && boardRefreshColumn === -1))}}" class="loading-panel"><view class="skeleton skeleton-wide" /><view class="skeleton skeleton-short" /><view class="loading-caption">正在同步任务…</view></view>
       <block wx:if="{{viewMode === 'queue'}}">
       <view wx:if="{{!items.length && loaded && !busy}}" class="empty-state"><view class="empty-symbol">✓</view><view class="empty-title">暂时没有待办</view><view class="muted">轮到你的任务，会出现在这里。</view></view>
       <view wx:for="{{items}}" wx:key="key" class="task-row" hover-class="task-row-pressed" data-id="{{item.taskId}}" bindtap="openTask" role="button" aria-label="{{item.title}}">
@@ -49,21 +49,24 @@
       <view class="list-footer">轻点卡片处理 · 下拉刷新</view>
       </block>
       <block wx:else>
-        <scroll-view class="board-scroll" scroll-x="{{true}}" enable-flex="{{true}}" enhanced="{{true}}" show-scrollbar="{{false}}">
-          <view class="board-columns">
-            <view wx:for="{{boardColumns}}" wx:for-item="column" wx:key="id" class="board-column">
-              <view class="column-heading"><view class="column-label"><text class="column-dot column-dot-{{column.id}}" />{{column.label}}</view><text class="column-count">{{column.tasks.length}}</text></view>
-              <view wx:if="{{!column.tasks.length && !busy}}" class="column-empty">暂无任务</view>
-              <view wx:for="{{column.tasks}}" wx:key="id" class="board-card" data-id="{{item.id}}" bindtap="openTask" hover-class="task-row-pressed" role="button" aria-label="{{item.title}}">
-                <view class="board-card-meta"><text class="task-ref">KANBY-{{item.number}}</text><text class="board-tag">{{item.tag}}</text></view>
-                <view class="board-card-title">{{item.title}}</view>
-                <view wx:if="{{item.turn.note}}" class="task-excerpt">{{item.turn.note}}</view>
-                <view class="board-card-footer"><view class="board-owners"><text wx:for="{{item.owners}}" wx:for-item="owner" wx:key="id" class="board-owner">{{owner.name}}</text></view><text wx:if="{{item.turn.reasonLabel}}" class="board-turn">{{item.turn.reasonLabel}}</text></view>
+        <view class="board-status-tabs" aria-label="看板状态">
+          <button size="mini" wx:for="{{boardColumns}}" wx:for-item="column" wx:key="id" class="board-status-tab {{boardColumnIndex === index ? 'board-status-active' : ''}}" data-index="{{index}}" aria-selected="{{boardColumnIndex === index}}" bindtap="selectBoardColumn"><text class="column-dot column-dot-{{column.id}}" />{{column.label}}<text class="column-count">{{column.count}}</text></button>
+        </view>
+        <swiper class="board-pager" current="{{boardColumnIndex}}" display-multiple-items="{{1}}" next-margin="36rpx" bindchange="onBoardSwipe">
+          <swiper-item wx:for="{{boardColumns}}" wx:for-item="column" wx:for-index="columnIndex" wx:key="id">
+            <scroll-view class="board-column" scroll-y="{{true}}" enhanced="{{true}}" show-scrollbar="{{false}}" refresher-enabled="{{true}}" refresher-background="#ebece5" refresher-triggered="{{boardRefreshColumn === columnIndex}}" data-index="{{columnIndex}}" bindrefresherrefresh="refreshBoardColumn">
+              <view class="board-column-content">
+                <view wx:if="{{!column.tasks.length && !busy}}" class="column-empty">暂无任务</view>
+                <view wx:for="{{column.tasks}}" wx:key="id" class="board-card" data-id="{{item.id}}" bindtap="openTask" hover-class="task-row-pressed" role="button" aria-label="{{item.title}}">
+                  <view class="board-card-meta"><text class="task-ref">KANBY-{{item.number}}</text><text class="board-tag">{{item.tag}}</text></view>
+                  <view class="board-card-title">{{item.title}}</view>
+                  <view wx:if="{{item.turn.note}}" class="task-excerpt">{{item.turn.note}}</view>
+                  <view class="board-card-footer"><view class="board-owners"><text wx:for="{{item.owners}}" wx:for-item="owner" wx:key="id" class="board-owner">{{owner.name}}</text></view><text wx:if="{{item.turn.reasonLabel}}" class="board-turn">{{item.turn.reasonLabel}}</text></view>
+                </view>
               </view>
-            </view>
-          </view>
-        </scroll-view>
-        <view class="list-footer">左右滑动查看各列 · 轻点卡片打开详情</view>
+            </scroll-view>
+          </swiper-item>
+        </swiper>
       </block>
     </block>
     <block wx:else>

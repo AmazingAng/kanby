@@ -26,6 +26,7 @@ function page(api: ReturnType<typeof vi.fn>, token = 'token') {
     projects: Array<{ id: string; name: string }>;
     user: { name: string } | null;
     viewMode: 'queue' | 'board';
+    boardColumnIndex: number;
     boardColumns: Array<{
       id: string;
       label: string;
@@ -54,6 +55,10 @@ function page(api: ReturnType<typeof vi.fn>, token = 'token') {
     accept(): Promise<void>;
     check(event: CardEvent): Promise<void>;
     switchView(event: CardEvent): Promise<void>;
+    selectBoardColumn(event: {
+      currentTarget: { dataset: { index: number } };
+    }): void;
+    onBoardSwipe(event: { detail: { current: number; source: string } }): void;
     switchProject(event: { detail: { value: string } }): Promise<void>;
     openTask(event: CardEvent): Promise<void>;
     back(): Promise<void>;
@@ -313,6 +318,30 @@ describe('mini board and fresh detail navigation', () => {
     expect(instance.data.boardTasks).toHaveLength(3);
     expect(instance.data.user?.name).toBe('Alice Full Nickname');
     expect(instance.data.loaded).toBe(true);
+  });
+
+  it('keeps the chosen board column through card navigation and resets it for a new project', async () => {
+    const boardResult = { tasks: [detail().task] };
+    const api = vi
+      .fn()
+      .mockResolvedValue(boardResult)
+      .mockResolvedValueOnce(boardResult)
+      .mockResolvedValueOnce(detail());
+    const { instance } = readyPage(api);
+    await instance.switchView(board);
+    instance.onBoardSwipe({ detail: { current: 1, source: 'touch' } });
+    expect(instance.data.boardColumnIndex).toBe(1);
+    instance.selectBoardColumn({ currentTarget: { dataset: { index: 2 } } });
+    instance.onBoardSwipe({ detail: { current: 1, source: '' } });
+    expect(instance.data.boardColumnIndex).toBe(2);
+    expect(api).toHaveBeenCalledTimes(1);
+
+    instance.onBoardSwipe({ detail: { current: 1, source: 'touch' } });
+    await instance.openTask(card('t'));
+    await instance.back();
+    expect(instance.data.boardColumnIndex).toBe(1);
+    await instance.switchProject({ detail: { value: '1' } });
+    expect(instance.data.boardColumnIndex).toBe(0);
   });
 
   it('opens a KANBY number deep link and writes using the resolved task ID', async () => {

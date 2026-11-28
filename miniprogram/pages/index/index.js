@@ -52,6 +52,8 @@ Page({
     detailReady: false,
     selectedPreview: null,
     viewMode: 'queue',
+    boardColumnIndex: 0,
+    boardRefreshColumn: -1,
     boardColumns: boardColumns(),
     boardTasks: [],
     error: '',
@@ -118,7 +120,12 @@ Page({
     this._detailCache = new Map();
     this._cacheToken = wx.getStorageSync(tokenKey);
     this.clearDetail();
-    this.setData({ items: [], boardTasks: [], boardColumns: boardColumns() });
+    this.setData({
+      items: [],
+      boardTasks: [],
+      boardColumns: boardColumns(),
+      boardColumnIndex: 0,
+    });
   },
   detailCache() {
     if (!this._detailCache) {
@@ -303,6 +310,23 @@ Page({
     this.clearDetail();
     this.setData({ viewMode, taskId: '', comment: '' });
     await this.run(() => this.loadContent());
+  },
+  selectBoardColumn(event) {
+    this.setData({ boardColumnIndex: event.currentTarget.dataset.index });
+  },
+  onBoardSwipe(event) {
+    if (event.detail.source === 'touch') {
+      this.setData({ boardColumnIndex: event.detail.current });
+    }
+  },
+  async refreshBoardColumn(event) {
+    if (this.data.boardRefreshColumn !== -1) return;
+    this.setData({ boardRefreshColumn: event.currentTarget.dataset.index });
+    try {
+      await this.refresh();
+    } finally {
+      this.setData({ boardRefreshColumn: -1 });
+    }
   },
   async switchProject(event) {
     const index = Number(event.detail.value);

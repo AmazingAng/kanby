@@ -20,8 +20,17 @@ describe('native mini layout contracts', () => {
     expect(template).toContain('{{user.name}}');
     expect(template).toContain('data-view="queue"');
     expect(template).toContain('data-view="board"');
-    expect(template).toContain('scroll-x="{{true}}"');
-    expect(template).toContain('{{column.label}}');
     expect(template).toContain('{{selectedPreview.title');
+  });
+  it('pages the board horizontally while letting each column scroll vertically', () => {
+    expect(template).toMatch(
+      /<swiper\b[^>]*current="\{\{boardColumnIndex\}\}"[^>]*display-multiple-items="\{\{1\}\}"[^>]*bindchange="onBoardSwipe"/,
+    );
+    expect(template).toMatch(
+      /<swiper-item\b[^>]*wx:for="\{\{boardColumns\}\}"[^>]*>\s*<scroll-view\b[^>]*scroll-y="\{\{true\}\}"[^>]*bindrefresherrefresh="refreshBoardColumn"/,
+    );
+    expect(template).toMatch(
+      /<button\b[^>]*board-status-tab[^>]*aria-selected="\{\{boardColumnIndex === index\}\}"[^>]*bindtap="selectBoardColumn"/,
+    );
   });
 });
