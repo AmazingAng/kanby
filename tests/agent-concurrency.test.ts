@@ -107,6 +107,56 @@ describe('Agent mutation coordination', () => {
     expect((await POST(request())).status).toBe(201);
   });
 
+  it('creates a task with its note atomically', async () => {
+    const response = await POST(
+      new Request(`${origin}/api/v1/tasks`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenOne}`,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'create-with-note',
+        },
+        body: JSON.stringify({ title: 'Noted', status: 'ideas', note: 'ctx' }),
+      }),
+    );
+    expect(response.status).toBe(201);
+    expect(
+      database.sqlite
+        .prepare("SELECT note FROM tasks WHERE title = 'Noted'")
+        .get(),
+    ).toEqual({ note: 'ctx' });
+  });
+
+  it('never repeats a committed write when the request fails afterwards', async () => {
+    const task = seedTask(database, { id: 'task-after-write' });
+    database.sqlite
+      .prepare("UPDATE tasks SET status = 'building' WHERE id = ?")
+      .run(task.id);
+    database.exec(
+      "CREATE TRIGGER fail_agent_update BEFORE INSERT ON task_agent_updates BEGIN SELECT RAISE(ABORT, 'log down'); END",
+    );
+    const complete = () =>
+      PATCH(
+        agentRequest(
+          tokenOne,
+          { id: task.id, action: 'complete' },
+          'complete-after-write',
+        ),
+      );
+    await expect(complete()).rejects.toThrow('log down');
+    database.exec('DROP TRIGGER fail_agent_update');
+    const retry = await complete();
+    expect(retry.status).toBe(500);
+    expect(await retry.json()).toMatchObject({
+      error: { code: 'failed_after_write' },
+    });
+    expect(
+      database.sqlite
+        .prepare('SELECT status FROM tasks WHERE id = ?')
+        .get(task.id),
+    ).toEqual({ status: 'shipped' });
+  });
+
   it('takes over a pending key abandoned by a dead request and expires old keys', async () => {
     const body = JSON.stringify({ title: 'Abandoned', status: 'ideas' });
     const { createHash } = await import('node:crypto');

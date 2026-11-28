@@ -808,7 +808,7 @@ export async function listTasks(
 export async function createTask(
   user: AuthUser,
   projectId: string,
-  input: { title: string; status: ColumnId; due?: string },
+  input: { title: string; status: ColumnId; due?: string; note?: string },
   activityActor?: TaskActivityActor,
 ): Promise<TaskRecord> {
   await ensureSchema();
@@ -832,7 +832,7 @@ export async function createTask(
     id: crypto.randomUUID(),
     number: Number(numberRow?.task_number ?? 1),
     title: input.title,
-    note: '刚刚创建，补充一点上下文吧',
+    note: input.note || '刚刚创建，补充一点上下文吧',
     tag: '产品',
     due: input.due || undefined,
     owner: user,
