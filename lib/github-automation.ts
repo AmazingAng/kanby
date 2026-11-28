@@ -380,6 +380,7 @@ export async function autoLinkPullRequest(input: {
   deliveryId: string;
   actorLogin: string;
   actorAvatarUrl: string | null;
+  projectId?: string;
 }) {
   await ensureSchema();
   const reference = extractKanbyTaskReference(input);
@@ -395,6 +396,7 @@ export async function autoLinkPullRequest(input: {
        WHERE gpr.repository_id = ?
          AND COALESCE(gas.auto_link_pull_requests, 1) = 1
          AND t.archived_at IS NULL
+         AND (? IS NULL OR t.project_id = ?)
          AND (
            (? IS NOT NULL AND t.task_number = CAST(? AS INTEGER))
            OR (? IS NULL AND (lower(t.id) = ? OR lower(substr(t.id, 1, length(?))) = ?))
@@ -403,6 +405,8 @@ export async function autoLinkPullRequest(input: {
     )
     .bind(
       input.repositoryId,
+      input.projectId ?? null,
+      input.projectId ?? null,
       numericReference,
       numericReference,
       numericReference,
@@ -483,6 +487,7 @@ export async function recordReferencedPush(input: {
   actorLogin: string;
   actorAvatarUrl: string | null;
   url: string | null;
+  projectId?: string;
 }) {
   await ensureSchema();
   const reference = extractKanbyTaskReference({
@@ -501,12 +506,15 @@ export async function recordReferencedPush(input: {
        WHERE gpr.repository_id = ?
          AND (gas.auto_link_pull_requests IS NULL OR gas.auto_link_pull_requests = 1)
          AND t.archived_at IS NULL
+         AND (? IS NULL OR t.project_id = ?)
          AND ((? IS NOT NULL AND t.task_number = CAST(? AS INTEGER))
               OR (? IS NULL AND (lower(t.id) = ? OR lower(substr(t.id, 1, length(?))) = ?)))
        LIMIT 2`,
     )
     .bind(
       input.repositoryId,
+      input.projectId ?? null,
+      input.projectId ?? null,
       numericReference,
       numericReference,
       numericReference,

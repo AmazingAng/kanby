@@ -884,6 +884,8 @@ export async function updateLinkedTasksFromGitHub(input: {
   targetStatus?: ColumnId;
   automationTrigger?: 'pull_request_opened' | 'completed';
   activity?: GitHubTaskActivityInput;
+  /** Restricts the update to one project (history backfill). */
+  projectId?: string;
 }) {
   await ensureSchema();
   const db = database();
@@ -900,7 +902,8 @@ export async function updateLinkedTasksFromGitHub(input: {
        SELECT linked_tasks.task_id, linked_tasks.project_id, t.status, t.updated_at
        FROM linked_tasks JOIN tasks t
          ON t.id = linked_tasks.task_id AND t.project_id = linked_tasks.project_id
-       WHERE ${linkedProjectGuard('linked_tasks.project_id')}`,
+       WHERE ${linkedProjectGuard('linked_tasks.project_id')}
+         AND (? IS NULL OR linked_tasks.project_id = ?)`,
     )
     .bind(
       input.repositoryId,
@@ -910,6 +913,8 @@ export async function updateLinkedTasksFromGitHub(input: {
       input.repositoryId,
       input.number,
       input.repositoryId,
+      input.projectId ?? null,
+      input.projectId ?? null,
     )
     .all<{
       task_id: string;
@@ -1009,6 +1014,7 @@ export async function updateLinkedTaskCi(
   branch: string,
   status: string,
   activity?: GitHubTaskActivityInput,
+  projectId?: string,
 ) {
   await ensureSchema();
   const db = database();
@@ -1018,9 +1024,10 @@ export async function updateLinkedTaskCi(
       `SELECT gtl.task_id, gtl.project_id, t.updated_at
        FROM github_task_links gtl JOIN tasks t ON t.id = gtl.task_id AND t.project_id = gtl.project_id
        WHERE gtl.repository_id = ? AND gtl.branch = ? AND gtl.kind = 'pull_request'
-         AND ${linkedProjectGuard('gtl.project_id')}`,
+         AND ${linkedProjectGuard('gtl.project_id')}
+         AND (? IS NULL OR gtl.project_id = ?)`,
     )
-    .bind(repositoryId, branch, repositoryId)
+    .bind(repositoryId, branch, repositoryId, projectId ?? null, projectId ?? null)
     .all<{ task_id: string; project_id: string; updated_at: number }>();
   const automation = new Map<string, GitHubAutomationSettings>();
   await Promise.all(
@@ -1080,6 +1087,7 @@ export async function recordLinkedTaskPush(
   repositoryId: string,
   branch: string,
   activity: GitHubTaskActivityInput,
+  projectId?: string,
 ) {
   await ensureSchema();
   const db = database();
@@ -1089,9 +1097,10 @@ export async function recordLinkedTaskPush(
       `SELECT gtl.task_id, gtl.project_id, t.updated_at
        FROM github_task_links gtl JOIN tasks t ON t.id = gtl.task_id AND t.project_id = gtl.project_id
        WHERE gtl.repository_id = ? AND gtl.branch = ? AND gtl.kind = 'pull_request'
-         AND t.archived_at IS NULL AND ${linkedProjectGuard('gtl.project_id')}`,
+         AND t.archived_at IS NULL AND ${linkedProjectGuard('gtl.project_id')}
+         AND (? IS NULL OR gtl.project_id = ?)`,
     )
-    .bind(repositoryId, branch, repositoryId)
+    .bind(repositoryId, branch, repositoryId, projectId ?? null, projectId ?? null)
     .all<{ task_id: string; project_id: string; updated_at: number }>();
   const { prepareTaskActivityStatement } = await import('@/lib/task-activity');
   const statements = links.results.flatMap((link) => {
