@@ -1094,7 +1094,7 @@ describe('mini board and scoped detail regressions', () => {
     seedTask(db, { id: 'task-parent', title: 'Archived parent' });
     seedAgentToken(db, 'agent-1', 'secret', 'Codex');
     db.sqlite.exec(`
-      INSERT INTO users VALUES ('user-2','bob','Bob',NULL,1,1);
+      INSERT INTO users (id,login,name,avatar_url,created_at,updated_at) VALUES ('user-2','bob','Bob',NULL,1,1);
       INSERT INTO project_members VALUES ('project-1','user-2','member',1);
       UPDATE tasks SET archived_at=1 WHERE id='task-parent';
       UPDATE tasks SET task_number=99,parent_task_id='task-parent',due='2026-12-01',
