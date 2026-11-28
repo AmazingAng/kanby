@@ -25,3 +25,8 @@ existing tests. Use preview synthetic fixture only for transport smoke, then
 promote tested artifact to production and obtain real QR through user's Chrome
 session. No schema/resource/secret changes. Real scan and activation require user.
 Commit spec, fetch before merging, merge/push main without force or bypasses.
+
+Amendment: Worker-semantics regression also reproduced the identical bug in
+lib/notifications.ts (fallback webhook delivery). Include that transport fix;
+verify fallback delivery succeeds and redirect responses fail without forwarding
+notification text or webhook secrets. Add regression and transport mutants.

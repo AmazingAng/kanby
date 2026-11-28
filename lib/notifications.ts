@@ -299,7 +299,8 @@ async function deliver(channel: ChannelRow, text: string) {
       body: JSON.stringify(
         await webhookPayload(channel.kind, text, channel.secret),
       ),
-      redirect: 'error',
+      // Workers rejects redirect:error; deliveryError rejects manual 3xx.
+      redirect: 'manual',
       signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS),
     });
     const body = (await response.json().catch(() => null)) as unknown;

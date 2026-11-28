@@ -73,7 +73,8 @@ async function call<T>(
     method: init.method,
     headers: headers(init.token),
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
-    redirect: 'error',
+    // Workers supports manual/follow only; reject 3xx via response.ok below.
+    redirect: 'manual',
     signal: AbortSignal.timeout(timeoutMs),
   });
   const text = await response.text();

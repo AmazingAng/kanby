@@ -35,6 +35,9 @@ let sendResult: Record<string, unknown>;
 let statusGate: Promise<void> | null;
 
 function iLinkResponder(url: string, init?: RequestInit) {
+  // Cloudflare Workers rejects this mode before making any network request.
+  if (init?.redirect === 'error')
+    throw new TypeError('Invalid redirect value: error');
   const parsed = new URL(url);
   const path = parsed.pathname.replace(/^\//, '');
   const body =
@@ -274,6 +277,54 @@ describe('WeChat binding flow', () => {
       database.sqlite.prepare('SELECT status FROM weixin_accounts').get(),
     ).toEqual({ status: 'expired' });
   });
+
+  it.each([301, 302, 303, 307, 308])(
+    'rejects fallback webhook redirect %i',
+    async (status) => {
+      database.sqlite
+        .prepare(
+          `INSERT INTO notification_channels (id, project_id, user_id, kind, webhook_url, secret, enabled, created_by, created_at, updated_at)
+       VALUES ('redirect-bot', 'project-1', 'user-1', 'wecom', ?, NULL, 1, 'user-1', 1, 1)`,
+        )
+        .run(wecomUrl);
+      let forwarded = false;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_url: string, init?: RequestInit) => {
+          if (init?.redirect === 'error')
+            throw new TypeError('Invalid redirect value: error');
+          if (init?.redirect !== 'manual') {
+            forwarded = true;
+            return Response.json({ errcode: 0 });
+          }
+          return new Response('{"errcode":0}', {
+            status,
+            headers: { Location: 'https://untrusted.example/collect' },
+          });
+        }),
+      );
+      await PATCH(
+        agentRequest(
+          agentToken,
+          {
+            id: 'task-00000001',
+            action: 'handoff',
+            to: 'owner',
+            reason: 'awaiting_acceptance',
+          },
+          'webhook-redirect-0001',
+        ),
+      );
+      expect(forwarded).toBe(false);
+      expect(
+        database.sqlite
+          .prepare(
+            "SELECT status, error FROM notification_deliveries WHERE channel_id = 'redirect-bot'",
+          )
+          .get(),
+      ).toEqual({ status: 'failed', error: `HTTP ${status}` });
+    },
+  );
 
   it('ignores a QR confirmation that lands after the member unbound', async () => {
     let release!: () => void;
