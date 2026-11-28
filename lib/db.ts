@@ -705,6 +705,10 @@ export async function removeProjectMember(
   const removed = `NOT EXISTS (SELECT 1 FROM project_members WHERE project_id = ? AND user_id = ?)`;
   // Removing a member revokes their Agent Tokens for this project and frees
   // their claims, so re-adding the member later cannot revive old tokens.
+  // Browser sessions are deliberately left alone: they are not project
+  // scoped, every request re-checks membership, and signing the user out
+  // everywhere would let any project owner log anyone out at will
+  // (invite, then remove).
   await db.batch([
     db
       .prepare(
@@ -726,13 +730,6 @@ export async function removeProjectMember(
          WHERE project_id = ? AND user_id = ? AND revoked_at IS NULL AND ${removed}`,
       )
       .bind(now, projectId, memberId, projectId, memberId),
-    // Sign the removed member out of the browser immediately.
-    db
-      .prepare(
-        `UPDATE users SET sessions_revoked_at = MAX(COALESCE(sessions_revoked_at, 0), ?)
-         WHERE id = ? AND ${removed}`,
-      )
-      .bind(now, memberId, projectId, memberId),
   ]);
 }
 

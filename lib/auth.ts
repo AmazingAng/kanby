@@ -315,7 +315,7 @@ function issuedAtMs(claims: SessionClaims) {
 /**
  * Server-side revocation: a cookie is rejected when its session id was
  * logged out, or when it was issued before the user's sessions were revoked
- * (for example when they were removed from a project).
+ * (when a legacy cookie without a session id is logged out).
  */
 async function sessionRevoked(claims: SessionClaims) {
   const { database } = await import('@/lib/db');

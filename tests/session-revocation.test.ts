@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { POST as logout } from '@/app/api/auth/logout/route';
 import { createSessionToken, getSessionUser, SESSION_COOKIE } from '@/lib/auth';
-import { removeProjectMember } from '@/lib/db';
+import { getProjectRole, removeProjectMember } from '@/lib/db';
 
 import { createMigratedDatabase, type TestD1Database } from './support/d1';
 import {
@@ -78,14 +78,19 @@ describe('server-side session revocation', () => {
     expect((await logout(withCookie(phone, 'POST'))).status).toBe(303);
   });
 
-  it('removing a member signs them out everywhere, and a new sign-in works', async () => {
+  it('removing a member cuts project access without signing them out', async () => {
     const before = await createSessionToken(bob, sessionSecret);
     await removeProjectMember('project-1', 'user-2');
-    expect(await getSessionUser(withCookie(before))).toBeNull();
-
-    vi.useFakeTimers({ now: Date.now() + 5 });
-    const after = await createSessionToken(bob, sessionSecret);
-    expect(await getSessionUser(withCookie(after))).not.toBeNull();
+    // Sessions are not project scoped; access is re-checked per request.
+    expect(await getSessionUser(withCookie(before))).toMatchObject({
+      id: 'user-2',
+    });
+    expect(await getProjectRole('project-1', 'user-2')).toBeNull();
+    expect(
+      database.sqlite
+        .prepare("SELECT sessions_revoked_at FROM users WHERE id = 'user-2'")
+        .get(),
+    ).toEqual({ sessions_revoked_at: null });
   });
 
   it('logging out a legacy cookie without a session id revokes older sessions', async () => {

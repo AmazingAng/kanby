@@ -12,7 +12,8 @@
 
 - `drizzle/0022_review_hardening.sql`：5 条语句。
   - 新表 `session_revocations` 及索引：登出的会话 ID，保留到 Cookie 过期。
-  - `users.sessions_revoked_at`：移除成员时写入，早于该时间签发的 Cookie 全部失效。
+  - `users.sessions_revoked_at`：用没有会话 ID 的旧 Cookie 登出时写入，早于该时间签发的
+    Cookie 全部失效。
   - `projects.last_task_number`（`NOT NULL DEFAULT 0`）+ 一条回填
     `UPDATE`：按当前最大任务编号初始化，编号以后只增不减。
 - 不新增 secret。Feishu/企业微信机器人 webhook 和签名密钥改为用**已有的**
@@ -25,8 +26,10 @@
   （期望逐渐降为 0；不常用的项目可能要等到有人打开设置页）。
 - 登录态：上线前签发的 Cookie 没有会话 ID，仍然有效；用这类 Cookie 登出时会使该用户
   所有更早的会话失效（其他设备需要重新登录），属预期行为。
-- 移除成员会立即撤销其在该项目的 Agent Token、释放其认领，并让其所有浏览器会话失效
-  （其他项目的成员身份不受影响，重新登录即可）。
+- 移除成员会立即撤销其在该项目的 Agent Token 并释放其认领；被移除者立即失去该项目的
+  访问权限（每个请求都重新校验成员身份），但不会被登出，其他项目照常使用。不在移除时
+  撤销浏览器会话，是因为会话不分项目，否则任何 owner 都能通过「邀请再移除」把任意用户
+  从所有设备登出。
 - 不新增定时任务。
 
 ## 批次
@@ -61,8 +64,8 @@ fs.writeFileSync(
       schedule 保持暂停。
 - [ ] 预览验收：
   - [ ] 登出后，用登出前复制的 Cookie 请求 `/api/auth/session` 得到未登录。
-  - [ ] 移除测试成员后，其浏览器立即失去登录，其 Agent Token 返回 401；重新邀请后旧
-        Token 仍然 401。
+  - [ ] 移除测试成员后，其浏览器仍保持登录但看不到该项目（`/api/tasks` 返回 403），其 Agent
+        Token 返回 401；重新邀请后旧 Token 仍然 401。
   - [ ] 删除编号最大的已归档任务后新建任务，编号不复用。
   - [ ] GitHub 以“not planned”关闭关联 Issue，卡片不移动。
   - [ ] 任务详情里编辑验收条件时按 Esc 只取消该条编辑，不关闭对话框。
