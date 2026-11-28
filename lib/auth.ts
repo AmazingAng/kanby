@@ -232,6 +232,10 @@ export async function createSessionToken(
     encoder.encode(
       JSON.stringify({
         ...user,
+        // A random session id lets logout revoke exactly this cookie; the
+        // millisecond issue time is compared with per-user revocations.
+        sid: randomToken(16),
+        iam: Date.now(),
         iat: Math.floor(Date.now() / 1000),
         exp: Math.floor(Date.now() / 1000) + SESSION_LIFETIME_SECONDS,
       }),
@@ -245,9 +249,17 @@ export async function createSessionToken(
   return `${payload}.${encodeBase64Url(new Uint8Array(signature))}`;
 }
 
-export async function getSessionUser(
+type SessionClaims = AuthUser & {
+  iat: number;
+  exp: number;
+  sid?: unknown;
+  iam?: unknown;
+};
+
+/** Verifies the cookie's signature and lifetime; no revocation check. */
+async function verifiedSessionClaims(
   request: Request,
-): Promise<SessionUser | null> {
+): Promise<SessionClaims | null> {
   const config = getAuthConfig();
   const token = readCookie(request, SESSION_COOKIE);
   if (!config || !token) return null;
@@ -255,7 +267,6 @@ export async function getSessionUser(
   if (segments.length !== 2) return null;
   const [payload, signature] = segments;
   if (!payload || !signature) return null;
-
   try {
     const valid = await crypto.subtle.verify(
       'HMAC',
@@ -266,7 +277,7 @@ export async function getSessionUser(
     if (!valid) return null;
     const parsed = JSON.parse(
       new TextDecoder().decode(decodeBase64Url(payload)),
-    ) as AuthUser & { iat: number; exp: number };
+    ) as SessionClaims;
     const now = Math.floor(Date.now() / 1000);
     if (
       typeof parsed.id !== 'string' ||
@@ -282,28 +293,116 @@ export async function getSessionUser(
       parsed.exp <= now
     )
       return null;
-    const githubAdminAccountIds = Array.isArray(parsed.githubAdminAccountIds)
-      ? parsed.githubAdminAccountIds
-          .filter((value): value is string => typeof value === 'string')
-          .slice(0, 250)
-      : undefined;
-    return {
-      id: parsed.id,
-      login: parsed.login,
-      name:
-        typeof parsed.name === 'string' && parsed.name
-          ? parsed.name
-          : parsed.login,
-      avatarUrl:
-        typeof parsed.avatarUrl === 'string' && parsed.avatarUrl
-          ? parsed.avatarUrl
-          : null,
-      githubAdminAccountIds,
-      authenticatedAt: parsed.iat,
-    };
+    return parsed;
   } catch {
     return null;
   }
+}
+
+function sessionId(claims: SessionClaims) {
+  return typeof claims.sid === 'string' &&
+    /^[A-Za-z0-9_-]{16,64}$/.test(claims.sid)
+    ? claims.sid
+    : null;
+}
+
+function issuedAtMs(claims: SessionClaims) {
+  return Number.isSafeInteger(claims.iam)
+    ? Number(claims.iam)
+    : claims.iat * 1000;
+}
+
+/**
+ * Server-side revocation: a cookie is rejected when its session id was
+ * logged out, or when it was issued before the user's sessions were revoked
+ * (for example when they were removed from a project).
+ */
+async function sessionRevoked(claims: SessionClaims) {
+  const { database } = await import('@/lib/db');
+  const sid = sessionId(claims);
+  const row = await database()
+    .prepare(
+      `SELECT
+         (SELECT sessions_revoked_at FROM users WHERE id = ?) AS revoked_at,
+         (SELECT 1 FROM session_revocations WHERE sid = ?) AS logged_out`,
+    )
+    .bind(claims.id, sid)
+    .first<{ revoked_at: number | null; logged_out: number | null }>();
+  return Boolean(
+    row?.logged_out ||
+    (row?.revoked_at != null && issuedAtMs(claims) <= Number(row.revoked_at)),
+  );
+}
+
+export async function getSessionUser(
+  request: Request,
+): Promise<SessionUser | null> {
+  const parsed = await verifiedSessionClaims(request);
+  if (!parsed) return null;
+  try {
+    if (await sessionRevoked(parsed)) return null;
+  } catch {
+    // Fail closed: if revocation cannot be checked, the cookie is not trusted.
+    return null;
+  }
+  const githubAdminAccountIds = Array.isArray(parsed.githubAdminAccountIds)
+    ? parsed.githubAdminAccountIds
+        .filter((value): value is string => typeof value === 'string')
+        .slice(0, 250)
+    : undefined;
+  return {
+    id: parsed.id,
+    login: parsed.login,
+    name:
+      typeof parsed.name === 'string' && parsed.name
+        ? parsed.name
+        : parsed.login,
+    avatarUrl:
+      typeof parsed.avatarUrl === 'string' && parsed.avatarUrl
+        ? parsed.avatarUrl
+        : null,
+    githubAdminAccountIds,
+    authenticatedAt: parsed.iat,
+  };
+}
+
+/**
+ * Revokes the session in the request's cookie. Cookies issued before session
+ * ids existed cannot be revoked individually, so they revoke every session of
+ * that user that is at least as old.
+ */
+export async function revokeRequestSession(request: Request) {
+  const claims = await verifiedSessionClaims(request);
+  if (!claims) return;
+  const { database } = await import('@/lib/db');
+  const db = database();
+  const sid = sessionId(claims);
+  const now = Date.now();
+  if (sid) {
+    await db.batch([
+      db
+        .prepare('DELETE FROM session_revocations WHERE expires_at <= ?')
+        .bind(now),
+      db
+        .prepare(
+          'INSERT OR IGNORE INTO session_revocations (sid, user_id, expires_at) VALUES (?, ?, ?)',
+        )
+        .bind(sid, claims.id, claims.exp * 1000),
+    ]);
+    return;
+  }
+  await revokeUserSessions(claims.id, issuedAtMs(claims));
+}
+
+/** Invalidates every session of a user issued at or before `before`. */
+export async function revokeUserSessions(userId: string, before = Date.now()) {
+  const { database } = await import('@/lib/db');
+  await database()
+    .prepare(
+      'UPDATE users SET sessions_revoked_at = MAX(COALESCE(sessions_revoked_at, 0), ?) WHERE id = ?',
+    )
+    .bind(before, userId)
+    .run();
 }
 
 export function isSameOriginMutation(

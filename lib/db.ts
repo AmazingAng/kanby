@@ -724,6 +724,13 @@ export async function removeProjectMember(
          WHERE project_id = ? AND user_id = ? AND revoked_at IS NULL AND ${removed}`,
       )
       .bind(now, projectId, memberId, projectId, memberId),
+    // Sign the removed member out of the browser immediately.
+    db
+      .prepare(
+        `UPDATE users SET sessions_revoked_at = MAX(COALESCE(sessions_revoked_at, 0), ?)
+         WHERE id = ? AND ${removed}`,
+      )
+      .bind(now, memberId, projectId, memberId),
   ]);
 }
 

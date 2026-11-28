@@ -535,7 +535,9 @@ describe('mini adversarial and concurrency checks', () => {
   it('allows only one binding winner, rejects reassignment, and never creates users', async () => {
     const pending = await payload(await login());
     db.sqlite
-      .prepare('INSERT INTO users VALUES (?,?,?,?,?,?)')
+      .prepare(
+        'INSERT INTO users (id, login, name, avatar_url, created_at, updated_at) VALUES (?,?,?,?,?,?)',
+      )
       .run('user-2', 'bob', 'Bob', null, 1, 1);
     const alice = request(
       'account',

@@ -88,7 +88,9 @@ describe('transactional metric collection and read boundaries', () => {
     });
     expect(rows()).toHaveLength(1);
     db.sqlite
-      .prepare("INSERT INTO users VALUES ('user-2','bob','Bob',NULL,1,1)")
+      .prepare(
+        "INSERT INTO users (id, login, name, avatar_url, created_at, updated_at) VALUES ('user-2','bob','Bob',NULL,1,1)",
+      )
       .run();
     db.sqlite
       .prepare(

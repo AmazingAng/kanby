@@ -14,10 +14,23 @@ export const users = sqliteTable(
     login: text('login').notNull(),
     name: text('name').notNull(),
     avatarUrl: text('avatar_url'),
+    // Browser sessions issued at or before this time (ms) are rejected.
+    sessionsRevokedAt: integer('sessions_revoked_at'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
   },
   (table) => [uniqueIndex('idx_users_login').on(table.login)],
+);
+
+/** Logged-out browser session ids, kept until the cookie would expire. */
+export const sessionRevocations = sqliteTable(
+  'session_revocations',
+  {
+    sid: text('sid').primaryKey(),
+    userId: text('user_id').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+  },
+  (table) => [index('idx_session_revocations_expiry').on(table.expiresAt)],
 );
 
 export const projects = sqliteTable(

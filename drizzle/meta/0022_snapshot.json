@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "e92120e0-a428-423a-be46-4863236c7964",
+  "id": "3219ef0c-e816-4ae8-8e57-b8e2ba37f4a2",
   "prevId": "93945a80-be5e-42ef-a436-da653e6c488d",
   "tables": {
     "agent_idempotency_keys": {
@@ -46,17 +46,12 @@
       "indexes": {
         "idx_agent_idempotency_token_key": {
           "name": "idx_agent_idempotency_token_key",
-          "columns": [
-            "token_id",
-            "key"
-          ],
+          "columns": ["token_id", "key"],
           "isUnique": true
         },
         "idx_agent_idempotency_created": {
           "name": "idx_agent_idempotency_created",
-          "columns": [
-            "created_at"
-          ],
+          "columns": ["created_at"],
           "isUnique": false
         }
       },
@@ -150,25 +145,17 @@
       "indexes": {
         "idx_agent_tokens_hash": {
           "name": "idx_agent_tokens_hash",
-          "columns": [
-            "token_hash"
-          ],
+          "columns": ["token_hash"],
           "isUnique": true
         },
         "idx_agent_tokens_project_created": {
           "name": "idx_agent_tokens_project_created",
-          "columns": [
-            "project_id",
-            "created_at"
-          ],
+          "columns": ["project_id", "created_at"],
           "isUnique": false
         },
         "idx_agent_tokens_user": {
           "name": "idx_agent_tokens_user",
-          "columns": [
-            "user_id",
-            "revoked_at"
-          ],
+          "columns": ["user_id", "revoked_at"],
           "isUnique": false
         }
       },
@@ -245,9 +232,7 @@
       "indexes": {
         "idx_github_automation_updated": {
           "name": "idx_github_automation_updated",
-          "columns": [
-            "updated_at"
-          ],
+          "columns": ["updated_at"],
           "isUnique": false
         }
       },
@@ -291,9 +276,7 @@
       "indexes": {
         "idx_github_connection_states_expires": {
           "name": "idx_github_connection_states_expires",
-          "columns": [
-            "expires_at"
-          ],
+          "columns": ["expires_at"],
           "isUnique": false
         }
       },
@@ -402,17 +385,12 @@
       "indexes": {
         "idx_github_deliveries_received": {
           "name": "idx_github_deliveries_received",
-          "columns": [
-            "received_at"
-          ],
+          "columns": ["received_at"],
           "isUnique": false
         },
         "idx_github_deliveries_retry": {
           "name": "idx_github_deliveries_retry",
-          "columns": [
-            "status",
-            "next_retry_at"
-          ],
+          "columns": ["status", "next_retry_at"],
           "isUnique": false
         }
       },
@@ -512,10 +490,7 @@
       "indexes": {
         "idx_github_events_project_created": {
           "name": "idx_github_events_project_created",
-          "columns": [
-            "project_id",
-            "created_at"
-          ],
+          "columns": ["project_id", "created_at"],
           "isUnique": false
         }
       },
@@ -587,9 +562,7 @@
       "indexes": {
         "idx_github_installations_account": {
           "name": "idx_github_installations_account",
-          "columns": [
-            "account_id"
-          ],
+          "columns": ["account_id"],
           "isUnique": false
         }
       },
@@ -654,18 +627,12 @@
       "indexes": {
         "idx_github_issue_imports_item": {
           "name": "idx_github_issue_imports_item",
-          "columns": [
-            "project_id",
-            "repository_id",
-            "item_number"
-          ],
+          "columns": ["project_id", "repository_id", "item_number"],
           "isUnique": true
         },
         "idx_github_issue_imports_task": {
           "name": "idx_github_issue_imports_task",
-          "columns": [
-            "task_id"
-          ],
+          "columns": ["task_id"],
           "isUnique": true
         }
       },
@@ -709,9 +676,7 @@
       "indexes": {
         "idx_github_project_installations_installation": {
           "name": "idx_github_project_installations_installation",
-          "columns": [
-            "installation_id"
-          ],
+          "columns": ["installation_id"],
           "isUnique": false
         }
       },
@@ -748,18 +713,12 @@
       "indexes": {
         "idx_github_project_repositories_pair": {
           "name": "idx_github_project_repositories_pair",
-          "columns": [
-            "project_id",
-            "repository_id"
-          ],
+          "columns": ["project_id", "repository_id"],
           "isUnique": true
         },
         "idx_github_project_repositories_repository": {
           "name": "idx_github_project_repositories_repository",
-          "columns": [
-            "repository_id",
-            "project_id"
-          ],
+          "columns": ["repository_id", "project_id"],
           "isUnique": false
         }
       },
@@ -804,9 +763,7 @@
       "indexes": {
         "idx_github_redelivery_guid": {
           "name": "idx_github_redelivery_guid",
-          "columns": [
-            "guid"
-          ],
+          "columns": ["guid"],
           "isUnique": true
         }
       },
@@ -887,16 +844,12 @@
       "indexes": {
         "idx_github_repositories_installation": {
           "name": "idx_github_repositories_installation",
-          "columns": [
-            "installation_id"
-          ],
+          "columns": ["installation_id"],
           "isUnique": false
         },
         "idx_github_repositories_full_name": {
           "name": "idx_github_repositories_full_name",
-          "columns": [
-            "full_name"
-          ],
+          "columns": ["full_name"],
           "isUnique": true
         }
       },
@@ -969,10 +922,7 @@
       "indexes": {
         "idx_github_sync_runs_project_started": {
           "name": "idx_github_sync_runs_project_started",
-          "columns": [
-            "project_id",
-            "started_at"
-          ],
+          "columns": ["project_id", "started_at"],
           "isUnique": false
         }
       },
@@ -1065,19 +1015,12 @@
       "indexes": {
         "idx_github_task_links_project": {
           "name": "idx_github_task_links_project",
-          "columns": [
-            "project_id",
-            "updated_at"
-          ],
+          "columns": ["project_id", "updated_at"],
           "isUnique": false
         },
         "idx_github_task_links_item": {
           "name": "idx_github_task_links_item",
-          "columns": [
-            "repository_id",
-            "kind",
-            "item_number"
-          ],
+          "columns": ["repository_id", "kind", "item_number"],
           "isUnique": false
         }
       },
@@ -1180,18 +1123,12 @@
       "indexes": {
         "idx_interaction_event_id": {
           "name": "idx_interaction_event_id",
-          "columns": [
-            "session_id",
-            "id"
-          ],
+          "columns": ["session_id", "id"],
           "isUnique": true
         },
         "idx_interaction_event_sequence": {
           "name": "idx_interaction_event_sequence",
-          "columns": [
-            "session_id",
-            "sequence"
-          ],
+          "columns": ["session_id", "sequence"],
           "isUnique": true
         }
       },
@@ -1319,11 +1256,7 @@
       "indexes": {
         "idx_interaction_sessions_project": {
           "name": "idx_interaction_sessions_project",
-          "columns": [
-            "project_id",
-            "created_at",
-            "id"
-          ],
+          "columns": ["project_id", "created_at", "id"],
           "isUnique": false
         }
       },
@@ -1381,11 +1314,7 @@
       "indexes": {
         "idx_member_metrics_project_time": {
           "name": "idx_member_metrics_project_time",
-          "columns": [
-            "project_id",
-            "occurred_at",
-            "sequence"
-          ],
+          "columns": ["project_id", "occurred_at", "sequence"],
           "isUnique": false
         }
       },
@@ -1460,18 +1389,12 @@
       "indexes": {
         "idx_mini_identity_subject": {
           "name": "idx_mini_identity_subject",
-          "columns": [
-            "app_id",
-            "subject_hash"
-          ],
+          "columns": ["app_id", "subject_hash"],
           "isUnique": true
         },
         "idx_mini_identity_user": {
           "name": "idx_mini_identity_user",
-          "columns": [
-            "app_id",
-            "user_id"
-          ],
+          "columns": ["app_id", "user_id"],
           "isUnique": true
         }
       },
@@ -1480,12 +1403,8 @@
           "name": "mini_identities_user_id_users_id_fk",
           "tableFrom": "mini_identities",
           "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["user_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1522,9 +1441,7 @@
       "indexes": {
         "idx_mini_limits_expiry": {
           "name": "idx_mini_limits_expiry",
-          "columns": [
-            "expires_at"
-          ],
+          "columns": ["expires_at"],
           "isUnique": false
         }
       },
@@ -1568,17 +1485,12 @@
       "indexes": {
         "idx_mini_pair_subject": {
           "name": "idx_mini_pair_subject",
-          "columns": [
-            "app_id",
-            "subject_hash"
-          ],
+          "columns": ["app_id", "subject_hash"],
           "isUnique": true
         },
         "idx_mini_pairs_expiry": {
           "name": "idx_mini_pairs_expiry",
-          "columns": [
-            "expires_at"
-          ],
+          "columns": ["expires_at"],
           "isUnique": false
         }
       },
@@ -1622,17 +1534,12 @@
       "indexes": {
         "idx_mini_sessions_identity": {
           "name": "idx_mini_sessions_identity",
-          "columns": [
-            "identity_id",
-            "created_at"
-          ],
+          "columns": ["identity_id", "created_at"],
           "isUnique": false
         },
         "idx_mini_sessions_expiry": {
           "name": "idx_mini_sessions_expiry",
-          "columns": [
-            "expires_at"
-          ],
+          "columns": ["expires_at"],
           "isUnique": false
         }
       },
@@ -1641,12 +1548,8 @@
           "name": "mini_sessions_identity_id_mini_identities_id_fk",
           "tableFrom": "mini_sessions",
           "tableTo": "mini_identities",
-          "columnsFrom": [
-            "identity_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["identity_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1733,10 +1636,7 @@
       "indexes": {
         "idx_notification_channels_project": {
           "name": "idx_notification_channels_project",
-          "columns": [
-            "project_id",
-            "user_id"
-          ],
+          "columns": ["project_id", "user_id"],
           "isUnique": false
         }
       },
@@ -1815,18 +1715,12 @@
       "indexes": {
         "idx_notification_deliveries_project": {
           "name": "idx_notification_deliveries_project",
-          "columns": [
-            "project_id",
-            "created_at"
-          ],
+          "columns": ["project_id", "created_at"],
           "isUnique": false
         },
         "idx_notification_deliveries_recipient": {
           "name": "idx_notification_deliveries_recipient",
-          "columns": [
-            "recipient_key",
-            "created_at"
-          ],
+          "columns": ["recipient_key", "created_at"],
           "isUnique": false
         }
       },
@@ -1884,18 +1778,12 @@
       "indexes": {
         "idx_project_invitations_project_identity": {
           "name": "idx_project_invitations_project_identity",
-          "columns": [
-            "project_id",
-            "identity"
-          ],
+          "columns": ["project_id", "identity"],
           "isUnique": true
         },
         "idx_project_invitations_identity": {
           "name": "idx_project_invitations_identity",
-          "columns": [
-            "identity",
-            "accepted_at"
-          ],
+          "columns": ["identity", "accepted_at"],
           "isUnique": false
         }
       },
@@ -1940,18 +1828,12 @@
       "indexes": {
         "idx_project_members_project_user": {
           "name": "idx_project_members_project_user",
-          "columns": [
-            "project_id",
-            "user_id"
-          ],
+          "columns": ["project_id", "user_id"],
           "isUnique": true
         },
         "idx_project_members_user": {
           "name": "idx_project_members_user",
-          "columns": [
-            "user_id",
-            "project_id"
-          ],
+          "columns": ["user_id", "project_id"],
           "isUnique": false
         }
       },
@@ -2017,10 +1899,45 @@
       "indexes": {
         "idx_projects_slug": {
           "name": "idx_projects_slug",
-          "columns": [
-            "slug"
-          ],
+          "columns": ["slug"],
           "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "session_revocations": {
+      "name": "session_revocations",
+      "columns": {
+        "sid": {
+          "name": "sid",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "idx_session_revocations_expiry": {
+          "name": "idx_session_revocations_expiry",
+          "columns": ["expires_at"],
+          "isUnique": false
         }
       },
       "foreignKeys": {},
@@ -2100,12 +2017,7 @@
       "indexes": {
         "idx_task_acceptance_project_task_position": {
           "name": "idx_task_acceptance_project_task_position",
-          "columns": [
-            "project_id",
-            "task_id",
-            "position",
-            "created_at"
-          ],
+          "columns": ["project_id", "task_id", "position", "created_at"],
           "isUnique": false
         }
       },
@@ -2114,12 +2026,8 @@
           "name": "task_acceptance_items_task_id_tasks_id_fk",
           "tableFrom": "task_acceptance_items",
           "tableTo": "tasks",
-          "columnsFrom": [
-            "task_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["task_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -2184,18 +2092,12 @@
       "indexes": {
         "idx_task_agent_claims_project": {
           "name": "idx_task_agent_claims_project",
-          "columns": [
-            "project_id",
-            "lease_expires_at"
-          ],
+          "columns": ["project_id", "lease_expires_at"],
           "isUnique": false
         },
         "idx_task_agent_claims_token": {
           "name": "idx_task_agent_claims_token",
-          "columns": [
-            "token_id",
-            "lease_expires_at"
-          ],
+          "columns": ["token_id", "lease_expires_at"],
           "isUnique": false
         }
       },
@@ -2267,18 +2169,12 @@
       "indexes": {
         "idx_task_agent_updates_task": {
           "name": "idx_task_agent_updates_task",
-          "columns": [
-            "task_id",
-            "created_at"
-          ],
+          "columns": ["task_id", "created_at"],
           "isUnique": false
         },
         "idx_task_agent_updates_project": {
           "name": "idx_task_agent_updates_project",
-          "columns": [
-            "project_id",
-            "created_at"
-          ],
+          "columns": ["project_id", "created_at"],
           "isUnique": false
         }
       },
@@ -2330,19 +2226,12 @@
       "indexes": {
         "idx_task_assignees_task_user": {
           "name": "idx_task_assignees_task_user",
-          "columns": [
-            "task_id",
-            "user_id"
-          ],
+          "columns": ["task_id", "user_id"],
           "isUnique": true
         },
         "idx_task_assignees_project_task_position": {
           "name": "idx_task_assignees_project_task_position",
-          "columns": [
-            "project_id",
-            "task_id",
-            "position"
-          ],
+          "columns": ["project_id", "task_id", "position"],
           "isUnique": false
         }
       },
@@ -2351,12 +2240,8 @@
           "name": "task_assignees_task_id_tasks_id_fk",
           "tableFrom": "task_assignees",
           "tableTo": "tasks",
-          "columnsFrom": [
-            "task_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["task_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -2435,18 +2320,12 @@
       "indexes": {
         "idx_task_attachments_object_key": {
           "name": "idx_task_attachments_object_key",
-          "columns": [
-            "object_key"
-          ],
+          "columns": ["object_key"],
           "isUnique": true
         },
         "idx_task_attachments_project_task": {
           "name": "idx_task_attachments_project_task",
-          "columns": [
-            "project_id",
-            "task_id",
-            "created_at"
-          ],
+          "columns": ["project_id", "task_id", "created_at"],
           "isUnique": false
         }
       },
@@ -2560,26 +2439,17 @@
       "indexes": {
         "idx_task_events_task_created": {
           "name": "idx_task_events_task_created",
-          "columns": [
-            "task_id",
-            "created_at"
-          ],
+          "columns": ["task_id", "created_at"],
           "isUnique": false
         },
         "idx_task_events_project_created": {
           "name": "idx_task_events_project_created",
-          "columns": [
-            "project_id",
-            "created_at"
-          ],
+          "columns": ["project_id", "created_at"],
           "isUnique": false
         },
         "idx_task_events_project_dedupe": {
           "name": "idx_task_events_project_dedupe",
-          "columns": [
-            "project_id",
-            "dedupe_key"
-          ],
+          "columns": ["project_id", "dedupe_key"],
           "isUnique": true
         }
       },
@@ -2665,19 +2535,12 @@
       "indexes": {
         "idx_task_mentions_target": {
           "name": "idx_task_mentions_target",
-          "columns": [
-            "project_id",
-            "target_user_id",
-            "resolved_at"
-          ],
+          "columns": ["project_id", "target_user_id", "resolved_at"],
           "isUnique": false
         },
         "idx_task_mentions_task": {
           "name": "idx_task_mentions_task",
-          "columns": [
-            "task_id",
-            "resolved_at"
-          ],
+          "columns": ["task_id", "resolved_at"],
           "isUnique": false
         }
       },
@@ -2735,20 +2598,12 @@
       "indexes": {
         "idx_task_metrics_project_time": {
           "name": "idx_task_metrics_project_time",
-          "columns": [
-            "project_id",
-            "occurred_at",
-            "sequence"
-          ],
+          "columns": ["project_id", "occurred_at", "sequence"],
           "isUnique": false
         },
         "idx_task_metrics_task_sequence": {
           "name": "idx_task_metrics_task_sequence",
-          "columns": [
-            "project_id",
-            "task_id",
-            "sequence"
-          ],
+          "columns": ["project_id", "task_id", "sequence"],
           "isUnique": false
         }
       },
@@ -2800,10 +2655,7 @@
       "foreignKeys": {},
       "compositePrimaryKeys": {
         "task_read_cursors_task_id_reader_id_pk": {
-          "columns": [
-            "task_id",
-            "reader_id"
-          ],
+          "columns": ["task_id", "reader_id"],
           "name": "task_read_cursors_task_id_reader_id_pk"
         }
       },
@@ -2996,51 +2848,32 @@
       "indexes": {
         "idx_tasks_project_turn": {
           "name": "idx_tasks_project_turn",
-          "columns": [
-            "project_id",
-            "turn_user_id",
-            "turn_since"
-          ],
+          "columns": ["project_id", "turn_user_id", "turn_since"],
           "isUnique": false
         },
         "idx_tasks_project_status_position": {
           "name": "idx_tasks_project_status_position",
-          "columns": [
-            "project_id",
-            "status",
-            "position"
-          ],
+          "columns": ["project_id", "status", "position"],
           "isUnique": false
         },
         "idx_tasks_owner_id": {
           "name": "idx_tasks_owner_id",
-          "columns": [
-            "owner_id"
-          ],
+          "columns": ["owner_id"],
           "isUnique": false
         },
         "idx_tasks_project_archived": {
           "name": "idx_tasks_project_archived",
-          "columns": [
-            "project_id",
-            "archived_at"
-          ],
+          "columns": ["project_id", "archived_at"],
           "isUnique": false
         },
         "idx_tasks_project_parent": {
           "name": "idx_tasks_project_parent",
-          "columns": [
-            "project_id",
-            "parent_task_id"
-          ],
+          "columns": ["project_id", "parent_task_id"],
           "isUnique": false
         },
         "idx_tasks_project_number": {
           "name": "idx_tasks_project_number",
-          "columns": [
-            "project_id",
-            "task_number"
-          ],
+          "columns": ["project_id", "task_number"],
           "isUnique": true
         }
       },
@@ -3080,6 +2913,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "sessions_revoked_at": {
+          "name": "sessions_revoked_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -3098,9 +2938,7 @@
       "indexes": {
         "idx_users_login": {
           "name": "idx_users_login",
-          "columns": [
-            "login"
-          ],
+          "columns": ["login"],
           "isUnique": true
         }
       },
@@ -3252,10 +3090,7 @@
       "indexes": {
         "idx_weixin_logins_user": {
           "name": "idx_weixin_logins_user",
-          "columns": [
-            "user_id",
-            "expires_at"
-          ],
+          "columns": ["user_id", "expires_at"],
           "isUnique": false
         }
       },
