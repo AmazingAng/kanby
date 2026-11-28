@@ -66,6 +66,47 @@ describe('GitHub installation boundaries', () => {
     expect(Number(staleSelection.count)).toBe(0);
   });
 
+  it('drops the previous installation repositories when a project switches installations', async () => {
+    const installation = (id: number) => ({
+      id,
+      account: { id: id + 1, login: `account-${id}`, type: 'Organization' },
+      repository_selection: 'selected',
+      html_url: null,
+    });
+    const repository = (id: number, name: string) => ({
+      id,
+      name,
+      full_name: `acct/${name}`,
+      html_url: `https://github.com/acct/${name}`,
+      default_branch: 'main',
+      private: false,
+    });
+    await saveGitHubInstallation('project-1', 'user-1', installation(10), [
+      repository(1, 'old'),
+    ]);
+    await saveGitHubInstallation('project-1', 'user-1', installation(20), [
+      repository(2, 'new'),
+    ]);
+
+    expect(
+      database.sqlite
+        .prepare(
+          "SELECT repository_id FROM github_project_repositories WHERE project_id = 'project-1'",
+        )
+        .all(),
+    ).toEqual([{ repository_id: '2' }]);
+    expect(
+      database.sqlite
+        .prepare("SELECT active FROM github_repositories WHERE id = '1'")
+        .get(),
+    ).toEqual({ active: 0 });
+    expect(
+      (await projectGitHubSettings('project-1'))?.repositories.map(
+        (item) => item.fullName,
+      ),
+    ).toEqual(['acct/new']);
+  });
+
   it('accepts only personal or administered organization installations', () => {
     const user = { id: '42', githubAdminAccountIds: ['42', '88'] };
     const installation = (id: number, type: string) => ({

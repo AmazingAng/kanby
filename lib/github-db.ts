@@ -178,14 +178,38 @@ export async function saveGitHubInstallation(
   const accessible = new Set(
     repositories.map((repository) => String(repository.id)),
   );
-  await db
-    .prepare(
-      `DELETE FROM github_project_repositories WHERE project_id = ? AND repository_id IN (
-      SELECT id FROM github_repositories WHERE installation_id = ? AND active = 0
+  // Drop selections that the (possibly new) installation cannot see, including
+  // every repository of a previous installation when the project switched.
+  const cleanup = [
+    db
+      .prepare(
+        `DELETE FROM github_project_repositories WHERE project_id = ? AND repository_id NOT IN (
+      SELECT id FROM github_repositories WHERE installation_id = ? AND active = 1
     )`,
-    )
-    .bind(projectId, installationId)
-    .run();
+      )
+      .bind(projectId, installationId),
+  ];
+  if (
+    previousConnection &&
+    previousConnection.installation_id !== installationId
+  )
+    // The old installation's repositories stay listed only while another
+    // project still uses that installation.
+    cleanup.push(
+      db
+        .prepare(
+          `UPDATE github_repositories SET active = 0, updated_at = ?
+           WHERE installation_id = ? AND NOT EXISTS (
+             SELECT 1 FROM github_project_installations WHERE installation_id = ?
+           )`,
+        )
+        .bind(
+          now,
+          previousConnection.installation_id,
+          previousConnection.installation_id,
+        ),
+    );
+  await db.batch(cleanup);
   const selected = firstConnection
     ? accessible
     : new Set([...keepSelection].filter((id) => accessible.has(id)));
@@ -316,6 +340,8 @@ export async function selectedGitHubRepository(
     .prepare(
       `SELECT gr.id, gr.installation_id FROM github_repositories gr
      JOIN github_project_repositories gpr ON gpr.repository_id = gr.id AND gpr.project_id = ?
+     JOIN github_project_installations gpi ON gpi.project_id = gpr.project_id
+       AND gpi.installation_id = gr.installation_id
      WHERE gr.active = 1 AND lower(gr.full_name) = lower(?) LIMIT 1`,
     )
     .bind(projectId, fullName)
@@ -792,8 +818,9 @@ export async function selectedGitHubRepositoriesForProject(projectId: string) {
     .prepare(
       `SELECT gr.id, gr.full_name, gr.default_branch, gpi.installation_id
        FROM github_project_repositories gpr
-       JOIN github_repositories gr ON gr.id = gpr.repository_id AND gr.active = 1
        JOIN github_project_installations gpi ON gpi.project_id = gpr.project_id
+       JOIN github_repositories gr ON gr.id = gpr.repository_id AND gr.active = 1
+         AND gr.installation_id = gpi.installation_id
        WHERE gpr.project_id = ? ORDER BY gr.full_name LIMIT 20`,
     )
     .bind(projectId)
@@ -1027,7 +1054,13 @@ export async function updateLinkedTaskCi(
          AND ${linkedProjectGuard('gtl.project_id')}
          AND (? IS NULL OR gtl.project_id = ?)`,
     )
-    .bind(repositoryId, branch, repositoryId, projectId ?? null, projectId ?? null)
+    .bind(
+      repositoryId,
+      branch,
+      repositoryId,
+      projectId ?? null,
+      projectId ?? null,
+    )
     .all<{ task_id: string; project_id: string; updated_at: number }>();
   const automation = new Map<string, GitHubAutomationSettings>();
   await Promise.all(
@@ -1100,7 +1133,13 @@ export async function recordLinkedTaskPush(
          AND t.archived_at IS NULL AND ${linkedProjectGuard('gtl.project_id')}
          AND (? IS NULL OR gtl.project_id = ?)`,
     )
-    .bind(repositoryId, branch, repositoryId, projectId ?? null, projectId ?? null)
+    .bind(
+      repositoryId,
+      branch,
+      repositoryId,
+      projectId ?? null,
+      projectId ?? null,
+    )
     .all<{ task_id: string; project_id: string; updated_at: number }>();
   const { prepareTaskActivityStatement } = await import('@/lib/task-activity');
   const statements = links.results.flatMap((link) => {
