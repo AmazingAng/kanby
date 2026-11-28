@@ -164,7 +164,14 @@ describe('Kanby CLI credential contract', () => {
     };
     const login = spawn(
       process.execPath,
-      [cli, 'auth', 'login', '--url', `http://127.0.0.1:${port}`],
+      [
+        cli,
+        'auth',
+        'login',
+        '--token-stdin',
+        '--url',
+        `http://127.0.0.1:${port}`,
+      ],
       { env: environment },
     );
     let loginError = '';
@@ -200,6 +207,27 @@ describe('Kanby CLI credential contract', () => {
       server!.close((error) => (error ? reject(error) : resolve())),
     );
     expect(authorizations.filter(Boolean).length).toBe(3);
+  });
+
+  it('does not wait on a pipe unless --token-stdin is given', async () => {
+    const child = spawn(process.execPath, [cli, 'auth', 'login'], {
+      env: {
+        ...process.env,
+        XDG_CONFIG_HOME: temporaryConfigRoot(),
+        KANBY_TOKEN: '',
+      },
+    });
+    let stderr = '';
+    child.stderr.setEncoding('utf8').on('data', (chunk) => {
+      stderr += chunk;
+    });
+    // stdin stays open and silent; the CLI must exit by itself.
+    const status = await new Promise<number | null>((resolve) =>
+      child.on('close', resolve),
+    );
+    child.stdin.destroy();
+    expect(status).not.toBe(0);
+    expect(stderr).toContain('--token-stdin');
   });
 
   it('reads a legacy single-token config only for its own URL', async () => {

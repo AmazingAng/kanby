@@ -20,7 +20,7 @@ kanby auth status
 
 CLI 0.4.1+ defaults to `https://kanby.dev`. Server selection uses `KANBY_URL`, then the saved CLI config URL, then this default. Keep `KANBY_URL` set to your own origin for a self-hosted instance. Run `kanby --help` for all commands and add `--json` for machine-readable output.
 
-To store a validated token in the local CLI config instead, run `kanby auth login` and paste the token at the hidden prompt, or pipe it in (`printf %s "$TOKEN" | kanby auth login`). `KANBY_TOKEN` also works. `--token <TOKEN>` still works but prints a warning, because it exposes the token in shell history and process lists. Kanby writes the config with user-only permissions.
+To store a validated token in the local CLI config instead, run `kanby auth login` and paste the token at the hidden prompt, or pipe it in with `--token-stdin` (`printf '%s\n' "$TOKEN" | kanby auth login --token-stdin`; it reads one line and gives up after 10 seconds). `KANBY_TOKEN` also works. `--token <TOKEN>` still works but prints a warning, because it exposes the token in shell history and process lists. Kanby writes the config with user-only permissions.
 
 Since CLI 0.8.0, saved tokens are stored per server origin. A saved token is only sent to the origin it was saved for: setting `KANBY_URL` to another origin never reuses it (use `KANBY_TOKEN`, or run `kanby auth login --url <origin>` for that server). Configs written by older versions (a single `token` + `url`) are read as a token for that URL only.
 

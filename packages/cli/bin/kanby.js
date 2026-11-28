@@ -140,14 +140,36 @@ async function credentials() {
   };
 }
 
-async function readStdin() {
-  let value = '';
-  process.stdin.setEncoding('utf8');
-  for await (const chunk of process.stdin) {
-    value += chunk;
-    if (value.length > 4096) break;
-  }
-  return value.trim();
+/**
+ * Reads the token from stdin up to the first newline or EOF. A pipe that never
+ * sends anything fails after a timeout instead of hanging.
+ */
+function readStdinToken(timeoutMs = 10_000) {
+  return new Promise((resolve, reject) => {
+    let value = '';
+    const input = process.stdin;
+    const finish = (error) => {
+      clearTimeout(timer);
+      input.removeListener('data', onData);
+      input.removeListener('end', onEnd);
+      input.pause();
+      if (error) reject(error);
+      else resolve(value.split(/\r?\n/)[0].trim());
+    };
+    const onData = (chunk) => {
+      value += chunk;
+      if (value.includes('\n') || value.length > 4096) finish();
+    };
+    const onEnd = () => finish();
+    const timer = setTimeout(
+      () => finish(new Error('Timed out waiting for the token on stdin')),
+      timeoutMs,
+    );
+    input.setEncoding('utf8');
+    input.on('data', onData);
+    input.on('end', onEnd);
+    input.resume();
+  });
 }
 
 function promptHidden(question) {
@@ -179,18 +201,21 @@ function promptHidden(question) {
   });
 }
 
-/** --token (discouraged), KANBY_TOKEN, piped stdin, or a hidden prompt. */
+/** --token-stdin, the hidden prompt, KANBY_TOKEN, or --token (discouraged). */
 async function loginToken() {
   const flag = option('token', undefined);
   if (flag !== undefined) {
     console.error(
-      'Warning: --token exposes the token in shell history and process lists. Prefer piping it on stdin or entering it at the prompt.',
+      'Warning: --token exposes the token in shell history and process lists. Prefer --token-stdin or the prompt.',
     );
     return String(flag);
   }
+  if (has('token-stdin')) return readStdinToken();
   if (process.env.KANBY_TOKEN) return process.env.KANBY_TOKEN;
-  if (!process.stdin.isTTY) return readStdin();
-  return promptHidden('Kanby Agent Token: ');
+  if (process.stdin.isTTY) return promptHidden('Kanby Agent Token: ');
+  throw new Error(
+    'No terminal for the token prompt: pipe it with --token-stdin or set KANBY_TOKEN',
+  );
 }
 
 function apiError(status, payload) {
@@ -354,7 +379,7 @@ function usage() {
   return `Kanby CLI
 
 Usage:
-  kanby auth login [--url <URL>]   (token from stdin, the prompt or KANBY_TOKEN)
+  kanby auth login [--url <URL>] [--token-stdin]   (token from the prompt, stdin or KANBY_TOKEN)
   kanby auth status [--json]
   kanby project list [--json]
   kanby report --from YYYY-MM-DD --to YYYY-MM-DD [--timezone Asia/Shanghai] [--json]
@@ -492,7 +517,7 @@ async function main() {
     const token = await loginToken();
     if (!token.startsWith('kby_'))
       throw new Error(
-        'Pass a Kanby Agent Token on stdin, at the prompt, or with KANBY_TOKEN',
+        'Pass a Kanby Agent Token at the prompt, with --token-stdin, or with KANBY_TOKEN',
       );
     const project = (await api('/api/v1/projects', {}, { token, url }))[0];
     if (!project) throw new Error('The Agent Token does not have a project');
