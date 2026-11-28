@@ -41,3 +41,30 @@ TypeScript, lint, format, 105 mutations, secret scan, CLI checks, production
 Worker build and native schedule verification passed. Production audit found
 0 vulnerabilities. Build warnings did not fail checks. No new functions beyond
 the small destination helper, no new outbound capabilities.
+
+Release: implementation `69b6e54` merged/pushed to main. Preview deployment
+`6a6c47db-8ec2-441d-a077-0a5940199b19`; artifact
+`1439bfb3-1b24-4c75-9d70-1c5014112974`, SHA-256
+`1a01d6be6feaf5476421a84faf6b4dcf96c6dacb1a1e089cf5cf0636d17b9aa7`.
+Preview signed-out UI now renders
+`/api/auth/github?returnTo=%2Fxapi%2Fboard%3Ftask%3DKANBY-144`.
+The same artifact was promoted to production deployment
+`6d3451d1-2520-4356-9220-43aadcb3f22e` (ACTIVE). All 15 production public HTTP,
+asset and auth-boundary checks passed. No data or credential changes.
+
+Production browser evidence: signed-out UI retains the task parameter;
+existing real Chrome session at 390x844 automatically opens the KANBY-144 form
+with the expected title. Unknown KANBY-999999999 opens no editor, while the board
+loads normally. Viewport override reset afterwards. Real phone re-click and
+interactive GitHub consent are pending user verification; route integration
+covers OAuth response behavior with mocked GitHub network.
+
+Automatic approval review rejected clicking Save-and-close on the real task,
+because that action could persist an unchecked form. It was not bypassed.
+An isolated, nonpersistent demo card was used to check closing instead; its
+editor closed. Reopening on a production polling refresh was not separately
+verified. Existing one-time deep-link opening code was left unchanged.
+
+KANBY-144 keeps the phone-link criterion pending and status building; real
+notification receipt was already confirmed by the user. Deployment evidence and
+retest instructions were handed back on that same card; no duplicate created.
