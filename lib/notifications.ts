@@ -86,6 +86,90 @@ export function maskWebhookUrl(value: string) {
   }
 }
 
+// --- Secrets at rest -----------------------------------------------------------
+
+const SEALED = /^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+const sealContext = (channelId: string) => `notification-channel:${channelId}`;
+
+/**
+ * Bot webhook URLs embed their bot key, and Feishu signing secrets are
+ * credentials, so both are sealed with the same AES-GCM key as the hosted
+ * WeChat credentials (WEIXIN_CREDENTIAL_KEY), bound to the channel id and
+ * field. Without that key (self-hosting), values stay in plaintext.
+ */
+async function sealChannelField(
+  channelId: string,
+  field: 'webhook_url' | 'secret',
+  value: string,
+) {
+  const { sealCredential, weixinCredentialsConfigured } =
+    await import('@/lib/weixin-crypto');
+  return weixinCredentialsConfigured()
+    ? sealCredential(sealContext(channelId), field, value)
+    : value;
+}
+
+async function openChannelField(
+  channelId: string,
+  field: 'webhook_url' | 'secret',
+  value: string | null,
+) {
+  if (value === null || !SEALED.test(value)) return value;
+  const { openCredential } = await import('@/lib/weixin-crypto');
+  return openCredential(sealContext(channelId), field, value);
+}
+
+/**
+ * Decrypts stored channels. Rows still in plaintext (created before
+ * encryption) are re-sealed in place when the key is configured; a row that
+ * cannot be decrypted (wrong or missing key) is skipped, never sent.
+ */
+async function openChannels(rows: ChannelRow[]): Promise<ChannelRow[]> {
+  const opened = await Promise.all(
+    rows.map(async (row) => {
+      try {
+        const channel = {
+          ...row,
+          webhook_url: (await openChannelField(
+            row.id,
+            'webhook_url',
+            row.webhook_url,
+          ))!,
+          secret: await openChannelField(row.id, 'secret', row.secret),
+        };
+        if (!SEALED.test(row.webhook_url))
+          await resealChannel(row, channel).catch((error: unknown) =>
+            console.error('Kanby channel re-encryption failed', error),
+          );
+        return channel;
+      } catch {
+        console.error(`Kanby channel ${row.id} could not be decrypted`);
+        return null;
+      }
+    }),
+  );
+  return opened.filter((row): row is ChannelRow => row !== null);
+}
+
+async function resealChannel(stored: ChannelRow, plain: ChannelRow) {
+  const webhookUrl = await sealChannelField(
+    plain.id,
+    'webhook_url',
+    plain.webhook_url,
+  );
+  if (webhookUrl === plain.webhook_url) return;
+  const secret =
+    plain.secret === null
+      ? null
+      : await sealChannelField(plain.id, 'secret', plain.secret);
+  await database()
+    .prepare(
+      'UPDATE notification_channels SET webhook_url = ?, secret = ? WHERE id = ? AND webhook_url = ? AND secret IS ?',
+    )
+    .bind(webhookUrl, secret, stored.id, stored.webhook_url, stored.secret)
+    .run();
+}
+
 function mapChannel(row: ChannelRow): NotificationChannelRecord {
   return {
     id: row.id,
@@ -113,7 +197,7 @@ export async function listNotificationChannels(
     )
     .bind(projectId, viewerUserId)
     .all<ChannelRow>();
-  return result.results.map(mapChannel);
+  return (await openChannels(result.results)).map(mapChannel);
 }
 
 const MAX_CHANNELS_PER_SCOPE = 3;
@@ -140,8 +224,10 @@ export async function createNotificationChannel(input: {
       input.projectId,
       input.userId,
       input.kind,
-      input.webhookUrl,
-      input.secret,
+      await sealChannelField(id, 'webhook_url', input.webhookUrl),
+      input.secret === null
+        ? null
+        : await sealChannelField(id, 'secret', input.secret),
       input.createdBy,
       now,
       now,
@@ -457,13 +543,14 @@ export async function sendTaskNotification(event: TaskNotification) {
          AND (user_id IS NULL OR user_id IN (SELECT value FROM json_each(?)))`,
       )
       .bind(event.projectId, JSON.stringify(recipientIds))
-      .all<ChannelRow>(),
+      .all<ChannelRow>()
+      .then((result) => openChannels(result.results)),
   ]);
   const throttled = await throttleRecipients(
     [
       ...new Set([
         ...[...weixinUsers].map(userKey),
-        ...channels.results.map(channelKey),
+        ...channels.map(channelKey),
       ]),
     ],
     { ...event, senderKey: event.actorId ?? null },
@@ -504,7 +591,7 @@ export async function sendTaskNotification(event: TaskNotification) {
     }),
   );
   await Promise.all(
-    channels.results
+    channels
       .filter(
         (channel) =>
           !channel.user_id || !deliveredByWeixin.has(channel.user_id),
@@ -557,10 +644,11 @@ export async function sendMemberNotice(
        ORDER BY created_at`,
     )
     .bind(userId)
-    .all<ChannelRow>();
+    .all<ChannelRow>()
+    .then((result) => openChannels(result.results));
   const seen = new Set<string>();
   await Promise.all(
-    channels.results
+    channels
       .filter((channel) => {
         if (seen.has(channel.webhook_url)) return false;
         seen.add(channel.webhook_url);
