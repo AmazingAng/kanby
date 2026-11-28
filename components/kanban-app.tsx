@@ -4,6 +4,7 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { zhCN } from 'date-fns/locale/zh-CN';
+import { taskLoginReturnTo } from '@/lib/task-deep-link';
 import {
   closestCorners,
   closestCenter,
@@ -1104,11 +1105,12 @@ export function KanbanApp({
   const [memberFilter, setMemberFilter] = useState('all');
   const [turnQueue, setTurnQueue] = useState<TurnQueueEntry[]>([]);
   const [boardView, setBoardView] = useState<'turns' | 'board' | null>(null);
-  const pendingDeepLink = useRef<string | null>(
+  const [initialTaskReference] = useState<string | null>(() =>
     typeof window === 'undefined'
       ? null
       : new URLSearchParams(window.location.search).get('task'),
   );
+  const pendingDeepLink = useRef(initialTaskReference);
   const [composer, setComposer] = useState<ColumnId | null>(null);
   const [newTitle, setNewTitle] = useState('');
   const [taskDraft, setTaskDraft] = useState<TaskDraft | null>(null);
@@ -2963,9 +2965,10 @@ export function KanbanApp({
     );
   }
   if (!isDemo && auth.configured && !auth.user) {
-    const returnTo = initialProjectSlug
-      ? `/${encodeURIComponent(initialProjectSlug)}/board`
-      : '/';
+    const returnTo = taskLoginReturnTo(
+      initialProjectSlug,
+      initialTaskReference,
+    );
     return <LoginScreen returnTo={returnTo} />;
   }
 

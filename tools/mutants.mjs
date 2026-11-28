@@ -578,6 +578,27 @@ const mutations = [
     test: 'tests/weixin.test.ts',
   },
   {
+    name: 'task login preserves notification reference',
+    file: 'lib/task-deep-link.ts',
+    from: 'return reference\n    ?',
+    to: 'return false\n    ?',
+    test: 'tests/task-deep-link.test.ts',
+  },
+  {
+    name: 'task login encodes arbitrary reference',
+    file: 'lib/task-deep-link.ts',
+    from: 'new URLSearchParams({ task: reference })',
+    to: "'task=' + reference",
+    test: 'tests/task-deep-link.test.ts',
+  },
+  {
+    name: 'task login retains project board',
+    file: 'lib/task-deep-link.ts',
+    from: 'const board = projectSlug ?',
+    to: 'const board = false ?',
+    test: 'tests/task-deep-link.test.ts',
+  },
+  {
     name: 'iLink Worker redirect compatibility',
     file: 'lib/weixin-ilink.ts',
     from: "redirect: 'manual',",
