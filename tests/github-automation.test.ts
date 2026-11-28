@@ -11,6 +11,8 @@ import {
   importGitHubIssueTask,
   isFailingCiStatus,
   setProjectGitHubAutomation,
+  autoLinkPullRequest,
+  recordReferencedPush,
 } from '@/lib/github-automation';
 
 import { createMigratedDatabase, type TestD1Database } from './support/d1';
@@ -469,6 +471,12 @@ describe('project GitHub automation', () => {
       .run(now);
     database.sqlite
       .prepare(
+        `INSERT INTO github_project_installations (project_id, installation_id, connected_by, created_at)
+         VALUES ('project-2', '77', 'user-1', ?)`,
+      )
+      .run(now);
+    database.sqlite
+      .prepare(
         `INSERT INTO tasks
          (id, project_id, title, note, tag, owner_id, owner_login, owner_name,
           owner_avatar_url, due, status, position, created_at, updated_at, archived_at, created_by)
@@ -488,6 +496,47 @@ describe('project GitHub automation', () => {
           `SELECT COUNT(*) AS count FROM github_task_links WHERE item_number = 42`,
         )
         .get(),
+    ).toEqual({ count: 0 });
+  });
+
+  it('does not auto-link to a project that no longer links the repository', async () => {
+    const task = seedTask(database, {
+      id: 'cafebabe-1234-4234-8234-abcdef123456',
+    });
+    database.sqlite
+      .prepare("UPDATE github_project_installations SET installation_id = '99'")
+      .run();
+    const common = {
+      repositoryId: '1',
+      deliveryId: 'delivery-unlinked-auto-link',
+      actorLogin: 'alice',
+      actorAvatarUrl: null,
+    };
+    expect(
+      await autoLinkPullRequest({
+        ...common,
+        number: 42,
+        title: 'PR',
+        state: 'open',
+        url: 'https://github.com/a/b/pull/42',
+        branch: 'kanby/cafebabe-x',
+        body: '',
+      }),
+    ).toBe(0);
+    expect(
+      await recordReferencedPush({
+        ...common,
+        branch: 'kanby/cafebabe-x',
+        commits: [],
+        url: null,
+      }),
+    ).toBe(0);
+    expect(
+      database.sqlite
+        .prepare(
+          'SELECT COUNT(*) AS count FROM github_task_links WHERE task_id = ?',
+        )
+        .get(task.id),
     ).toEqual({ count: 0 });
   });
 

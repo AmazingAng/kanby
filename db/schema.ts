@@ -56,6 +56,9 @@ export const projectInvitations = sqliteTable(
     id: text('id').primaryKey(),
     projectId: text('project_id').notNull(),
     identity: text('identity').notNull(),
+    // GitHub user id the login resolved to when invited (null for e-mail or
+    // when GitHub was unreachable); binds the invitation to that account.
+    githubUserId: text('github_user_id'),
     invitedBy: text('invited_by').notNull(),
     createdAt: integer('created_at').notNull(),
     acceptedAt: integer('accepted_at'),
@@ -397,6 +400,7 @@ export const githubRedeliveryAttempts = sqliteTable(
     deliveryId: text('delivery_id').primaryKey(),
     guid: text('guid').notNull(),
     attemptedAt: integer('attempted_at').notNull(),
+    attemptCount: integer('attempt_count').notNull().default(1),
   },
   (table) => [uniqueIndex('idx_github_redelivery_guid').on(table.guid)],
 );
@@ -586,11 +590,20 @@ export const notificationDeliveries = sqliteTable(
     eventKind: text('event_kind').notNull(),
     status: text('status').notNull(),
     error: text('error'),
+    // Who the delivery was for: `user:<id>` or `channel:<id>` for a project
+    // bot. Used to coalesce and cap notifications per recipient.
+    recipientKey: text('recipient_key'),
+    // Member who caused the notification; mention caps are per sender.
+    senderKey: text('sender_key'),
     createdAt: integer('created_at').notNull(),
   },
   (table) => [
     index('idx_notification_deliveries_project').on(
       table.projectId,
+      table.createdAt,
+    ),
+    index('idx_notification_deliveries_recipient').on(
+      table.recipientKey,
       table.createdAt,
     ),
   ],

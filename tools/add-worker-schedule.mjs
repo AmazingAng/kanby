@@ -48,7 +48,8 @@ export default {
   },
   scheduled(_controller, env, context) {
     ${recovery ? 'return;' : ''}
-    const body = 'kanby-recovery-v1';
+    // Timestamped so a captured signature expires (checked by the route).
+    const body = 'kanby-recovery-v2:' + Date.now();
     context.waitUntil((async () => {
       if (!env.GITHUB_WEBHOOK_SECRET) return;
       const request = new Request('https://kanby.internal/api/github/recovery', {

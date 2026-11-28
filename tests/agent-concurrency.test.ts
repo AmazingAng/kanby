@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { POST, PATCH } from '@/app/api/v1/tasks/route';
 
@@ -85,6 +85,162 @@ describe('Agent mutation coordination', () => {
       ok: false,
       error: { code: 'idempotency_conflict' },
     });
+  });
+
+  it('releases the key when the request fails so a retry can succeed', async () => {
+    const request = () =>
+      new Request(`${origin}/api/v1/tasks`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenOne}`,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'failing-create-key',
+        },
+        body: JSON.stringify({ title: 'Retry me', status: 'ideas' }),
+      });
+    database.exec(
+      "CREATE TRIGGER fail_task_insert BEFORE INSERT ON tasks BEGIN SELECT RAISE(ABORT, 'boom'); END",
+    );
+    await expect(POST(request())).rejects.toThrow('boom');
+    database.exec('DROP TRIGGER fail_task_insert');
+
+    expect((await POST(request())).status).toBe(201);
+  });
+
+  it('creates a task with its note atomically', async () => {
+    const response = await POST(
+      new Request(`${origin}/api/v1/tasks`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenOne}`,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'create-with-note',
+        },
+        body: JSON.stringify({ title: 'Noted', status: 'ideas', note: 'ctx' }),
+      }),
+    );
+    expect(response.status).toBe(201);
+    expect(
+      database.sqlite
+        .prepare("SELECT note FROM tasks WHERE title = 'Noted'")
+        .get(),
+    ).toEqual({ note: 'ctx' });
+  });
+
+  it('never repeats a committed write when the request fails afterwards', async () => {
+    const task = seedTask(database, { id: 'task-after-write' });
+    database.sqlite
+      .prepare("UPDATE tasks SET status = 'building' WHERE id = ?")
+      .run(task.id);
+    database.exec(
+      "CREATE TRIGGER fail_agent_update BEFORE INSERT ON task_agent_updates BEGIN SELECT RAISE(ABORT, 'log down'); END",
+    );
+    const complete = () =>
+      PATCH(
+        agentRequest(
+          tokenOne,
+          { id: task.id, action: 'complete' },
+          'complete-after-write',
+        ),
+      );
+    await expect(complete()).rejects.toThrow('log down');
+    database.exec('DROP TRIGGER fail_agent_update');
+    const retry = await complete();
+    expect(retry.status).toBe(500);
+    expect(await retry.json()).toMatchObject({
+      error: { code: 'failed_after_write' },
+    });
+    expect(
+      database.sqlite
+        .prepare('SELECT status FROM tasks WHERE id = ?')
+        .get(task.id),
+    ).toEqual({ status: 'shipped' });
+  });
+
+  it('never repeats a comment whose read-back fails after the commit', async () => {
+    const task = seedTask(database, { id: 'task-comment-readback' });
+    const prepare = database.prepare.bind(database);
+    const spy = vi
+      .spyOn(database, 'prepare')
+      .mockImplementation((query: string) => {
+        if (query.includes('FROM task_events WHERE id = ? AND project_id = ?'))
+          throw new Error('read-back down');
+        return prepare(query);
+      });
+    const comment = () =>
+      PATCH(
+        agentRequest(
+          tokenOne,
+          { id: task.id, action: 'comment', body: 'Only once' },
+          'comment-readback',
+        ),
+      );
+    try {
+      await expect(comment()).rejects.toThrow('read-back down');
+    } finally {
+      spy.mockRestore();
+    }
+    const retry = await comment();
+    expect(retry.status).toBe(500);
+    expect(await retry.json()).toMatchObject({
+      error: { code: 'failed_after_write' },
+    });
+    expect(
+      database.sqlite
+        .prepare(
+          "SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND body = 'Only once'",
+        )
+        .get(task.id),
+    ).toEqual({ n: 1 });
+  });
+
+  it('takes over a pending key abandoned by a dead request and expires old keys', async () => {
+    const body = JSON.stringify({ title: 'Abandoned', status: 'ideas' });
+    const { createHash } = await import('node:crypto');
+    const requestHash = createHash('sha256').update(body).digest('hex');
+    const now = Date.now();
+    const insert = database.sqlite.prepare(
+      'INSERT INTO agent_idempotency_keys (token_id, key, operation, response_json, created_at) VALUES (?, ?, ?, ?, ?)',
+    );
+    insert.run(
+      tokenOneId,
+      'abandoned-key',
+      'task:create',
+      JSON.stringify({
+        __kanbyIdempotency: 1,
+        state: 'pending',
+        requestHash,
+        ownerNonce: 'dead',
+      }),
+      now - 10 * 60 * 1000,
+    );
+    insert.run(
+      tokenOneId,
+      'ancient-key',
+      'task:create',
+      '{}',
+      now - 2 * 86_400_000,
+    );
+
+    const response = await POST(
+      new Request(`${origin}/api/v1/tasks`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenOne}`,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'abandoned-key',
+        },
+        body,
+      }),
+    );
+    expect(response.status).toBe(201);
+    expect(
+      database.sqlite
+        .prepare(
+          "SELECT key FROM agent_idempotency_keys WHERE key IN ('abandoned-key', 'ancient-key')",
+        )
+        .all(),
+    ).toEqual([{ key: 'abandoned-key' }]);
   });
 
   it('does not let another Agent Token complete a claimed task', async () => {

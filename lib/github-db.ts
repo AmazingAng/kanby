@@ -178,14 +178,38 @@ export async function saveGitHubInstallation(
   const accessible = new Set(
     repositories.map((repository) => String(repository.id)),
   );
-  await db
-    .prepare(
-      `DELETE FROM github_project_repositories WHERE project_id = ? AND repository_id IN (
-      SELECT id FROM github_repositories WHERE installation_id = ? AND active = 0
+  // Drop selections that the (possibly new) installation cannot see, including
+  // every repository of a previous installation when the project switched.
+  const cleanup = [
+    db
+      .prepare(
+        `DELETE FROM github_project_repositories WHERE project_id = ? AND repository_id NOT IN (
+      SELECT id FROM github_repositories WHERE installation_id = ? AND active = 1
     )`,
-    )
-    .bind(projectId, installationId)
-    .run();
+      )
+      .bind(projectId, installationId),
+  ];
+  if (
+    previousConnection &&
+    previousConnection.installation_id !== installationId
+  )
+    // The old installation's repositories stay listed only while another
+    // project still uses that installation.
+    cleanup.push(
+      db
+        .prepare(
+          `UPDATE github_repositories SET active = 0, updated_at = ?
+           WHERE installation_id = ? AND NOT EXISTS (
+             SELECT 1 FROM github_project_installations WHERE installation_id = ?
+           )`,
+        )
+        .bind(
+          now,
+          previousConnection.installation_id,
+          previousConnection.installation_id,
+        ),
+    );
+  await db.batch(cleanup);
   const selected = firstConnection
     ? accessible
     : new Set([...keepSelection].filter((id) => accessible.has(id)));
@@ -279,32 +303,31 @@ export async function setProjectGitHubRepositories(
   const installation = await projectGitHubInstallation(projectId);
   if (!installation) return false;
   const unique = [...new Set(repositoryIds)].slice(0, 500);
+  // A single JSON parameter keeps any selection under D1's 100-parameter limit.
+  const selection = JSON.stringify(unique);
   if (unique.length > 0) {
-    const placeholders = unique.map(() => '?').join(', ');
     const allowed = await db
       .prepare(
-        `SELECT id FROM github_repositories WHERE installation_id = ? AND active = 1 AND id IN (${placeholders})`,
+        `SELECT COUNT(*) AS n FROM github_repositories
+         WHERE installation_id = ? AND active = 1
+           AND id IN (SELECT value FROM json_each(?))`,
       )
-      .bind(installation.installation_id, ...unique)
-      .all<{ id: string }>();
-    if (allowed.results.length !== unique.length) return false;
+      .bind(installation.installation_id, selection)
+      .first<{ n: number }>();
+    if (Number(allowed?.n ?? 0) !== unique.length) return false;
   }
   const now = Date.now();
-  const statements = [
+  await db.batch([
     db
       .prepare('DELETE FROM github_project_repositories WHERE project_id = ?')
       .bind(projectId),
-  ];
-  statements.push(
-    ...unique.map((repositoryId) =>
-      db
-        .prepare(
-          'INSERT INTO github_project_repositories (project_id, repository_id, created_at) VALUES (?, ?, ?)',
-        )
-        .bind(projectId, repositoryId, now),
-    ),
-  );
-  await runBatches(db, statements);
+    db
+      .prepare(
+        `INSERT INTO github_project_repositories (project_id, repository_id, created_at)
+         SELECT ?, value, ? FROM json_each(?)`,
+      )
+      .bind(projectId, now, selection),
+  ]);
   return true;
 }
 
@@ -317,6 +340,8 @@ export async function selectedGitHubRepository(
     .prepare(
       `SELECT gr.id, gr.installation_id FROM github_repositories gr
      JOIN github_project_repositories gpr ON gpr.repository_id = gr.id AND gpr.project_id = ?
+     JOIN github_project_installations gpi ON gpi.project_id = gpr.project_id
+       AND gpi.installation_id = gr.installation_id
      WHERE gr.active = 1 AND lower(gr.full_name) = lower(?) LIMIT 1`,
     )
     .bind(projectId, fullName)
@@ -511,6 +536,11 @@ export function githubRetryDelay(attempt: number) {
   return Math.min(6 * 60 * 60 * 1000, 30_000 * 2 ** Math.min(attempt - 1, 10));
 }
 
+/** After this many processing attempts a delivery is abandoned, not retried. */
+export const MAX_GITHUB_DELIVERY_ATTEMPTS = 8;
+/** GitHub-side redeliveries requested per delivery GUID before giving up. */
+export const MAX_GITHUB_REDELIVERY_ATTEMPTS = 5;
+
 export async function failGitHubDelivery(
   deliveryId: string,
   error: unknown = 'Webhook processing failed',
@@ -522,14 +552,21 @@ export async function failGitHubDelivery(
     .first<{ attempt_count: number }>();
   const attempt = Math.max(1, Number(row?.attempt_count ?? 1));
   const now = Date.now();
+  const abandoned = attempt >= MAX_GITHUB_DELIVERY_ATTEMPTS;
   await database()
     .prepare(
       `UPDATE github_deliveries
-       SET status = 'failed', last_error = ?, next_retry_at = ?,
+       SET status = ?, last_error = ?, next_retry_at = ?,
            lease_expires_at = NULL, updated_at = ?
        WHERE id = ? AND processed_at IS NULL`,
     )
-    .bind(boundedError(error), now + githubRetryDelay(attempt), now, deliveryId)
+    .bind(
+      abandoned ? 'abandoned' : 'failed',
+      boundedError(error),
+      abandoned ? null : now + githubRetryDelay(attempt),
+      now,
+      deliveryId,
+    )
     .run();
 }
 
@@ -552,6 +589,18 @@ export async function claimDueGitHubDeliveries(limit = 10, projectId?: string) {
            AND gpr.repository_id = gd.repository_id
        )`
     : '';
+  // A delivery whose last lease expired after the final attempt (the worker
+  // died mid-processing) is abandoned instead of being claimed again.
+  await db
+    .prepare(
+      `UPDATE github_deliveries
+       SET status = 'abandoned', next_retry_at = NULL, lease_expires_at = NULL,
+           last_error = COALESCE(last_error, 'Processing did not finish'), updated_at = ?
+       WHERE processed_at IS NULL AND status = 'processing'
+         AND lease_expires_at < ? AND attempt_count >= ?`,
+    )
+    .bind(now, now, MAX_GITHUB_DELIVERY_ATTEMPTS)
+    .run();
   const candidates = await db
     .prepare(
       `SELECT id FROM github_deliveries gd
@@ -598,7 +647,7 @@ export async function githubReliabilitySummary(projectId: string) {
     db
       .prepare(
         `SELECT COUNT(*) AS count FROM github_deliveries gd
-         WHERE gd.processed_at IS NULL AND EXISTS (
+         WHERE gd.processed_at IS NULL AND gd.status != 'abandoned' AND EXISTS (
            SELECT 1 FROM github_project_installations gpi
            JOIN github_project_repositories gpr ON gpr.project_id = gpi.project_id
            JOIN github_repositories gr ON gr.id = gpr.repository_id
@@ -610,8 +659,8 @@ export async function githubReliabilitySummary(projectId: string) {
       .first<{ count: number }>(),
     db
       .prepare(
-        `SELECT id, event, attempt_count, last_error, next_retry_at, updated_at
-         FROM github_deliveries gd WHERE status = 'failed' AND EXISTS (
+        `SELECT id, event, status, attempt_count, last_error, next_retry_at, updated_at
+         FROM github_deliveries gd WHERE status IN ('failed', 'abandoned') AND EXISTS (
            SELECT 1 FROM github_project_installations gpi
            JOIN github_project_repositories gpr ON gpr.project_id = gpi.project_id
            WHERE gpi.project_id = ? AND gpi.installation_id = gd.installation_id
@@ -623,6 +672,7 @@ export async function githubReliabilitySummary(projectId: string) {
       .all<{
         id: string;
         event: string;
+        status: string;
         attempt_count: number;
         last_error: string | null;
         next_retry_at: number | null;
@@ -648,6 +698,7 @@ export async function githubReliabilitySummary(projectId: string) {
     failures: failures.results.map((row) => ({
       id: row.id,
       event: row.event,
+      abandoned: row.status === 'abandoned',
       attempts: Number(row.attempt_count),
       error: row.last_error,
       nextRetryAt: row.next_retry_at == null ? null : Number(row.next_retry_at),
@@ -700,30 +751,64 @@ export async function finishGitHubSyncRun(
     .run();
 }
 
+/**
+ * Reserves one GitHub-side redelivery of a failed delivery. Redeliveries of
+ * the same GUID share one row (GitHub gives each attempt a new delivery id),
+ * are spaced 15 minutes apart and stop after MAX_GITHUB_REDELIVERY_ATTEMPTS.
+ */
 export async function reserveGitHubRedelivery(
   deliveryId: number,
   guid: string,
 ) {
   await ensureSchema();
-  const result = await database()
+  const db = database();
+  const now = Date.now();
+  const received = await db
+    .prepare('SELECT 1 AS found FROM github_deliveries WHERE id = ?')
+    .bind(guid)
+    .first<{ found: number }>();
+  if (received) return false;
+  const existing = await db
     .prepare(
-      `INSERT INTO github_redelivery_attempts (delivery_id, guid, attempted_at)
-       VALUES (?, ?, ?)
-       ON CONFLICT(delivery_id) DO UPDATE SET attempted_at = excluded.attempted_at
-       WHERE github_redelivery_attempts.attempted_at < ?
-         AND NOT EXISTS (
-           SELECT 1 FROM github_deliveries WHERE id = github_redelivery_attempts.guid
-         )`,
+      'SELECT attempted_at, attempt_count FROM github_redelivery_attempts WHERE guid = ?',
     )
-    .bind(String(deliveryId), guid, Date.now(), Date.now() - 15 * 60 * 1000)
+    .bind(guid)
+    .first<{ attempted_at: number; attempt_count: number }>();
+  if (!existing) {
+    const inserted = await db
+      .prepare(
+        `INSERT OR IGNORE INTO github_redelivery_attempts (delivery_id, guid, attempted_at, attempt_count)
+         VALUES (?, ?, ?, 1)`,
+      )
+      .bind(String(deliveryId), guid, now)
+      .run();
+    return Number(inserted.meta.changes ?? 0) === 1;
+  }
+  if (
+    Number(existing.attempt_count) >= MAX_GITHUB_REDELIVERY_ATTEMPTS ||
+    Number(existing.attempted_at) >= now - 15 * 60 * 1000
+  )
+    return false;
+  const updated = await db
+    .prepare(
+      `UPDATE github_redelivery_attempts
+       SET attempted_at = ?, attempt_count = attempt_count + 1
+       WHERE guid = ? AND attempted_at = ? AND attempt_count < ?`,
+    )
+    .bind(now, guid, existing.attempted_at, MAX_GITHUB_REDELIVERY_ATTEMPTS)
     .run();
-  return Number(result.meta.changes ?? 0) === 1;
+  return Number(updated.meta.changes ?? 0) === 1;
 }
 
-export async function releaseGitHubRedelivery(deliveryId: number) {
+/** Gives back a reservation whose redelivery request could not be sent. */
+export async function releaseGitHubRedelivery(guid: string) {
   await database()
-    .prepare('DELETE FROM github_redelivery_attempts WHERE delivery_id = ?')
-    .bind(String(deliveryId))
+    .prepare(
+      `UPDATE github_redelivery_attempts
+       SET attempted_at = 0, attempt_count = MAX(attempt_count - 1, 0)
+       WHERE guid = ?`,
+    )
+    .bind(guid)
     .run();
 }
 
@@ -733,8 +818,9 @@ export async function selectedGitHubRepositoriesForProject(projectId: string) {
     .prepare(
       `SELECT gr.id, gr.full_name, gr.default_branch, gpi.installation_id
        FROM github_project_repositories gpr
-       JOIN github_repositories gr ON gr.id = gpr.repository_id AND gr.active = 1
        JOIN github_project_installations gpi ON gpi.project_id = gpr.project_id
+       JOIN github_repositories gr ON gr.id = gpr.repository_id AND gr.active = 1
+         AND gr.installation_id = gpi.installation_id
        WHERE gpr.project_id = ? ORDER BY gr.full_name LIMIT 20`,
     )
     .bind(projectId)
@@ -800,6 +886,20 @@ export async function recordGitHubEvent(input: {
     .run();
 }
 
+/**
+ * Restricts linked-task lookups to projects that currently link the repository
+ * through their current installation. Task links and issue imports survive an
+ * unlink (for history), but must stop driving cards once it happens.
+ */
+function linkedProjectGuard(projectColumn: string) {
+  return `EXISTS (
+    SELECT 1 FROM github_project_repositories gpr
+    JOIN github_project_installations gpi ON gpi.project_id = gpr.project_id
+    JOIN github_repositories gr ON gr.id = gpr.repository_id
+      AND gr.installation_id = gpi.installation_id AND gr.active = 1
+    WHERE gpr.project_id = ${projectColumn} AND gpr.repository_id = ?)`;
+}
+
 export async function updateLinkedTasksFromGitHub(input: {
   repositoryId: string;
   kind: 'issue' | 'pull_request';
@@ -811,6 +911,8 @@ export async function updateLinkedTasksFromGitHub(input: {
   targetStatus?: ColumnId;
   automationTrigger?: 'pull_request_opened' | 'completed';
   activity?: GitHubTaskActivityInput;
+  /** Restricts the update to one project (history backfill). */
+  projectId?: string;
 }) {
   await ensureSchema();
   const db = database();
@@ -826,7 +928,9 @@ export async function updateLinkedTasksFromGitHub(input: {
        )
        SELECT linked_tasks.task_id, linked_tasks.project_id, t.status, t.updated_at
        FROM linked_tasks JOIN tasks t
-         ON t.id = linked_tasks.task_id AND t.project_id = linked_tasks.project_id`,
+         ON t.id = linked_tasks.task_id AND t.project_id = linked_tasks.project_id
+       WHERE ${linkedProjectGuard('linked_tasks.project_id')}
+         AND (? IS NULL OR linked_tasks.project_id = ?)`,
     )
     .bind(
       input.repositoryId,
@@ -835,6 +939,9 @@ export async function updateLinkedTasksFromGitHub(input: {
       input.kind,
       input.repositoryId,
       input.number,
+      input.repositoryId,
+      input.projectId ?? null,
+      input.projectId ?? null,
     )
     .all<{
       task_id: string;
@@ -934,6 +1041,7 @@ export async function updateLinkedTaskCi(
   branch: string,
   status: string,
   activity?: GitHubTaskActivityInput,
+  projectId?: string,
 ) {
   await ensureSchema();
   const db = database();
@@ -942,9 +1050,17 @@ export async function updateLinkedTaskCi(
     .prepare(
       `SELECT gtl.task_id, gtl.project_id, t.updated_at
        FROM github_task_links gtl JOIN tasks t ON t.id = gtl.task_id AND t.project_id = gtl.project_id
-       WHERE gtl.repository_id = ? AND gtl.branch = ? AND gtl.kind = 'pull_request'`,
+       WHERE gtl.repository_id = ? AND gtl.branch = ? AND gtl.kind = 'pull_request'
+         AND ${linkedProjectGuard('gtl.project_id')}
+         AND (? IS NULL OR gtl.project_id = ?)`,
     )
-    .bind(repositoryId, branch)
+    .bind(
+      repositoryId,
+      branch,
+      repositoryId,
+      projectId ?? null,
+      projectId ?? null,
+    )
     .all<{ task_id: string; project_id: string; updated_at: number }>();
   const automation = new Map<string, GitHubAutomationSettings>();
   await Promise.all(
@@ -1004,6 +1120,7 @@ export async function recordLinkedTaskPush(
   repositoryId: string,
   branch: string,
   activity: GitHubTaskActivityInput,
+  projectId?: string,
 ) {
   await ensureSchema();
   const db = database();
@@ -1013,9 +1130,16 @@ export async function recordLinkedTaskPush(
       `SELECT gtl.task_id, gtl.project_id, t.updated_at
        FROM github_task_links gtl JOIN tasks t ON t.id = gtl.task_id AND t.project_id = gtl.project_id
        WHERE gtl.repository_id = ? AND gtl.branch = ? AND gtl.kind = 'pull_request'
-         AND t.archived_at IS NULL`,
+         AND t.archived_at IS NULL AND ${linkedProjectGuard('gtl.project_id')}
+         AND (? IS NULL OR gtl.project_id = ?)`,
     )
-    .bind(repositoryId, branch)
+    .bind(
+      repositoryId,
+      branch,
+      repositoryId,
+      projectId ?? null,
+      projectId ?? null,
+    )
     .all<{ task_id: string; project_id: string; updated_at: number }>();
   const { prepareTaskActivityStatement } = await import('@/lib/task-activity');
   const statements = links.results.flatMap((link) => {

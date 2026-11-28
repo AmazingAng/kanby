@@ -264,17 +264,46 @@ export async function PATCH(request: Request) {
   });
   if (items.some((item) => item === null))
     return Response.json({ error: 'Invalid order' }, { status: 400 });
-  await reorderTasks(
-    projectId,
-    items as { id: string; status: ColumnId; position: number }[],
+  const movedTaskId =
     typeof body.movedTaskId === 'string' && body.movedTaskId.length <= 80
-      ? {
-          movedTaskId: body.movedTaskId,
-          actor: userActivityActor(user),
-        }
-      : undefined,
-  );
-  return Response.json({ ok: true });
+      ? body.movedTaskId
+      : undefined;
+  const expectedUpdatedAt =
+    body.expectedUpdatedAt === undefined
+      ? undefined
+      : Number(body.expectedUpdatedAt);
+  if (
+    expectedUpdatedAt !== undefined &&
+    (!movedTaskId ||
+      !Number.isSafeInteger(expectedUpdatedAt) ||
+      expectedUpdatedAt < 1)
+  )
+    return Response.json({ error: 'Invalid order' }, { status: 400 });
+  try {
+    const movedTask = await reorderTasks(
+      projectId,
+      items as { id: string; status: ColumnId; position: number }[],
+      movedTaskId
+        ? {
+            movedTaskId,
+            actor: userActivityActor(user),
+            expectedUpdatedAt,
+          }
+        : undefined,
+    );
+    return Response.json({ ok: true, ...(movedTask ? { movedTask } : {}) });
+  } catch (error) {
+    if (error instanceof TaskRevisionConflictError) {
+      return Response.json(
+        {
+          error: 'Task changed elsewhere',
+          currentUpdatedAt: error.currentUpdatedAt,
+        },
+        { status: 409 },
+      );
+    }
+    throw error;
+  }
 }
 
 export async function DELETE(request: Request) {

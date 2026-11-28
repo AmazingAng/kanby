@@ -595,6 +595,15 @@ function isIdempotencyEnvelope(
   );
 }
 
+/** Completed keys can be replayed for this long, then the key may be reused. */
+export const IDEMPOTENCY_RETENTION_MS = 24 * 60 * 60 * 1000;
+/**
+ * A pending reservation older than this belongs to a request that died before
+ * completing or aborting (for example a Worker that was terminated), and may
+ * be taken over by a retry instead of reporting "in progress" forever.
+ */
+export const IDEMPOTENCY_PENDING_TIMEOUT_MS = 5 * 60 * 1000;
+
 export async function beginIdempotentRequest(
   tokenId: string,
   key: string,
@@ -610,12 +619,17 @@ export async function beginIdempotentRequest(
     ownerNonce: crypto.randomUUID(),
   };
   const pendingJson = JSON.stringify(pending);
-  const inserted = await database()
-    .prepare(
-      'INSERT OR IGNORE INTO agent_idempotency_keys (token_id, key, operation, response_json, created_at) VALUES (?, ?, ?, ?, ?)',
-    )
-    .bind(tokenId, key, operation, pendingJson, Date.now())
-    .run();
+  const now = Date.now();
+  const [, inserted] = await database().batch([
+    database()
+      .prepare('DELETE FROM agent_idempotency_keys WHERE created_at < ?')
+      .bind(now - IDEMPOTENCY_RETENTION_MS),
+    database()
+      .prepare(
+        'INSERT OR IGNORE INTO agent_idempotency_keys (token_id, key, operation, response_json, created_at) VALUES (?, ?, ?, ?, ?)',
+      )
+      .bind(tokenId, key, operation, pendingJson, now),
+  ]);
   if (Number(inserted.meta.changes ?? 0) > 0) {
     return {
       kind: 'acquired',
@@ -624,18 +638,31 @@ export async function beginIdempotentRequest(
   }
   const row = await database()
     .prepare(
-      'SELECT operation, response_json FROM agent_idempotency_keys WHERE token_id = ? AND key = ?',
+      'SELECT operation, response_json, created_at FROM agent_idempotency_keys WHERE token_id = ? AND key = ?',
     )
     .bind(tokenId, key)
-    .first<{ operation: string; response_json: string }>();
+    .first<{ operation: string; response_json: string; created_at: number }>();
   if (!row || row.operation !== operation) return { kind: 'conflict' };
   const stored = idempotencyEnvelope(row.response_json);
   if (!isIdempotencyEnvelope(stored))
     return { kind: 'cached', response: stored, status: 200 };
   if (stored.requestHash !== requestHash) return { kind: 'conflict' };
-  return stored.state === 'pending'
-    ? { kind: 'in_progress' }
-    : { kind: 'cached', response: stored.response, status: stored.status };
+  if (stored.state !== 'pending')
+    return { kind: 'cached', response: stored.response, status: stored.status };
+  if (Number(row.created_at) >= now - IDEMPOTENCY_PENDING_TIMEOUT_MS)
+    return { kind: 'in_progress' };
+  const takenOver = await database()
+    .prepare(
+      'UPDATE agent_idempotency_keys SET response_json = ?, created_at = ? WHERE token_id = ? AND key = ? AND operation = ? AND response_json = ?',
+    )
+    .bind(pendingJson, now, tokenId, key, operation, row.response_json)
+    .run();
+  return Number(takenOver.meta.changes ?? 0) > 0
+    ? {
+        kind: 'acquired',
+        reservation: { tokenId, key, operation, pendingJson, requestHash },
+      }
+    : { kind: 'in_progress' };
 }
 
 export async function completeIdempotentRequest(

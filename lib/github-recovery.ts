@@ -55,7 +55,7 @@ export async function recoverGitHubAppDeliveries() {
       await redeliverGitHubAppDelivery(config, delivery.id);
       requested += 1;
     } catch (error) {
-      await releaseGitHubRedelivery(delivery.id);
+      await releaseGitHubRedelivery(delivery.guid);
       throw error;
     }
   }
@@ -185,7 +185,10 @@ export async function backfillGitHubProject(projectId: string) {
                 }
               : undefined,
         });
-        await processGitHubWebhook(item.kind, deliveryId, raw, projectId);
+        await processGitHubWebhook(item.kind, deliveryId, raw, {
+          onlyProjectId: projectId,
+          backfill: true,
+        });
         count += 1;
       }
     }

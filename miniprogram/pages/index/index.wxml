@@ -23,6 +23,7 @@
         <view class="pair-step"><text class="step-number">1</text><text>复制绑定码，在 Kanby 网页确认绑定。</text></view>
         <view class="pair-step"><text class="step-number">2</text><text>返回这里，点击上方按钮进入工作台。</text></view>
         <view class="pair-code" selectable="{{true}}">{{pairingCode}}</view>
+        <view wx:if="{{pairingFingerprint}}" class="caption">微信识别码 <text selectable="{{true}}">{{pairingFingerprint}}</text> · 网页确认前会显示识别码，两边一致才绑定</view>
         <view class="pair-actions"><button size="mini" class="secondary" bindtap="copyPair">复制绑定码</button><button size="mini" class="secondary" bindtap="copyLink">复制网页地址</button></view>
         <view class="caption">{{pairingUntil}} 前有效 · 只绑定你自己的微信</view>
       </view>

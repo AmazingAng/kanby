@@ -101,6 +101,8 @@ import {
 import { cn } from '@/lib/utils';
 import { mergePolledTasks, shouldCloseTaskEditor } from '@/lib/task-sync';
 import {
+  changedTaskPlacements,
+  createSerialQueue,
   columnAtPoint,
   keyboardInsertAfter,
   orderedColumnTasks,
@@ -352,6 +354,33 @@ function taskDraftFingerprint(draft: TaskDraft) {
     draft.due.trim(),
     draft.status,
   ]);
+}
+
+type MutationState = { inFlight: number; epoch: number };
+
+function beginMutation(state: MutationState) {
+  state.inFlight += 1;
+  state.epoch += 1;
+  let ended = false;
+  return () => {
+    if (ended) return;
+    ended = true;
+    state.inFlight = Math.max(0, state.inFlight - 1);
+    state.epoch += 1;
+  };
+}
+
+function draftFromTask(task: Task): TaskDraft {
+  return {
+    id: task.id,
+    title: task.title,
+    note: task.note,
+    tag: task.tag,
+    ownerIds: taskOwners(task).map((owner) => owner.id),
+    due: task.due ?? '',
+    status: task.status,
+    updatedAt: task.updatedAt,
+  };
 }
 
 function formatFileSize(bytes: number) {
@@ -1097,6 +1126,10 @@ export function KanbanApp({
   const [members, setMembers] = useState<ProjectMember[]>([]);
   const [newMemberIdentity, setNewMemberIdentity] = useState('');
   const [syncError, setSyncError] = useState('');
+  const [taskConflict, setTaskConflict] = useState<{
+    taskId: string;
+    draft: TaskDraft;
+  } | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [mobileColumn, setMobileColumn] = useState<ColumnId>('ideas');
@@ -1147,7 +1180,12 @@ export function KanbanApp({
   const dragProjectedTasks = useRef<Task[] | null>(null);
   const dragging = useRef(false);
   const suppressTaskOpenUntil = useRef(0);
-  const mutationInFlight = useRef(false);
+  // Count concurrent mutations instead of a single flag so one finishing does
+  // not let a poll overwrite another's optimistic state, and bump an epoch on
+  // every start/finish so a poll that began before a mutation is discarded.
+  const mutationState = useRef<MutationState>({ inFlight: 0, epoch: 0 });
+  const reorderQueue = useRef(createSerialQueue());
+  const reorderSequence = useRef(0);
   const taskSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const queuedTaskSaves = useRef(new Map<string, Promise<boolean>>());
   const lastSavedTask = useRef('');
@@ -1155,7 +1193,6 @@ export function KanbanApp({
   const taskDraftRef = useRef<TaskDraft | null>(null);
   const taskEditSessionId = useRef('');
   const pendingTaskSaves = useRef(0);
-  const attachmentMutation = useRef(false);
   const attachmentInput = useRef<HTMLInputElement | null>(null);
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
@@ -1338,6 +1375,7 @@ export function KanbanApp({
     async function refreshWorkspace() {
       if (inFlight) return;
       inFlight = true;
+      const pollEpoch = mutationState.current.epoch;
       try {
         void fetch(`/api/turns?projectId=${encodeURIComponent(projectId)}`, {
           cache: 'no-store',
@@ -1389,8 +1427,8 @@ export function KanbanApp({
         if (cancelled) return;
         if (
           !dragging.current &&
-          !mutationInFlight.current &&
-          !attachmentMutation.current
+          mutationState.current.inFlight === 0 &&
+          mutationState.current.epoch === pollEpoch
         ) {
           const editingTaskId = taskDraftRef.current?.id ?? null;
           setTasks((current) =>
@@ -1401,7 +1439,10 @@ export function KanbanApp({
               latestTaskRevision.current.set(task.id, task.updatedAt);
           }
         }
-        if (!mutationInFlight.current) {
+        if (
+          mutationState.current.inFlight === 0 &&
+          mutationState.current.epoch === pollEpoch
+        ) {
           setMembers(memberPayload.members);
           const memberCount = memberPayload.members.filter(
             (member) => !member.pending,
@@ -1586,26 +1627,69 @@ export function KanbanApp({
     );
     setTasks(nextTasks);
     if (!isDemo && auth?.user && activeProjectId) {
-      mutationInFlight.current = true;
-      void fetch('/api/tasks', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: activeProjectId,
-          movedTaskId: String(active.id),
-          items: nextTasks.map(({ id, status, position }) => ({
-            id,
-            status,
-            position,
-          })),
-        }),
-      })
-        .then((response) => {
-          if (!response.ok) setSyncError('排序保存失败，请刷新后重试。');
+      const movedTaskId = String(active.id);
+      const changed = changedTaskPlacements(snapshot, nextTasks, movedTaskId);
+      if (changed.length === 0) return;
+      const moved = snapshot.find((task) => task.id === movedTaskId);
+      const endMutation = beginMutation(mutationState.current);
+      const projectId = activeProjectId;
+      const sequence = ++reorderSequence.current;
+      // Reorders are sent one at a time, in drag order: each request reads the
+      // moved card's revision only after the previous response updated it, so
+      // a quick second drag of the same card never conflicts with the first,
+      // and responses cannot arrive out of order.
+      void reorderQueue
+        .current(async () => {
+          const response = await fetch('/api/tasks', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              projectId,
+              movedTaskId,
+              ...(moved
+                ? {
+                    expectedUpdatedAt:
+                      latestTaskRevision.current.get(movedTaskId) ??
+                      moved.updatedAt,
+                  }
+                : {}),
+              items: changed,
+            }),
+          });
+          if (response.status === 409) {
+            // Only the newest drag may restore its snapshot; an older one
+            // would undo later drags. The next poll reloads the server order.
+            if (sequence === reorderSequence.current) setTasks(snapshot);
+            setSyncError(
+              '这张卡片刚被其他成员或 Agent 修改，已恢复，请再拖一次。',
+            );
+            return;
+          }
+          if (!response.ok) {
+            setSyncError('排序保存失败，请刷新后重试。');
+            return;
+          }
+          const payload = (await response.json()) as {
+            movedTask?: { id: string; updatedAt: number };
+          };
+          const movedTask = payload.movedTask;
+          if (!movedTask) return;
+          latestTaskRevision.current.set(movedTask.id, movedTask.updatedAt);
+          setTasks((current) =>
+            current.map((task) =>
+              task.id === movedTask.id
+                ? { ...task, updatedAt: movedTask.updatedAt }
+                : task,
+            ),
+          );
+          setTaskDraft((current) =>
+            current?.id === movedTask.id
+              ? { ...current, updatedAt: movedTask.updatedAt }
+              : current,
+          );
         })
-        .finally(() => {
-          mutationInFlight.current = false;
-        });
+        .catch(() => setSyncError('排序保存失败，请刷新后重试。'))
+        .finally(endMutation);
     }
   }
   async function addTask(event: React.SyntheticEvent<HTMLFormElement>) {
@@ -1616,7 +1700,7 @@ export function KanbanApp({
     setNewTitle('');
     setComposer(null);
     if (!isDemo && auth?.user && activeProjectId) {
-      mutationInFlight.current = true;
+      const endMutation = beginMutation(mutationState.current);
       try {
         const response = await fetch('/api/tasks', {
           method: 'POST',
@@ -1625,11 +1709,15 @@ export function KanbanApp({
         });
         if (!response.ok) throw new Error('create');
         const payload = (await response.json()) as { task: Task };
-        setTasks((current) => [...current, payload.task]);
+        setTasks((current) =>
+          current.some((task) => task.id === payload.task.id)
+            ? current
+            : [...current, payload.task],
+        );
       } catch {
         setSyncError('任务创建失败，请重试。');
       } finally {
-        mutationInFlight.current = false;
+        endMutation();
       }
       return;
     }
@@ -1703,14 +1791,15 @@ export function KanbanApp({
     event.preventDefault();
     const identity = newMemberIdentity.trim();
     if (!identity || !activeProjectId) return;
-    mutationInFlight.current = true;
+    const endMutation = beginMutation(mutationState.current);
     try {
       const response = await fetch('/api/members', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: activeProjectId, identity }),
       });
-      if (!response.ok) throw new Error('invite');
+      if (!response.ok)
+        throw new Error(response.status === 404 ? 'not_found' : 'invite');
       const payload = (await response.json()) as { members: ProjectMember[] };
       setMembers(payload.members);
       setProjects((current) =>
@@ -1721,16 +1810,20 @@ export function KanbanApp({
         ),
       );
       setNewMemberIdentity('');
-    } catch {
-      setSyncError('成员添加失败，请检查 GitHub 用户名或邮箱。');
+    } catch (error) {
+      setSyncError(
+        error instanceof Error && error.message === 'not_found'
+          ? 'GitHub 上找不到这个用户名，请检查拼写。'
+          : '成员添加失败，请检查 GitHub 用户名或邮箱。',
+      );
     } finally {
-      mutationInFlight.current = false;
+      endMutation();
     }
   }
 
   async function removeMember(memberId: string) {
     if (!activeProjectId) return;
-    mutationInFlight.current = true;
+    const endMutation = beginMutation(mutationState.current);
     try {
       const response = await fetch('/api/members', {
         method: 'DELETE',
@@ -1750,22 +1843,14 @@ export function KanbanApp({
     } catch {
       setSyncError('成员移除失败，请重试。');
     } finally {
-      mutationInFlight.current = false;
+      endMutation();
     }
   }
 
   function openTask(task: Task) {
     if (taskOpenIsSuppressed(suppressTaskOpenUntil.current)) return;
-    const draft = {
-      id: task.id,
-      title: task.title,
-      note: task.note,
-      tag: task.tag,
-      ownerIds: taskOwners(task).map((owner) => owner.id),
-      due: task.due ?? '',
-      status: task.status,
-      updatedAt: task.updatedAt,
-    } satisfies TaskDraft;
+    const draft = draftFromTask(task);
+    setTaskConflict(null);
     lastSavedTask.current = taskDraftFingerprint(draft);
     setLastSavedFingerprint(lastSavedTask.current);
     latestTaskRevision.current.set(task.id, task.updatedAt);
@@ -1857,7 +1942,7 @@ export function KanbanApp({
       return;
     }
     setAcceptanceSaving('new');
-    mutationInFlight.current = true;
+    const endMutation = beginMutation(mutationState.current);
     try {
       if (!(await queueTaskSave(taskDraft, true))) return;
       const taskUpdatedAt =
@@ -1907,7 +1992,7 @@ export function KanbanApp({
       );
     } finally {
       setAcceptanceSaving('');
-      mutationInFlight.current = false;
+      endMutation();
     }
   }
 
@@ -1927,7 +2012,7 @@ export function KanbanApp({
     )
       return;
     setAcceptanceSaving(item.id);
-    mutationInFlight.current = true;
+    const endMutation = beginMutation(mutationState.current);
     try {
       if (!(await queueTaskSave(taskDraft, true))) return;
       const taskUpdatedAt =
@@ -1983,14 +2068,14 @@ export function KanbanApp({
       );
     } finally {
       setAcceptanceSaving('');
-      mutationInFlight.current = false;
+      endMutation();
     }
   }
 
   async function removeAcceptanceItem(item: TaskAcceptanceCriterion) {
     if (!taskDraft || acceptanceSaving) return;
     setAcceptanceSaving(item.id);
-    mutationInFlight.current = true;
+    const endMutation = beginMutation(mutationState.current);
     try {
       if (!(await queueTaskSave(taskDraft, true))) return;
       const taskUpdatedAt =
@@ -2034,7 +2119,7 @@ export function KanbanApp({
       );
     } finally {
       setAcceptanceSaving('');
-      mutationInFlight.current = false;
+      endMutation();
     }
   }
 
@@ -2053,7 +2138,7 @@ export function KanbanApp({
       return;
     }
     setTaskSplitting(true);
-    mutationInFlight.current = true;
+    const endMutation = beginMutation(mutationState.current);
     try {
       if (!(await queueTaskSave(taskDraft, true))) return;
       const parentUpdatedAt =
@@ -2148,7 +2233,7 @@ export function KanbanApp({
       );
     } finally {
       setTaskSplitting(false);
-      mutationInFlight.current = false;
+      endMutation();
     }
   }
 
@@ -2156,7 +2241,7 @@ export function KanbanApp({
     if (subtaskStatusSaving) return;
     const status: ColumnId = task.status === 'shipped' ? 'ideas' : 'shipped';
     setSubtaskStatusSaving(task.id);
-    mutationInFlight.current = true;
+    const endMutation = beginMutation(mutationState.current);
     try {
       if (isDemo) {
         const now = task.updatedAt + 1;
@@ -2214,7 +2299,7 @@ export function KanbanApp({
       );
     } finally {
       setSubtaskStatusSaving('');
-      mutationInFlight.current = false;
+      endMutation();
     }
   }
 
@@ -2563,7 +2648,7 @@ export function KanbanApp({
     )
       return;
     setGithubIssueImporting(activity.id);
-    mutationInFlight.current = true;
+    const endMutation = beginMutation(mutationState.current);
     try {
       const response = await fetch('/api/github/issue-task', {
         method: 'POST',
@@ -2593,7 +2678,7 @@ export function KanbanApp({
           : '从 GitHub Issue 创建任务失败，请重试。',
       );
     } finally {
-      mutationInFlight.current = false;
+      endMutation();
       setGithubIssueImporting('');
     }
   }
@@ -2697,7 +2782,7 @@ export function KanbanApp({
 
     pendingTaskSaves.current += 1;
     setTaskSaving(true);
-    mutationInFlight.current = true;
+    const endMutation = beginMutation(mutationState.current);
 
     const save = taskSaveQueue.current
       .catch(() => undefined)
@@ -2788,20 +2873,21 @@ export function KanbanApp({
         return saved;
       })
       .catch((error: Error) => {
-        setSyncError(
-          error.message === 'conflict'
-            ? '任务已被其他成员或 Agent 修改；你的内容仍保留在编辑器中，请确认后重试。'
-            : '任务自动保存失败；内容仍保留在编辑器中，请重试。',
-        );
+        if (error.message === 'conflict') {
+          setTaskConflict({ taskId: draft.id, draft });
+          setSyncError(
+            '任务已被其他成员或 Agent 修改；你的内容仍保留在编辑器中，可以加载最新版本或放弃修改。',
+          );
+        } else {
+          setSyncError('任务自动保存失败；内容仍保留在编辑器中，请重试。');
+        }
         return false;
       })
       .finally(() => {
         queuedTaskSaves.current.delete(saveKey);
         pendingTaskSaves.current = Math.max(0, pendingTaskSaves.current - 1);
-        if (pendingTaskSaves.current === 0) {
-          setTaskSaving(false);
-          mutationInFlight.current = false;
-        }
+        endMutation();
+        if (pendingTaskSaves.current === 0) setTaskSaving(false);
       });
     queuedTaskSaves.current.set(saveKey, save);
     taskSaveQueue.current = save.then(() => undefined);
@@ -2840,6 +2926,53 @@ export function KanbanApp({
     }
   }
 
+  async function loadLatestTask() {
+    if (!taskConflict || !activeProjectId) return;
+    const taskId = taskConflict.taskId;
+    try {
+      const response = await fetch(
+        `/api/tasks?projectId=${encodeURIComponent(activeProjectId)}`,
+        { cache: 'no-store' },
+      );
+      if (!response.ok) throw new Error('load');
+      const payload = (await response.json()) as { tasks: Task[] };
+      const latest = payload.tasks.find((task) => task.id === taskId);
+      if (!latest) {
+        setSyncError(
+          '这张任务已不在看板上（可能已被归档），可以放弃修改并关闭。',
+        );
+        return;
+      }
+      const draft = draftFromTask(latest);
+      lastSavedTask.current = taskDraftFingerprint(draft);
+      setLastSavedFingerprint(lastSavedTask.current);
+      latestTaskRevision.current.set(latest.id, latest.updatedAt);
+      setTasks((current) =>
+        current.map((task) => (task.id === latest.id ? latest : task)),
+      );
+      setTaskDraft((current) => (current?.id === latest.id ? draft : current));
+      setTaskConflict(null);
+      setSyncError('');
+    } catch {
+      setSyncError('最新版本加载失败，请重试。');
+    }
+  }
+
+  function discardTaskChanges() {
+    setTaskConflict(null);
+    setSyncError('');
+    setDuePickerOpen(false);
+    setTaskDraft(null);
+  }
+
+  function copyConflictDraft() {
+    if (!taskConflict) return;
+    const { title, note } = taskConflict.draft;
+    void navigator.clipboard
+      ?.writeText(note ? `${title}\n\n${note}` : title)
+      .catch(() => undefined);
+  }
+
   function finishTaskEditing(event: React.SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     void closeTaskEditor();
@@ -2862,7 +2995,7 @@ export function KanbanApp({
     }
 
     setAttachmentUploading(true);
-    attachmentMutation.current = true;
+    const endMutation = beginMutation(mutationState.current);
     try {
       for (const file of files) {
         let attachment: TaskAttachment;
@@ -2912,14 +3045,14 @@ export function KanbanApp({
     } finally {
       setAttachmentUploading(false);
       setAttachmentDragActive(false);
-      attachmentMutation.current = false;
+      endMutation();
       if (attachmentInput.current) attachmentInput.current.value = '';
     }
   }
 
   async function removeTaskAttachment(attachment: TaskAttachment) {
     if (!taskDraft || attachmentUploading) return;
-    attachmentMutation.current = true;
+    const endMutation = beginMutation(mutationState.current);
     try {
       if (!isDemo) {
         if (!activeProjectId) throw new Error('project');
@@ -2950,7 +3083,7 @@ export function KanbanApp({
     } catch {
       setSyncError('附件删除失败，请重试。');
     } finally {
-      attachmentMutation.current = false;
+      endMutation();
     }
   }
 
@@ -3754,6 +3887,54 @@ export function KanbanApp({
                 <X />
               </Button>
             </div>
+            {taskConflict?.taskId === taskDraft.id && (
+              <div
+                role="alert"
+                className="mb-4 shrink-0 space-y-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm"
+              >
+                <p className="font-medium">
+                  这张任务已被其他成员或 Agent 修改，你的修改没有保存。
+                </p>
+                <p className="text-ink-subtle">
+                  可以先复制下面的内容，再加载最新版本重新编辑，或放弃修改并关闭。
+                </p>
+                <textarea
+                  readOnly
+                  aria-label="未保存的修改"
+                  value={
+                    taskConflict.draft.note
+                      ? `${taskConflict.draft.title}\n\n${taskConflict.draft.note}`
+                      : taskConflict.draft.title
+                  }
+                  className="max-h-40 min-h-20 w-full resize-y rounded-xl border border-ink/10 bg-card p-2 text-xs"
+                />
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => void loadLatestTask()}
+                  >
+                    加载最新
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={copyConflictDraft}
+                  >
+                    复制我的内容
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={discardTaskChanges}
+                  >
+                    放弃我的修改
+                  </Button>
+                </div>
+              </div>
+            )}
             <div className="-mx-1 grid min-h-0 flex-1 gap-5 overflow-y-auto px-1 pb-1 lg:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)] lg:items-start lg:gap-6">
               <div className="space-y-5">
                 <div className="space-y-2">

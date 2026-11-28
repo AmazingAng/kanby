@@ -187,7 +187,7 @@ describe('xAPI deployment boundaries', () => {
       ).status,
     ).toBe(413);
   });
-  it('authenticates scheduled recovery before forwarding the fixed signed request', async () => {
+  it('authenticates scheduled recovery before forwarding a fresh timestamped request', async () => {
     const secret = 'webhook-secret';
     const application = {
       fetch: vi.fn().mockResolvedValue(new Response('ok')),
@@ -210,18 +210,41 @@ describe('xAPI deployment boundaries', () => {
       false,
       ['sign'],
     );
-    const bytes = new Uint8Array(
-      await crypto.subtle.sign(
-        'HMAC',
-        key,
-        new TextEncoder().encode('kanby-recovery-v1'),
-      ),
-    );
-    const signature =
-      'sha256=' +
-      [...bytes].map((x) => x.toString(16).padStart(2, '0')).join('');
+    const sign = async (body: string) => {
+      const bytes = new Uint8Array(
+        await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(body)),
+      );
+      return (
+        'sha256=' +
+        [...bytes].map((x) => x.toString(16).padStart(2, '0')).join('')
+      );
+    };
+    // The old constant body is no longer accepted, nor is a stale timestamp.
+    const legacy = await sign('kanby-recovery-v1');
+    const stale = Date.now() - 10 * 60 * 1000;
+    for (const body of [
+      { signature: legacy },
+      { signature: legacy, timestamp: 'now' },
+      {
+        signature: await sign(`kanby-recovery-v2:${stale}`),
+        timestamp: stale,
+      },
+    ])
+      expect(
+        (
+          await scheduledRecovery(
+            request(body),
+            { GITHUB_WEBHOOK_SECRET: secret },
+            {},
+            application,
+          )
+        ).status,
+      ).toBe(403);
+    expect(application.fetch).not.toHaveBeenCalled();
+    const timestamp = Date.now();
+    const signature = await sign(`kanby-recovery-v2:${timestamp}`);
     const r = await scheduledRecovery(
-      request({ signature }),
+      request({ signature, timestamp }),
       { GITHUB_WEBHOOK_SECRET: secret },
       {},
       application,
@@ -230,7 +253,7 @@ describe('xAPI deployment boundaries', () => {
     expect(application.fetch).toHaveBeenCalledOnce();
     const forwarded = application.fetch.mock.calls[0][0] as Request;
     expect(forwarded.headers.get('x-kanby-signature')).toBe(signature);
-    expect(await forwarded.text()).toBe('kanby-recovery-v1');
+    expect(await forwarded.text()).toBe(`kanby-recovery-v2:${timestamp}`);
   });
   it('handles absent bodies, malformed JSON and query failure without leaking data', async () => {
     const url = 'https://preview.test/__kanby_migration';
@@ -263,6 +286,8 @@ describe('xAPI deployment boundaries', () => {
       new Request(url, { method: 'POST' }),
       new Request(url, { method: 'POST', body: '{' }),
       request({ signature: 'sha256=' + '0'.repeat(64) }),
+      request({ signature: 'sha256=' + '0'.repeat(64), timestamp: Date.now() }),
+      new Request(url, { method: 'POST', body: 'null' }),
       request({ text: 'a'.repeat(1025) }),
     ]) {
       expect(

@@ -337,39 +337,65 @@ export async function POST(request: Request) {
   );
   const replayed = replay(idempotency);
   if (replayed) return replayed;
-  let task = await createTask(
-    {
-      id: auth.userId,
-      login: auth.userLogin,
-      name: auth.userName,
-      avatarUrl: auth.userAvatarUrl,
-    },
-    auth.projectId,
-    { title, status, due },
-  );
-  const note = typeof body.note === 'string' ? body.note.trim() : '';
-  if (note)
-    task =
-      (await updateTask(auth.projectId, {
-        id: task.id,
-        title: task.title,
-        note: note.slice(0, 2000),
-        due: task.due,
-        tag: task.tag,
-        ownerId: task.owner.id,
-        status: task.status,
-        expectedUpdatedAt: task.updatedAt,
-      })) ?? task;
-  await recordAgentUpdate(
-    auth,
-    task.id,
-    'created',
-    `Created task: ${task.title}`,
-  );
+  let task: Awaited<ReturnType<typeof createTask>> | null = null;
+  try {
+    task = await createTask(
+      {
+        id: auth.userId,
+        login: auth.userLogin,
+        name: auth.userName,
+        avatarUrl: auth.userAvatarUrl,
+      },
+      auth.projectId,
+      // The note is part of the same atomic insert, so a committed create
+      // always has it and a replayed response is complete.
+      {
+        title,
+        status,
+        due,
+        note:
+          (typeof body.note === 'string' ? body.note.trim() : '').slice(
+            0,
+            2000,
+          ) || undefined,
+      },
+    );
+    await recordAgentUpdate(
+      auth,
+      task.id,
+      'created',
+      `Created task: ${task.title}`,
+    );
+  } catch (error) {
+    if (idempotency.kind === 'acquired') {
+      // Once the card exists, a retry must replay it rather than create a
+      // duplicate; before that, release the key so the retry can proceed.
+      if (task)
+        await completeIdempotentRequest(
+          idempotency.reservation,
+          { ok: true, data: publicTask(task) },
+          201,
+        ).catch(() => abortIdempotentRequest(idempotency.reservation));
+      else await abortIdempotentRequest(idempotency.reservation);
+    }
+    throw error;
+  }
   const response = { ok: true, data: publicTask(task) };
   if (idempotency.kind === 'acquired')
     await completeIdempotentRequest(idempotency.reservation, response, 201);
   return Response.json(response, { status: 201 });
+}
+
+/** Conflicts raised by a write's own guard: nothing was saved. */
+function isExpectedWriteConflict(error: unknown) {
+  return (
+    error instanceof TaskRevisionConflictError ||
+    error instanceof AcceptanceCriterionRevisionConflictError ||
+    error instanceof AcceptanceCriteriaLimitError ||
+    error instanceof TaskClaimConflictError ||
+    error instanceof TaskHierarchyError ||
+    error instanceof TurnTaskNotFoundError
+  );
 }
 
 export async function PATCH(request: Request) {
@@ -422,9 +448,28 @@ export async function PATCH(request: Request) {
   };
 
   let response: unknown;
+  // Set once a write may have been saved: after that, an unexpected failure
+  // must not release the key (a retry would repeat the write). A write that
+  // throws unexpectedly counts too, because some writes commit their batch
+  // and then read it back (postTaskComment, setTaskTurn, splitTask), so the
+  // failure can come after the commit. Expected conflicts are raised by the
+  // write's own guard, so nothing was saved.
+  let committed = false;
+  const tracked =
+    <A extends unknown[], R>(write: (...args: A) => Promise<R>) =>
+    async (...args: A) => {
+      try {
+        const result = await write(...args);
+        committed = true;
+        return result;
+      } catch (error) {
+        if (!isExpectedWriteConflict(error)) committed = true;
+        throw error;
+      }
+    };
   try {
     if (action === 'claim') {
-      const result = await claimTask(
+      const result = await tracked(claimTask)(
         auth,
         task.id,
         Number(body.leaseMinutes) || 15,
@@ -436,7 +481,7 @@ export async function PATCH(request: Request) {
           409,
         );
       }
-      await recordAgentUpdate(
+      await tracked(recordAgentUpdate)(
         auth,
         task.id,
         'claimed',
@@ -444,7 +489,7 @@ export async function PATCH(request: Request) {
       );
       response = { ok: true, data: { task: publicTask(task), claim: result } };
     } else if (action === 'heartbeat') {
-      const claim = await heartbeatTask(
+      const claim = await tracked(heartbeatTask)(
         auth,
         task.id,
         Number(body.leaseMinutes) || 15,
@@ -455,7 +500,7 @@ export async function PATCH(request: Request) {
           'This Agent Token does not hold an active claim',
           409,
         );
-      await recordAgentUpdate(
+      await tracked(recordAgentUpdate)(
         auth,
         task.id,
         'heartbeat',
@@ -465,13 +510,18 @@ export async function PATCH(request: Request) {
       );
       response = { ok: true, data: { task: publicTask(task), claim } };
     } else if (action === 'release') {
-      if (!(await releaseTask(auth, task.id)))
+      if (!(await tracked(releaseTask)(auth, task.id)))
         return reject(
           'not_claimed',
           'This Agent Token does not hold the claim',
           409,
         );
-      await recordAgentUpdate(auth, task.id, 'released', 'Released task claim');
+      await tracked(recordAgentUpdate)(
+        auth,
+        task.id,
+        'released',
+        'Released task claim',
+      );
       response = { ok: true, data: publicTask(task) };
     } else if (action === 'progress') {
       const message =
@@ -482,7 +532,7 @@ export async function PATCH(request: Request) {
           'Progress message is required and must be at most 1000 characters',
           400,
         );
-      const update = await recordAgentUpdate(
+      const update = await tracked(recordAgentUpdate)(
         auth,
         task.id,
         'progress',
@@ -497,7 +547,7 @@ export async function PATCH(request: Request) {
           `Comment body is required and must be at most ${MAX_COMMENT_LENGTH} characters`,
           400,
         );
-      const result = await postTaskComment({
+      const result = await tracked(postTaskComment)({
         projectId: auth.projectId,
         taskId: task.id,
         body: comment,
@@ -535,7 +585,7 @@ export async function PATCH(request: Request) {
           `reason must be developing, awaiting_acceptance, awaiting_decision, blocked, or awaiting_review; note at most ${MAX_TURN_NOTE_LENGTH} characters`,
           400,
         );
-      const result = await setTaskTurn({
+      const result = await tracked(setTaskTurn)({
         projectId: auth.projectId,
         taskId: task.id,
         target,
@@ -548,9 +598,9 @@ export async function PATCH(request: Request) {
       const released =
         body.release !== false &&
         !(target?.kind === 'agent' && target.tokenId === auth.tokenId) &&
-        (await releaseTask(auth, task.id));
+        (await tracked(releaseTask)(auth, task.id));
       if (released)
-        await recordAgentUpdate(
+        await tracked(recordAgentUpdate)(
           auth,
           task.id,
           'released',
@@ -580,7 +630,7 @@ export async function PATCH(request: Request) {
           'Provide 1–20 non-empty titles of at most 160 characters',
           400,
         );
-      const result = await splitTask(
+      const result = await tracked(splitTask)(
         {
           id: auth.userId,
           login: auth.userLogin,
@@ -626,7 +676,7 @@ export async function PATCH(request: Request) {
             'Acceptance criterion is required and must be at most 240 characters',
             400,
           );
-        const result = await createAcceptanceCriterion(
+        const result = await tracked(createAcceptanceCriterion)(
           auth.projectId,
           task.id,
           criterionBody,
@@ -648,7 +698,7 @@ export async function PATCH(request: Request) {
             404,
           );
         if (action === 'checklist.remove') {
-          const result = await deleteAcceptanceCriterion(
+          const result = await tracked(deleteAcceptanceCriterion)(
             auth.projectId,
             task.id,
             {
@@ -679,7 +729,7 @@ export async function PATCH(request: Request) {
               'Acceptance criterion is required and must be at most 240 characters',
               400,
             );
-          const result = await updateAcceptanceCriterion(
+          const result = await tracked(updateAcceptanceCriterion)(
             auth.projectId,
             task.id,
             {
@@ -706,7 +756,7 @@ export async function PATCH(request: Request) {
         }
       }
     } else if (action === 'complete') {
-      const updated = await updateTask(auth.projectId, {
+      const updated = await tracked(updateTask)(auth.projectId, {
         ...task,
         id: task.id,
         ownerId: task.owner.id,
@@ -716,8 +766,8 @@ export async function PATCH(request: Request) {
         agentTokenId: auth.tokenId,
       });
       if (!updated) return reject('not_found', 'Task no longer exists', 404);
-      await releaseTask(auth, task.id);
-      await recordAgentUpdate(
+      await tracked(releaseTask)(auth, task.id);
+      await tracked(recordAgentUpdate)(
         auth,
         task.id,
         'completed',
@@ -727,7 +777,7 @@ export async function PATCH(request: Request) {
       );
       response = { ok: true, data: publicTask(updated) };
     } else if (action === 'archive') {
-      const archived = await setTaskArchived(
+      const archived = await tracked(setTaskArchived)(
         auth.projectId,
         task.id,
         true,
@@ -769,7 +819,7 @@ export async function PATCH(request: Request) {
         parsed.kind,
         parsed.number,
       );
-      const link = await saveGitHubTaskLink(
+      const link = await tracked(saveGitHubTaskLink)(
         auth.projectId,
         task.id,
         repository.id,
@@ -782,7 +832,7 @@ export async function PATCH(request: Request) {
           'Task is actively claimed by another Agent Token',
           409,
         );
-      await recordAgentUpdate(
+      await tracked(recordAgentUpdate)(
         auth,
         task.id,
         'linked',
@@ -830,7 +880,7 @@ export async function PATCH(request: Request) {
         !tag
       )
         return reject('invalid_task', 'Invalid task fields', 400);
-      const updated = await updateTask(auth.projectId, {
+      const updated = await tracked(updateTask)(auth.projectId, {
         id: task.id,
         title,
         note,
@@ -844,7 +894,12 @@ export async function PATCH(request: Request) {
       });
       if (!updated)
         return reject('invalid_owner', 'Task or assignee was not found', 404);
-      await recordAgentUpdate(auth, task.id, 'updated', 'Updated task fields');
+      await tracked(recordAgentUpdate)(
+        auth,
+        task.id,
+        'updated',
+        'Updated task fields',
+      );
       response = { ok: true, data: publicTask(updated) };
     } else {
       return reject(
@@ -854,14 +909,7 @@ export async function PATCH(request: Request) {
       );
     }
   } catch (error) {
-    if (
-      error instanceof TaskRevisionConflictError ||
-      error instanceof AcceptanceCriterionRevisionConflictError ||
-      error instanceof AcceptanceCriteriaLimitError ||
-      error instanceof TaskClaimConflictError ||
-      error instanceof TaskHierarchyError ||
-      error instanceof TurnTaskNotFoundError
-    ) {
+    if (isExpectedWriteConflict(error)) {
       if (idempotency.kind === 'acquired')
         await abortIdempotentRequest(idempotency.reservation);
       if (error instanceof TurnTaskNotFoundError)
@@ -878,6 +926,26 @@ export async function PATCH(request: Request) {
         409,
       );
     }
+    // Before any write, release the key so a retry can run. After a write,
+    // record the failure instead: a retry with this key replays it rather
+    // than repeating the write (e.g. posting a comment twice).
+    if (idempotency.kind === 'acquired')
+      await (
+        committed
+          ? completeIdempotentRequest(
+              idempotency.reservation,
+              {
+                ok: false,
+                error: {
+                  code: 'failed_after_write',
+                  message:
+                    'The change may have been saved but the request failed afterwards. Re-read the task before retrying with a new idempotency key.',
+                },
+              },
+              500,
+            )
+          : abortIdempotentRequest(idempotency.reservation)
+      ).catch(() => undefined);
     throw error;
   }
   if (idempotency.kind === 'acquired')

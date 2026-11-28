@@ -207,6 +207,10 @@ export async function POST(request: Request) {
       409,
     );
   }
+  const response = { ok: true, data: agentAttachment(attachment) };
+  // The file is stored: from here a retry must replay it, never upload twice.
+  if (idempotency.kind === 'acquired')
+    await completeIdempotentRequest(idempotency.reservation, response, 201);
   await recordAgentUpdate(
     auth,
     taskId,
@@ -219,8 +223,5 @@ export async function POST(request: Request) {
       contentType: attachment.contentType,
     },
   );
-  const response = { ok: true, data: agentAttachment(attachment) };
-  if (idempotency.kind === 'acquired')
-    await completeIdempotentRequest(idempotency.reservation, response, 201);
   return Response.json(response, { status: 201, headers: noStore });
 }

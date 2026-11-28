@@ -90,3 +90,42 @@ export function agentRequest(token: string, body: unknown, key: string) {
     body: JSON.stringify(body),
   });
 }
+
+/** Links an existing repository row to a project through its installation. */
+export function linkGitHubRepository(
+  database: TestD1Database,
+  repositoryId: string,
+  projectId = 'project-1',
+) {
+  const repository = database.sqlite
+    .prepare('SELECT installation_id FROM github_repositories WHERE id = ?')
+    .get(repositoryId) as { installation_id: string } | undefined;
+  const installationId =
+    repository?.installation_id ?? `installation-${repositoryId}`;
+  if (!repository)
+    database.sqlite
+      .prepare(
+        `INSERT INTO github_repositories
+         (id, installation_id, name, full_name, html_url, default_branch, private, active, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'main', 1, 1, 1)`,
+      )
+      .run(
+        repositoryId,
+        installationId,
+        repositoryId,
+        `test/${repositoryId}`,
+        `https://github.com/test/${repositoryId}`,
+      );
+  database.sqlite
+    .prepare(
+      `INSERT INTO github_project_installations (project_id, installation_id, connected_by, created_at)
+       VALUES (?, ?, 'user-1', 1)
+       ON CONFLICT(project_id) DO UPDATE SET installation_id = excluded.installation_id`,
+    )
+    .run(projectId, installationId);
+  database.sqlite
+    .prepare(
+      'INSERT OR IGNORE INTO github_project_repositories (project_id, repository_id, created_at) VALUES (?, ?, 1)',
+    )
+    .run(projectId, repositoryId);
+}

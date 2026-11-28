@@ -766,6 +766,9 @@ describe('mini request transport', () => {
         typeof (instance as unknown as Record<string, unknown>)[handler],
       ).toBe('function');
     expect(template).not.toContain('<web-view');
+    // Without {{ }} WXML treats a condition as a constant, always-true string.
+    for (const match of template.matchAll(/wx:(?:if|elif)="([^"]*)"/g))
+      expect(match[1]).toMatch(/^\{\{.+\}\}$/);
     const config = JSON.parse(
       readFileSync('miniprogram/project.config.json', 'utf8'),
     ) as { setting: { urlCheck: boolean } };

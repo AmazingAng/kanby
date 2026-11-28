@@ -380,6 +380,7 @@ export async function autoLinkPullRequest(input: {
   deliveryId: string;
   actorLogin: string;
   actorAvatarUrl: string | null;
+  projectId?: string;
 }) {
   await ensureSchema();
   const reference = extractKanbyTaskReference(input);
@@ -391,10 +392,16 @@ export async function autoLinkPullRequest(input: {
       `SELECT t.id, t.project_id, t.updated_at
        FROM tasks t
        JOIN github_project_repositories gpr ON gpr.project_id = t.project_id
+       -- Only projects that link this repository through their current
+       -- installation (same rule as linked-task updates).
+       JOIN github_project_installations gpi ON gpi.project_id = t.project_id
+       JOIN github_repositories gr ON gr.id = gpr.repository_id
+         AND gr.installation_id = gpi.installation_id AND gr.active = 1
        LEFT JOIN github_automation_settings gas ON gas.project_id = t.project_id
        WHERE gpr.repository_id = ?
          AND COALESCE(gas.auto_link_pull_requests, 1) = 1
          AND t.archived_at IS NULL
+         AND (? IS NULL OR t.project_id = ?)
          AND (
            (? IS NOT NULL AND t.task_number = CAST(? AS INTEGER))
            OR (? IS NULL AND (lower(t.id) = ? OR lower(substr(t.id, 1, length(?))) = ?))
@@ -403,6 +410,8 @@ export async function autoLinkPullRequest(input: {
     )
     .bind(
       input.repositoryId,
+      input.projectId ?? null,
+      input.projectId ?? null,
       numericReference,
       numericReference,
       numericReference,
@@ -483,6 +492,7 @@ export async function recordReferencedPush(input: {
   actorLogin: string;
   actorAvatarUrl: string | null;
   url: string | null;
+  projectId?: string;
 }) {
   await ensureSchema();
   const reference = extractKanbyTaskReference({
@@ -497,16 +507,24 @@ export async function recordReferencedPush(input: {
       `SELECT t.id, t.project_id, t.updated_at
        FROM tasks t
        JOIN github_project_repositories gpr ON gpr.project_id = t.project_id
+       -- Only projects that link this repository through their current
+       -- installation (same rule as linked-task updates).
+       JOIN github_project_installations gpi ON gpi.project_id = t.project_id
+       JOIN github_repositories gr ON gr.id = gpr.repository_id
+         AND gr.installation_id = gpi.installation_id AND gr.active = 1
        LEFT JOIN github_automation_settings gas ON gas.project_id = t.project_id
        WHERE gpr.repository_id = ?
          AND (gas.auto_link_pull_requests IS NULL OR gas.auto_link_pull_requests = 1)
          AND t.archived_at IS NULL
+         AND (? IS NULL OR t.project_id = ?)
          AND ((? IS NOT NULL AND t.task_number = CAST(? AS INTEGER))
               OR (? IS NULL AND (lower(t.id) = ? OR lower(substr(t.id, 1, length(?))) = ?)))
        LIMIT 2`,
     )
     .bind(
       input.repositoryId,
+      input.projectId ?? null,
+      input.projectId ?? null,
       numericReference,
       numericReference,
       numericReference,
