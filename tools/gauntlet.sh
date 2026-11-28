@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-EXPECTED_LAYERS=18
+EXPECTED_LAYERS=19
 COMPLETED_LAYERS=0
 
 check_cli_contract() {
@@ -32,6 +32,7 @@ run_layer "xAPI deployment boundary coverage" npm run test:xapi
 run_layer "interaction sessions coverage" npm run test:sessions
 run_layer "read-only recovery boundary coverage" npm run test:recovery
 run_layer "task login deep-link coverage" npx vitest run tests/task-deep-link.test.ts --coverage --coverage.include=lib/task-deep-link.ts --coverage.thresholds.lines=100 --coverage.thresholds.statements=100 --coverage.thresholds.functions=100 --coverage.thresholds.branches=100
+run_layer "mini identity and member API coverage" npm run test:mini
 run_layer "TypeScript" npx tsc --noEmit
 run_layer "lint" npm run lint
 run_layer "format" npm run format:check

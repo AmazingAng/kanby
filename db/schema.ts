@@ -1039,3 +1039,58 @@ export const weixinLogins = sqliteTable(
     index('idx_weixin_logins_user').on(table.userId, table.expiresAt),
   ],
 );
+
+// Mini-program login identities are separate from iLink notification bindings.
+export const miniIdentities = sqliteTable(
+  'mini_identities',
+  {
+    id: text('id').primaryKey().notNull(),
+    appId: text('app_id').notNull(),
+    subjectHash: text('subject_hash').notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_mini_identity_subject').on(table.appId, table.subjectHash),
+    uniqueIndex('idx_mini_identity_user').on(table.appId, table.userId),
+  ],
+);
+export const miniPairs = sqliteTable(
+  'mini_pairs',
+  {
+    codeHash: text('code_hash').primaryKey().notNull(),
+    appId: text('app_id').notNull(),
+    subjectHash: text('subject_hash').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_mini_pair_subject').on(table.appId, table.subjectHash),
+    index('idx_mini_pairs_expiry').on(table.expiresAt),
+  ],
+);
+export const miniSessions = sqliteTable(
+  'mini_sessions',
+  {
+    tokenHash: text('token_hash').primaryKey().notNull(),
+    identityId: text('identity_id')
+      .notNull()
+      .references(() => miniIdentities.id, { onDelete: 'cascade' }),
+    createdAt: integer('created_at').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+  },
+  (table) => [
+    index('idx_mini_sessions_identity').on(table.identityId, table.createdAt),
+    index('idx_mini_sessions_expiry').on(table.expiresAt),
+  ],
+);
+export const miniLimits = sqliteTable(
+  'mini_limits',
+  {
+    bucket: text('bucket').primaryKey().notNull(),
+    attempts: integer('attempts').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+  },
+  (table) => [index('idx_mini_limits_expiry').on(table.expiresAt)],
+);

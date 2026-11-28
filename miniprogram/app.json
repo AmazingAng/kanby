@@ -1,0 +1,12 @@
+{
+  "pages": ["pages/index/index"],
+  "window": {
+    "navigationBarTitleText": "Kanby · 轮到我",
+    "navigationBarBackgroundColor": "#f5f4ef",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f5f4ef",
+    "enablePullDownRefresh": true
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

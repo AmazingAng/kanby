@@ -75,3 +75,15 @@ TypeScript/lint/format/build/secret scan. Changed-line coverage and client VM
 coverage limitations reported numerically, no unexecuted real-device claims.
 Independent fresh-context verification: not performed, declared lower assurance.
 Commit spec, implementation after checks, fetch then merge/push main per AGENTS.
+
+## Setup clarification
+
+Native WeChat JavaScript uses CommonJS `require`; .oxlintrc.json gets a narrowly
+scoped no-require-imports exception for miniprogram/**/*.js only. Other lint rules
+remain active. components/weixin-settings.tsx links to /mini; .gitignore excludes
+local developer-tool configuration. Migration journal records 0020 as well.
+
+The optional AppID is added to vite.config.ts's public Worker runtime-vars
+allowlist; AppSecret remains a secret binding. .env.example documents both names.
+Session retention is five latest logins with rowid as the tie-breaker when login
+creation times share a millisecond. Authentication tests freeze time to cover it.

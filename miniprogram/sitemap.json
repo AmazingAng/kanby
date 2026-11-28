@@ -1,0 +1,4 @@
+{
+  "desc": "Private project content is not indexed",
+  "rules": [{ "action": "disallow", "page": "*" }]
+}

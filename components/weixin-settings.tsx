@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 
 import { useEffect, useRef, useState } from 'react';
 import { LoaderCircle, MessageCircle } from 'lucide-react';
@@ -175,6 +176,9 @@ export function WeixinSettings() {
           加密保存，可随时解绑。
         </p>
       </div>
+      <Link href="/mini" className="mt-3 inline-block text-xs underline">
+        管理微信小程序登录绑定
+      </Link>
       {enabled === false && (
         <p className="mt-4 text-xs text-ink-faint">
           服务器尚未配置微信托管（WEIXIN_CREDENTIAL_KEY），请联系管理员。

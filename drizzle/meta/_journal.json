@@ -141,6 +141,13 @@
       "when": 1795912800000,
       "tag": "0019_read_cursor_event",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1795999200000,
+      "tag": "0020_weixin_mini",
+      "breakpoints": true
     }
   ]
 }

@@ -18,6 +18,7 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === 'seatbelt';
 const runtimeVars = Object.fromEntries(
   [
     'GITHUB_CLIENT_ID',
+    'WEIXIN_MINI_APP_ID',
     'GITHUB_APP_ID',
     'GITHUB_APP_SLUG',
     'PUBLIC_APP_ORIGIN',

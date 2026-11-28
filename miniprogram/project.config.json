@@ -1,0 +1,8 @@
+{
+  "description": "Kanby personal mini program",
+  "miniprogramRoot": "./",
+  "compileType": "miniprogram",
+  "appid": "touristappid",
+  "projectname": "kanby",
+  "setting": { "es6": true, "minified": true, "urlCheck": true }
+}

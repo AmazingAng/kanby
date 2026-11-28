@@ -1,0 +1,127 @@
+page {
+  background: #f5f4ef;
+  color: #20221d;
+  font-size: 30rpx;
+}
+.page {
+  padding: 36rpx 28rpx calc(40rpx + env(safe-area-inset-bottom));
+}
+.brand {
+  font-size: 42rpx;
+  font-weight: 700;
+  margin-bottom: 32rpx;
+}
+.brand .muted {
+  display: block;
+  margin-top: 8rpx;
+  font-weight: 400;
+}
+.card {
+  background: #fffefa;
+  border: 1rpx solid #e1e2da;
+  border-radius: 28rpx;
+  padding: 30rpx;
+  margin: 24rpx 0;
+}
+.title {
+  font-weight: 650;
+  font-size: 36rpx;
+  line-height: 1.5;
+  margin: 12rpx 0;
+}
+.muted {
+  color: #74776e;
+  font-size: 26rpx;
+  line-height: 1.6;
+}
+.paragraph {
+  margin: 20rpx 0;
+  line-height: 1.6;
+}
+.section {
+  font-weight: 650;
+  margin: 30rpx 0 18rpx;
+}
+button {
+  font-size: 28rpx;
+  margin-top: 20rpx;
+  border-radius: 20rpx;
+  background: #eeeee7;
+}
+button::after {
+  border: none;
+}
+button.primary {
+  background: #25291e;
+  color: #fff;
+}
+button[disabled] {
+  opacity: 0.5;
+}
+.criterion {
+  text-align: left;
+  white-space: normal;
+  line-height: 1.6;
+  padding: 20rpx;
+}
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  font-size: 26rpx;
+}
+.picker {
+  margin-top: 26rpx;
+  padding: 24rpx;
+  border-radius: 20rpx;
+  background: #e8ebdd;
+}
+.code {
+  word-break: break-all;
+  font-family: monospace;
+  padding: 20rpx;
+  background: #f2f3e8;
+  border-radius: 12rpx;
+}
+.error {
+  background: #ffe9df;
+  color: #843e24;
+  padding: 24rpx;
+  border-radius: 20rpx;
+  margin: 20rpx 0;
+}
+.description {
+  display: block;
+  white-space: pre-wrap;
+  line-height: 1.8;
+  margin: 28rpx 0;
+}
+.handoff {
+  background: #eff4d4;
+  padding: 24rpx;
+  border-radius: 18rpx;
+  line-height: 1.6;
+}
+.event {
+  border-bottom: 1rpx solid #e6e6df;
+  padding: 22rpx 0;
+  white-space: pre-wrap;
+  line-height: 1.7;
+}
+textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 160rpx;
+  padding: 20rpx;
+  margin-top: 24rpx;
+  background: #f5f4ef;
+  border-radius: 16rpx;
+}
+.footer {
+  text-align: center;
+  margin-top: 34rpx;
+}
+.back {
+  background: transparent;
+  text-align: left;
+  padding: 0;
+}
