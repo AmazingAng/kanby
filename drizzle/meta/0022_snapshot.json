@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "3219ef0c-e816-4ae8-8e57-b8e2ba37f4a2",
-  "prevId": "93945a80-be5e-42ef-a436-da653e6c488d",
+  "id": "e77bb75a-756f-47c2-8a9a-0dead751c127",
+  "prevId": "bbae71d4-e29b-4786-8dab-8b3575731aad",
   "tables": {
     "agent_idempotency_keys": {
       "name": "agent_idempotency_keys",
@@ -1704,6 +1704,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "sender_key": {
+          "name": "sender_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -1751,6 +1758,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
+          "autoincrement": false
+        },
+        "github_user_id": {
+          "name": "github_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         },
         "invited_by": {
