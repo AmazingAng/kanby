@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { POST, PATCH } from '@/app/api/v1/tasks/route';
 
@@ -155,6 +155,43 @@ describe('Agent mutation coordination', () => {
         .prepare('SELECT status FROM tasks WHERE id = ?')
         .get(task.id),
     ).toEqual({ status: 'shipped' });
+  });
+
+  it('never repeats a comment whose read-back fails after the commit', async () => {
+    const task = seedTask(database, { id: 'task-comment-readback' });
+    const prepare = database.prepare.bind(database);
+    const spy = vi
+      .spyOn(database, 'prepare')
+      .mockImplementation((query: string) => {
+        if (query.includes('FROM task_events WHERE id = ? AND project_id = ?'))
+          throw new Error('read-back down');
+        return prepare(query);
+      });
+    const comment = () =>
+      PATCH(
+        agentRequest(
+          tokenOne,
+          { id: task.id, action: 'comment', body: 'Only once' },
+          'comment-readback',
+        ),
+      );
+    try {
+      await expect(comment()).rejects.toThrow('read-back down');
+    } finally {
+      spy.mockRestore();
+    }
+    const retry = await comment();
+    expect(retry.status).toBe(500);
+    expect(await retry.json()).toMatchObject({
+      error: { code: 'failed_after_write' },
+    });
+    expect(
+      database.sqlite
+        .prepare(
+          "SELECT COUNT(*) AS n FROM task_events WHERE task_id = ? AND body = 'Only once'",
+        )
+        .get(task.id),
+    ).toEqual({ n: 1 });
   });
 
   it('takes over a pending key abandoned by a dead request and expires old keys', async () => {

@@ -1,7 +1,7 @@
 {
   "pages": ["pages/index/index"],
   "window": {
-    "navigationBarTitleText": "Kanby · 轮到我",
+    "navigationBarTitleText": "Kanby",
     "navigationBarBackgroundColor": "#f5f4ef",
     "navigationBarTextStyle": "black",
     "backgroundColor": "#f5f4ef",

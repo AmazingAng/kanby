@@ -10,6 +10,7 @@ function page(api: ReturnType<typeof vi.fn>, token = 'token') {
     comment: string;
     error: string;
     busy: boolean;
+    pairingCode: string;
   };
   type MiniPage = {
     data: Data;
@@ -55,6 +56,74 @@ function page(api: ReturnType<typeof vi.fn>, token = 'token') {
   return { instance, wx, storage };
 }
 describe('native mini page behavior', () => {
+  const template = readFileSync('miniprogram/pages/index/index.wxml', 'utf8');
+  // Check the actual template's condition against Page data, without pretending
+  // this small expression harness implements WeChat layout or lifecycle.
+  function visible(selector: RegExp, data: object) {
+    const tag = template.match(selector)?.[0];
+    if (!tag) throw new Error('Missing template region');
+    const value = tag.match(/wx:(?:if|elif)="([^"]*)"/)?.[1];
+    if (value === undefined) return true;
+    const expression = value.match(/^\{\{([\s\S]*)\}\}$/)?.[1];
+    return expression === undefined
+      ? Boolean(value)
+      : Boolean(runInNewContext(expression, data, { timeout: 100 }));
+  }
+  const loginRegion = /<view\b[^>]*id="login-panel"[^>]*>/;
+  const pairingRegion = /<block\b[^>]*id="pairing-panel"[^>]*>/;
+  it('binds all dynamic conditional directives instead of treating names as literal strings', () => {
+    const values = [...template.matchAll(/wx:(?:if|elif)="([^"]*)"/g)].map(
+      (match) => match[1],
+    );
+    expect(values.length).toBeGreaterThan(10);
+    for (const value of values) expect(value).toMatch(/^\{\{.+\}\}$/);
+  });
+  it('hides empty error and pairing panels on the initial login screen', () => {
+    const { instance } = page(vi.fn(), '');
+    expect(visible(/<view\b[^>]*class="error"[^>]*>/, instance.data)).toBe(
+      false,
+    );
+    expect(visible(loginRegion, instance.data)).toBe(true);
+    expect(visible(pairingRegion, instance.data)).toBe(false);
+  });
+  it('switches away from login and pairing after a bound user signs in', async () => {
+    const api = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 'unlinked',
+        pairingCode: 'my-pair-code',
+        expiresAt: Date.now() + 300000,
+      })
+      .mockResolvedValueOnce({ status: 'linked', token: 'real-session' })
+      .mockResolvedValueOnce({ projects: [], user: { name: 'Alice' } });
+    const { instance, storage } = page(api, '');
+    await instance.login();
+    expect(instance.data.authenticated).toBe(false);
+    expect(instance.data.pairingCode).toBe('my-pair-code');
+    expect(visible(pairingRegion, instance.data)).toBe(true);
+    await instance.login();
+    expect(storage.token).toBe('real-session');
+    expect(instance.data.authenticated).toBe(true);
+    expect(visible(loginRegion, instance.data)).toBe(false);
+    expect(visible(pairingRegion, instance.data)).toBe(false);
+    expect(visible(/<view\b[^>]*class="error"[^>]*>/, instance.data)).toBe(
+      false,
+    );
+  });
+  it('only offers acceptance for a building card', () => {
+    const acceptButton = /<button\b[^>]*bindtap="accept"[^>]*>/;
+    expect(visible(acceptButton, { task: { status: 'building' } })).toBe(true);
+    expect(visible(acceptButton, { task: { status: 'shipped' } })).toBe(false);
+    expect(visible(acceptButton, { task: { status: 'ideas' } })).toBe(false);
+  });
+  it('omits absent activity bodies instead of rendering null', () => {
+    const activityBody = /<text\b[^>]*class="event-body[^"]*"[^>]*>/;
+    expect(visible(activityBody, { item: { body: null } })).toBe(false);
+    expect(visible(activityBody, { item: { body: '' } })).toBe(false);
+    expect(visible(activityBody, { item: { body: 'A real comment' } })).toBe(
+      true,
+    );
+  });
   it('preserves notification task through first login and loads its detail', async () => {
     const api = vi.fn(async (path: string) =>
       path === 'auth'
