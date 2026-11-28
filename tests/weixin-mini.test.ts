@@ -886,3 +886,392 @@ it('does not report successful login when the binding is removed before session 
     db.sqlite.prepare('SELECT COUNT(*) AS n FROM mini_sessions').get(),
   ).toEqual({ n: 0 });
 });
+
+describe('mini board and scoped detail regressions', () => {
+  async function get(token: string, query: string) {
+    return tasks.GET(
+      request(`tasks?projectId=project-1&${query}`, 'GET', undefined, token),
+    );
+  }
+
+  function seedOtherTasks() {
+    seedTask(db, { id: 'task-building' });
+    seedTask(db, { id: 'task-shipped' });
+    seedTask(db, { id: 'task-archived' });
+    seedTask(db, { id: 'task-foreign' });
+    db.sqlite.exec(`
+      INSERT INTO projects (id,name,slug,owner_id,created_at,updated_at)
+        VALUES ('project-2','Other','other','user-1',1,1);
+      UPDATE tasks SET task_number=99 WHERE id='task-00000001';
+      UPDATE tasks SET status='building',task_number=100 WHERE id='task-building';
+      UPDATE tasks SET status='shipped',task_number=101 WHERE id='task-shipped';
+      UPDATE tasks SET archived_at=1,task_number=102 WHERE id='task-archived';
+      UPDATE tasks SET project_id='project-2',task_number=103 WHERE id='task-foreign';
+    `);
+  }
+
+  it('returns the complete active board across all columns while keeping the default queue unchanged', async () => {
+    const token = await paired();
+    seedOtherTasks();
+    const { listTasks } = await import('@/lib/db');
+    const expected = JSON.parse(JSON.stringify(await listTasks('project-1')));
+    const response = await get(token, 'view=board');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ tasks: expected });
+    expect(expected.map((task: { id: string }) => task.id)).toEqual([
+      'task-00000001',
+      'task-building',
+      'task-shipped',
+    ]);
+    expect(await (await get(token, '')).json()).toEqual({ items: [] });
+    expect(await (await get(token, 'view=unknown')).json()).toEqual({
+      items: [],
+    });
+    expect(
+      await (await get(token, 'view=board&taskId=KANBY-99')).json(),
+    ).toMatchObject({
+      task: { id: 'task-00000001' },
+      activity: { items: [], nextCursor: null },
+    });
+  });
+
+  it('requires mini authentication and current membership for board and detail', async () => {
+    const token = await paired();
+    expect((await get('', 'view=board')).status).toBe(401);
+    expect(
+      (
+        await tasks.GET(
+          request(
+            'tasks?projectId=foreign&view=board',
+            'GET',
+            undefined,
+            token,
+          ),
+        )
+      ).status,
+    ).toBe(403);
+    expect((await get(token, 'view=board')).status).toBe(200);
+    db.sqlite.exec("DELETE FROM project_members WHERE user_id='user-1'");
+    for (const query of [
+      'view=board',
+      'taskId=task-00000001',
+      'taskId=KANBY-99',
+    ]) {
+      expect((await get(token, query)).status).toBe(403);
+    }
+  });
+
+  it('excludes archived and foreign tasks by id and reference for both reads and writes', async () => {
+    const token = await paired();
+    seedOtherTasks();
+    for (const id of [
+      'task-archived',
+      'KANBY-102',
+      'task-foreign',
+      'KANBY-103',
+      'KANBY-099',
+      'kanby-99',
+      'KANBY-99junk',
+      'KANBY-9007199254740993',
+      "' OR 1=1 --",
+    ]) {
+      expect(
+        (await get(token, `taskId=${encodeURIComponent(id)}`)).status,
+        id,
+      ).toBe(404);
+      expect(
+        (
+          await tasks.POST(
+            request(
+              'tasks',
+              'POST',
+              {
+                action: 'comment',
+                projectId: 'project-1',
+                taskId: id,
+                body: 'must not write',
+              },
+              token,
+            ),
+          )
+        ).status,
+        id,
+      ).toBe(404);
+    }
+    // A number reused in another project must still resolve only the member's task.
+    db.sqlite.exec("UPDATE tasks SET task_number=99 WHERE id='task-foreign'");
+    for (const id of ['task-00000001', 'KANBY-99']) {
+      expect(await (await get(token, `taskId=${id}`)).json()).toMatchObject({
+        task: { id: 'task-00000001' },
+      });
+    }
+    expect(
+      db.sqlite.prepare('SELECT COUNT(*) AS n FROM task_events').get(),
+    ).toEqual({ n: 0 });
+  });
+
+  async function seedCompleteTask() {
+    const { seedAgentToken } = await import('./support/fixtures');
+    const { appendTaskActivity } = await import('@/lib/task-activity');
+    seedTask(db, { id: 'task-parent', title: 'Archived parent' });
+    seedAgentToken(db, 'agent-1', 'secret', 'Codex');
+    db.sqlite.exec(`
+      INSERT INTO users VALUES ('user-2','bob','Bob',NULL,1,1);
+      INSERT INTO project_members VALUES ('project-1','user-2','member',1);
+      UPDATE tasks SET archived_at=1 WHERE id='task-parent';
+      UPDATE tasks SET task_number=99,parent_task_id='task-parent',due='2026-12-01',
+        note='Full detail',turn_kind='member',turn_user_id='user-2',
+        turn_reason='awaiting_acceptance',turn_since=1 WHERE id='task-00000001';
+      INSERT INTO task_assignees VALUES ('project-1','task-00000001','user-2',0,1),('project-1','task-00000001','user-1',1,1);
+      INSERT INTO task_attachments VALUES ('attachment-1','project-1','task-00000001','object-1','proof.txt','text/plain',12,'user-1',1);
+      INSERT INTO task_acceptance_items VALUES ('criterion-1','project-1','task-00000001','Verify',1,0,'user-1',1,2);
+      INSERT INTO github_repositories (id,installation_id,name,full_name,html_url,default_branch,private,updated_at) VALUES ('repo-1','install-1','kanby','org/kanby','https://github.com/org/kanby','main',0,1);
+      INSERT INTO github_task_links VALUES ('task-00000001','project-1','repo-1','pull_request',42,NULL,'https://github.com/org/kanby/pull/42','Fix','open','success',1);
+    `);
+    db.sqlite
+      .prepare('INSERT INTO task_agent_claims VALUES (?,?,?,?,?,?,?)')
+      .run(
+        'task-00000001',
+        'project-1',
+        'agent-1',
+        'Codex',
+        Date.now() + 60_000,
+        100,
+        200,
+      );
+    for (const [id, createdAt, body] of [
+      ['old', 99, 'Previous lease'],
+      ['current', 101, 'Current progress'],
+    ] as const) {
+      await appendTaskActivity({
+        id,
+        projectId: 'project-1',
+        taskId: 'task-00000001',
+        source: 'agent',
+        kind: 'agent.progress',
+        actorName: 'Codex',
+        summary: 'Progress',
+        body,
+        createdAt,
+      });
+    }
+  }
+
+  it('preserves all TaskRecord relationships, turn and live agent state by id and reference', async () => {
+    const token = await paired();
+    await seedCompleteTask();
+    const { listTasks } = await import('@/lib/db');
+    const expected = JSON.parse(
+      JSON.stringify((await listTasks('project-1'))[0]),
+    );
+    expect(expected).toMatchObject({
+      parent: { id: 'task-parent', archived: true },
+      owners: [{ id: 'user-2' }, { id: 'user-1' }],
+      attachments: [{ id: 'attachment-1' }],
+      acceptanceCriteria: [{ id: 'criterion-1', completed: true }],
+      githubLink: { number: 42 },
+      agentState: {
+        agentLabel: 'Alice 的 Codex',
+        latestProgress: 'Current progress',
+        latestProgressAt: 101,
+      },
+      turn: { kind: 'member' },
+    });
+    for (const id of ['task-00000001', 'KANBY-99']) {
+      const response = await get(token, `taskId=${id}`);
+      expect(response.status).toBe(200);
+      expect(((await response.json()) as { task: unknown }).task).toEqual(
+        expected,
+      );
+    }
+    db.sqlite.exec('UPDATE task_agent_claims SET lease_expires_at=1');
+    expect(
+      ((await (await get(token, 'taskId=KANBY-99')).json()) as { task: object })
+        .task,
+    ).not.toHaveProperty('agentState');
+  });
+
+  it('starts agent state and all five relationship reads before awaiting any of them', async () => {
+    const token = await paired();
+    await seedCompleteTask();
+    const started = new Set<string>();
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const prepare = db.prepare.bind(db);
+    const spy = vi.spyOn(db, 'prepare').mockImplementation((query) => {
+      const statement = prepare(query);
+      const table =
+        /FROM (task_agent_claims|task_attachments|task_acceptance_items|task_assignees|github_task_links)\b/.exec(
+          query,
+        )?.[1] ??
+        (query.startsWith(
+          'SELECT id, title, archived_at FROM tasks WHERE id = ?',
+        )
+          ? 'parent'
+          : undefined);
+      if (table) {
+        const bind = statement.bind.bind(statement);
+        vi.spyOn(statement, 'bind').mockImplementation((...values) => {
+          const bound = bind(...values);
+          const first = bound.first.bind(bound);
+          const all = bound.all.bind(bound);
+          bound.first = async <T>(columnName?: string) => {
+            const result = await first<T>(columnName);
+            started.add(table);
+            await gate;
+            return result;
+          };
+          bound.all = async <T>() => {
+            const result = await all<T>();
+            started.add(table);
+            await gate;
+            return result;
+          };
+          return bound;
+        });
+      }
+      return statement;
+    });
+    const pending = get(token, 'taskId=KANBY-99');
+    try {
+      // Let authentication and real SQLite reads settle, while all six results are held.
+      await vi.waitFor(() => expect(started.size).toBeGreaterThan(0));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect([...started].sort()).toEqual([
+        'github_task_links',
+        'parent',
+        'task_acceptance_items',
+        'task_agent_claims',
+        'task_assignees',
+        'task_attachments',
+      ]);
+    } finally {
+      release();
+      await pending;
+      spy.mockRestore();
+    }
+    expect((await pending).status).toBe(200);
+  });
+
+  it.each(['task-00000001', 'KANBY-99'])(
+    'keeps detail query scope and returned row cost bounded for %s',
+    async (reference) => {
+      const token = await paired();
+      await seedCompleteTask();
+      const prepare = db.sqlite.prepare.bind(db.sqlite);
+      const reads: Array<{ sql: string; rows: number; plan: string[] }> = [];
+      const spy = vi.spyOn(db.sqlite, 'prepare').mockImplementation((sql) => {
+        const statement = prepare(sql);
+        if (/^\s*SELECT/i.test(sql)) {
+          function record(
+            rows: number,
+            values: Parameters<typeof statement.all>,
+          ) {
+            reads.push({
+              sql,
+              rows,
+              plan: prepare(`EXPLAIN QUERY PLAN ${sql}`)
+                .all(...values)
+                .map((row) => String(row.detail)),
+            });
+          }
+          const all = statement.all.bind(statement);
+          const first = statement.get.bind(statement);
+          vi.spyOn(statement, 'all').mockImplementation((...values) => {
+            const result = all(...values);
+            record(result.length, values);
+            return result;
+          });
+          vi.spyOn(statement, 'get').mockImplementation((...values) => {
+            const result = first(...values);
+            record(Number(result !== undefined), values);
+            return result;
+          });
+        }
+        return statement;
+      });
+      async function measure() {
+        reads.length = 0;
+        expect((await get(token, `taskId=${reference}`)).status).toBe(200);
+        return reads.map((read) => ({ ...read }));
+      }
+      const before = await measure();
+      for (let i = 0; i < 150; i++) {
+        const id = `unrelated-${i}`;
+        seedTask(db, { id });
+        db.sqlite
+          .prepare('INSERT INTO task_assignees VALUES (?,?,?,?,?)')
+          .run('project-1', id, 'user-1', 0, 1);
+        db.sqlite
+          .prepare('INSERT INTO task_attachments VALUES (?,?,?,?,?,?,?,?,?)')
+          .run(
+            `a-${i}`,
+            'project-1',
+            id,
+            `o-${i}`,
+            'other.txt',
+            'text/plain',
+            1,
+            'user-1',
+            1,
+          );
+        db.sqlite
+          .prepare(
+            'INSERT INTO task_acceptance_items VALUES (?,?,?,?,?,?,?,?,?)',
+          )
+          .run(`c-${i}`, 'project-1', id, 'Other', 0, 0, 'user-1', 1, 1);
+        db.sqlite
+          .prepare('INSERT INTO task_agent_claims VALUES (?,?,?,?,?,?,?)')
+          .run(
+            id,
+            'project-1',
+            'agent-1',
+            'Codex',
+            Date.now() + 60_000,
+            100,
+            200,
+          );
+        db.sqlite
+          .prepare(
+            'INSERT INTO github_task_links VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+          )
+          .run(
+            id,
+            'project-1',
+            'repo-1',
+            'issue',
+            i,
+            null,
+            'https://github.com/org/kanby/issues/1',
+            'Other',
+            'open',
+            null,
+            1,
+          );
+      }
+      const after = await measure();
+      spy.mockRestore();
+      expect(after.map(({ sql, rows }) => ({ sql, rows }))).toEqual(
+        before.map(({ sql, rows }) => ({ sql, rows })),
+      );
+      const taskReads = after.filter(({ sql }) =>
+        /FROM (?:tasks|task_attachments|task_acceptance_items|task_assignees|github_task_links|task_agent_claims)\b/i.test(
+          sql,
+        ),
+      );
+      expect(taskReads.length).toBeGreaterThanOrEqual(6);
+      for (const read of taskReads) {
+        expect(read.rows, read.sql).toBeLessThanOrEqual(2);
+        expect(
+          read.sql,
+          'Every task/relationship read must select one task or parent',
+        ).toMatch(/\b(?:task_id|task_number|id)\s*=\s*\?/);
+        expect(read.plan.join('\n'), read.sql).not.toMatch(
+          /\bSCAN (?:t|tasks|ta|task_attachments|task_acceptance_items|gtl|c|recent)\b/,
+        );
+      }
+    },
+  );
+});

@@ -1,6 +1,7 @@
 import {
   AcceptanceCriterionRevisionConflictError,
   getProjectRole,
+  getTask,
   listProjects,
   listTasks,
   TaskRevisionConflictError,
@@ -27,9 +28,7 @@ async function project(userId: string, value: unknown) {
 }
 async function taskInProject(projectId: string, value: unknown) {
   const id = miniString(value);
-  const task = (await listTasks(projectId)).find(
-    (t) => t.id === id || `KANBY-${t.number}` === id,
-  );
+  const task = await getTask(projectId, id);
   if (!task) throw new MiniError(404, '卡片不存在或已归档');
   return task;
 }
@@ -40,6 +39,8 @@ export async function GET(request: Request) {
     if (!query.has('projectId'))
       return miniJson({ user, projects: await listProjects(user.id) });
     const projectId = await project(user.id, query.get('projectId'));
+    if (!query.has('taskId') && query.get('view') === 'board')
+      return miniJson({ tasks: await listTasks(projectId) });
     if (!query.has('taskId'))
       return miniJson({
         items: await listTurnQueue({ projectId, userId: user.id }),
