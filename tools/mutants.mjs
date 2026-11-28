@@ -265,8 +265,8 @@ const mutations = [
   {
     name: 'create note preserves deadline',
     file: 'app/api/v1/tasks/route.ts',
-    from: 'due: task.due,\n          tag: task.tag,',
-    to: 'due: undefined,\n          tag: task.tag,',
+    from: '        status,\n        due,\n        note:',
+    to: '        status,\n        due: undefined,\n        note:',
     test: 'tests/agent-deadline-workflow.test.ts',
   },
   {
@@ -382,10 +382,24 @@ const mutations = [
     test: 'tests/github-oauth-callback.test.ts',
   },
   {
+    name: 'stale session cookie cannot take a login',
+    file: 'lib/db.ts',
+    from: 'SELECT ?, CASE WHEN EXISTS (SELECT 1 FROM users WHERE login = ? AND id != ?)',
+    to: 'SELECT ?, CASE WHEN 0 AND EXISTS (SELECT 1 FROM users WHERE login = ? AND id != ?)',
+    test: 'tests/github-login-rename.test.ts',
+  },
+  {
+    name: 'bound invitation needs its GitHub id',
+    file: 'lib/db.ts',
+    from: '       OR (github_user_id IS NULL AND identity IN (SELECT value FROM json_each(?)))\n       )`,\n    )\n    .bind(userId,',
+    to: '       OR (identity IN (SELECT value FROM json_each(?)))\n       )`,\n    )\n    .bind(userId,',
+    test: 'tests/github-login-rename.test.ts',
+  },
+  {
     name: 'pending invitation excludes accepted history',
     file: 'lib/db.ts',
-    from: '`SELECT 1 AS found FROM project_invitations WHERE accepted_at IS NULL AND identity IN (${placeholders}) LIMIT 1`',
-    to: '`SELECT 1 AS found FROM project_invitations WHERE accepted_at IS NOT NULL AND identity IN (${placeholders}) LIMIT 1`',
+    from: '`SELECT 1 AS found FROM project_invitations WHERE accepted_at IS NULL AND (',
+    to: '`SELECT 1 AS found FROM project_invitations WHERE accepted_at IS NOT NULL AND (',
     test: 'tests/github-oauth-callback.test.ts',
   },
   {

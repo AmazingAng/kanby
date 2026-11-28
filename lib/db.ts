@@ -453,10 +453,12 @@ async function acceptInvitations(userId: string, identities: string[]) {
 async function claimLegacyProject(userId: string, now: number) {
   const db = database();
   const membership = await db
-    .prepare('SELECT 1 AS found FROM project_members WHERE user_id = ? LIMIT 1')
+    .prepare(
+      'SELECT 1 AS member FROM project_members WHERE user_id = ? LIMIT 1',
+    )
     .bind(userId)
-    .first<{ found: number }>();
-  if (membership?.found) return;
+    .first<{ member: number }>();
+  if (membership?.member) return;
   const legacy = await db
     .prepare("SELECT owner_id FROM projects WHERE id = 'legacy'")
     .first<{ owner_id: string | null }>();

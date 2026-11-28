@@ -9,12 +9,16 @@
 
 ## 本次变更需要的部署动作
 
-- `drizzle/0021_review_integrity.sql`：3 条语句，全部追加式。
+- `drizzle/0021_review_integrity.sql`：5 条语句，全部追加式。
   - `github_redelivery_attempts.attempt_count`（`NOT NULL DEFAULT 1`）：按 GUID
     限制向 GitHub 请求重投的次数。
-  - `notification_deliveries.recipient_key` 及索引
-    `idx_notification_deliveries_recipient`：按接收人合并、限流通知。旧记录为
-    NULL，不参与限流，无需回填。
+  - `notification_deliveries.recipient_key`、`sender_key` 及索引
+    `idx_notification_deliveries_recipient`：按接收人/项目/发送人合并、限流通知。
+    旧记录为 NULL，不参与限流，无需回填。
+  - `project_invitations.github_user_id`：按 GitHub 用户 id 绑定的邀请。旧邀请为
+    NULL，仍按「OAuth 登录时的最新登录名或已验证邮箱」接受。
+  - 迁移日志里 0021 的 `when` 晚于 0020（之前生成的早于 0020，会被 drizzle 迁移器
+    跳过；本流程按文件手工应用，不受影响，但已修正）。
 - 不新增 Worker secret、不新增环境变量。
 - 不新增定时任务；现有 `*/10 * * * *` 恢复任务保留。
 - 代码必须与迁移一起上线：新代码写入 `recipient_key`、`attempt_count`，
@@ -54,7 +58,7 @@ fs.writeFileSync(
 );'
 ```
 
-共 4 条语句，在每批 40 条、1 MiB 的限制内。
+共 6 条语句（含 `d1_migrations` 记录），在每批 40 条、1 MiB 的限制内。
 
 ## 预览
 
@@ -65,6 +69,7 @@ fs.writeFileSync(
       `0021_review_integrity.json`，期望 `{ok: true}`；重发期望 `replay: true`。
 - [ ] 验证：`SELECT name FROM pragma_table_info('notification_deliveries') WHERE name = 'recipient_key'`、
       `SELECT name FROM pragma_table_info('github_redelivery_attempts') WHERE name = 'attempt_count'`、
+      `SELECT name FROM pragma_table_info('project_invitations') WHERE name = 'github_user_id'`、
       `SELECT name FROM sqlite_master WHERE name = 'idx_notification_deliveries_recipient'`。
 - [ ] 构建并推送正常制品，删除迁移 secrets，确认 `/__kanby_migration` 返回 404，
       确认预览恢复 schedule 仍为暂停。
@@ -74,6 +79,8 @@ fs.writeFileSync(
   - [ ] 编辑器冲突时出现「加载最新 / 复制我的内容 / 放弃我的修改」，放弃后能关闭。
   - [ ] 在设置页选择超过 99 个仓库后保存成功（如测试账号有这么多仓库）。
   - [ ] 邀请一个不存在的 GitHub 用户名，提示找不到用户。
+  - [ ] 邀请一个尚未注册的 GitHub 用户名后，`project_invitations.github_user_id` 有值。
+  - [ ] 快速连续拖动同一张卡两次，不出现冲突提示，顺序不回跳。
   - [ ] /mini：绑定前显示微信识别码；绑定后显示识别码、绑定时间、最近登录和会话
         列表，可单独退出会话；绑定后收到微信或个人机器人通知。
   - [ ] 设置页 GitHub「补同步历史」不移动任何卡片。
@@ -82,8 +89,8 @@ fs.writeFileSync(
 
 - [ ] 暂停生产恢复 schedule，完整备份数据库（表、行数、规范化行内容）。
 - [ ] 部署维护制品，应用 0021（同上，主机换成生产）。
-- [ ] 比对：所有业务表与备份逐表一致；预期差异只有两张表多出的新列（旧行
-      `recipient_key` 为 NULL、`attempt_count` 为 1）。
+- [ ] 比对：所有业务表与备份逐表一致；预期差异只有三张表多出的新列（旧行
+      `recipient_key`/`sender_key`/`github_user_id` 为 NULL、`attempt_count` 为 1）。
 - [ ] promote **预览验收过的同一个正常制品**，删除迁移 secrets，确认
       `/__kanby_migration` 返回 404。
 - [ ] 恢复生产 schedule 并立即运行一次，确认返回成功（这同时验证了新签名）；确认
