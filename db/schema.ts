@@ -397,6 +397,7 @@ export const githubRedeliveryAttempts = sqliteTable(
     deliveryId: text('delivery_id').primaryKey(),
     guid: text('guid').notNull(),
     attemptedAt: integer('attempted_at').notNull(),
+    attemptCount: integer('attempt_count').notNull().default(1),
   },
   (table) => [uniqueIndex('idx_github_redelivery_guid').on(table.guid)],
 );

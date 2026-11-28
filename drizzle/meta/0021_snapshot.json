@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "6d436791-e9fd-408a-b0b3-0225cfb38698",
+  "id": "93945a80-be5e-42ef-a436-da653e6c488d",
   "prevId": "e0546a4c-e232-4e07-b1c2-6fafc2ce37bc",
   "tables": {
     "agent_idempotency_keys": {
@@ -750,6 +750,14 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "attempt_count": {
+          "name": "attempt_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
         }
       },
       "indexes": {
