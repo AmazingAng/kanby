@@ -102,6 +102,7 @@ type GitHubDiagnostics = {
   failures: Array<{
     id: string;
     event: string;
+    abandoned?: boolean;
     attempts: number;
     error: string | null;
     updatedAt: number;
@@ -901,6 +902,9 @@ export function SettingsApp() {
                             <p className="mt-3 truncate border-t border-ink/10 pt-3 text-[10px] text-[#9d3026]">
                               最近失败：{githubDiagnostics.failures[0].event} ·
                               尝试 {githubDiagnostics.failures[0].attempts} 次 ·{' '}
+                              {githubDiagnostics.failures[0].abandoned
+                                ? '已停止重试 · '
+                                : ''}
                               {githubDiagnostics.failures[0].error ??
                                 '等待重试'}
                             </p>

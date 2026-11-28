@@ -55,7 +55,7 @@ export async function recoverGitHubAppDeliveries() {
       await redeliverGitHubAppDelivery(config, delivery.id);
       requested += 1;
     } catch (error) {
-      await releaseGitHubRedelivery(delivery.id);
+      await releaseGitHubRedelivery(delivery.guid);
       throw error;
     }
   }
