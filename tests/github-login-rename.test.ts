@@ -178,7 +178,7 @@ describe('GitHub login renames', () => {
       login: 'Foo',
     });
     expect(
-      (fetchMock.mock.calls[0]?.[0] as Request).headers.get('Authorization'),
+      (fetchMock.mock.calls[0]![0] as Request).headers.get('Authorization'),
     ).toBe('Bearer token');
     expect(await resolveGitHubLogin('foo')).toEqual({ kind: 'unavailable' });
     expect(await resolveGitHubLogin('foo')).toEqual({ kind: 'unavailable' });
