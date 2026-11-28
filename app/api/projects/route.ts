@@ -7,7 +7,7 @@ import {
   createProject,
   getProjectRole,
   listProjects,
-  registerUserAndAcceptInvitations,
+  touchSessionUser,
   renameProject,
 } from '@/lib/db';
 import {
@@ -20,7 +20,7 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: Request) {
   const user = await getSessionUser(request);
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-  await registerUserAndAcceptInvitations(user);
+  await touchSessionUser(user);
   return Response.json(
     { projects: await listProjects(user.id) },
     { headers: { 'Cache-Control': 'no-store' } },

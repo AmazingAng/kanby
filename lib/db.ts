@@ -306,18 +306,23 @@ function mapTaskGitHubLink(row: TaskGitHubLinkRow): TaskGitHubLinkRecord {
 export async function hasPendingProjectInvitation(
   username: string,
   emails: string[],
+  githubUserId?: string,
 ): Promise<boolean> {
   await ensureSchema();
   const identities = [username, ...emails]
     .map((identity) => identity.trim().toLowerCase())
     .filter(Boolean);
-  if (identities.length === 0) return false;
-  const placeholders = identities.map(() => '?').join(', ');
+  if (identities.length === 0 && !githubUserId) return false;
+  // Same matching as acceptance: an invitation bound to another GitHub id
+  // does not admit whoever now holds that login.
   const row = await database()
     .prepare(
-      `SELECT 1 AS found FROM project_invitations WHERE accepted_at IS NULL AND identity IN (${placeholders}) LIMIT 1`,
+      `SELECT 1 AS found FROM project_invitations WHERE accepted_at IS NULL AND (
+         github_user_id = ?
+         OR (github_user_id IS NULL AND identity IN (SELECT value FROM json_each(?)))
+       ) LIMIT 1`,
     )
-    .bind(...identities)
+    .bind(githubUserId ?? null, JSON.stringify(identities))
     .first<{ found: number }>();
   return Boolean(row?.found);
 }
@@ -344,86 +349,130 @@ function releaseStaleLogin(db: D1Database, login: string, ownerId: string) {
     .bind(login, ownerId);
 }
 
-export async function registerUserAndAcceptInvitations(
+/**
+ * Sign-in through GitHub OAuth, with the profile GitHub just returned. Only
+ * this path may move a login between rows: GitHub logins can be renamed and
+ * reused, so another row still holding this login is stale and is released
+ * (to a value no GitHub login can take) before this user claims it. Login- or
+ * e-mail-addressed invitations are accepted only here, from fresh data.
+ */
+export async function registerOAuthUser(
   user: AuthUser,
   emails: string[] = [],
 ): Promise<void> {
   await ensureSchema();
   const db = database();
   const now = Date.now();
-  // Users are keyed by the immutable GitHub user id. GitHub logins can be
-  // renamed and reused, so another row still holding this login is stale:
-  // release it (to a value no GitHub login can take) before claiming it.
+  const login = user.login.toLowerCase();
   await db.batch([
-    releaseStaleLogin(db, user.login.toLowerCase(), user.id),
+    releaseStaleLogin(db, login, user.id),
     db
       .prepare(
         `INSERT INTO users (id, login, name, avatar_url, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET login = excluded.login, name = excluded.name, avatar_url = excluded.avatar_url, updated_at = excluded.updated_at`,
       )
-      .bind(
-        user.id,
-        user.login.toLowerCase(),
-        user.name,
-        user.avatarUrl,
-        now,
-        now,
-      ),
+      .bind(user.id, login, user.name, user.avatarUrl, now, now),
   ]);
+  await acceptInvitations(user.id, [login, ...emails]);
+  await claimLegacyProject(user.id, now);
+}
 
-  const identities = [user.login, ...emails]
+/**
+ * Keeps the row of a user with a valid session cookie. The cookie's login may
+ * be up to 30 days stale, so this updates by id only and never writes a login
+ * that another row holds; only invitations bound to this GitHub id are
+ * accepted.
+ */
+export async function touchSessionUser(user: AuthUser): Promise<void> {
+  await ensureSchema();
+  const db = database();
+  const now = Date.now();
+  const login = user.login.toLowerCase();
+  await db
+    .prepare(
+      `INSERT INTO users (id, login, name, avatar_url, created_at, updated_at)
+     SELECT ?, CASE WHEN EXISTS (SELECT 1 FROM users WHERE login = ? AND id != ?)
+                    THEN '${STALE_LOGIN_PREFIX}' || ? ELSE ? END, ?, ?, ?, ?
+     WHERE 1
+     ON CONFLICT(id) DO UPDATE SET name = excluded.name, avatar_url = excluded.avatar_url, updated_at = excluded.updated_at`,
+    )
+    .bind(
+      user.id,
+      login,
+      user.id,
+      user.id,
+      login,
+      user.name,
+      user.avatarUrl,
+      now,
+      now,
+    )
+    .run();
+  await acceptInvitations(user.id, []);
+  await claimLegacyProject(user.id, now);
+}
+
+/**
+ * Accepts pending invitations for this GitHub user: those bound to its id
+ * (resolved when the invitation was made), plus unbound ones addressed to one
+ * of `identities` (fresh OAuth login / verified e-mails). An invitation bound
+ * to another id is never accepted by whoever now holds that login.
+ */
+async function acceptInvitations(userId: string, identities: string[]) {
+  const db = database();
+  const now = Date.now();
+  const normalized = identities
     .map((identity) => identity.trim().toLowerCase())
     .filter(Boolean);
-  if (identities.length > 0) {
-    const placeholders = identities.map(() => '?').join(', ');
-    const invitations = await db
-      .prepare(
-        `SELECT id, project_id FROM project_invitations WHERE accepted_at IS NULL AND identity IN (${placeholders})`,
-      )
-      .bind(...identities)
-      .all<{ id: string; project_id: string }>();
-    if (invitations.results.length > 0) {
-      await db.batch(
-        invitations.results.flatMap((invitation) => [
-          db
-            .prepare(
-              'INSERT OR IGNORE INTO project_members (project_id, user_id, role, created_at) VALUES (?, ?, ?, ?)',
-            )
-            .bind(invitation.project_id, user.id, 'member', now),
-          db
-            .prepare(
-              'UPDATE project_invitations SET accepted_at = ? WHERE id = ?',
-            )
-            .bind(now, invitation.id),
-        ]),
-      );
-    }
-  }
+  const invitations = await db
+    .prepare(
+      `SELECT id, project_id FROM project_invitations
+       WHERE accepted_at IS NULL AND (
+         github_user_id = ?
+         OR (github_user_id IS NULL AND identity IN (SELECT value FROM json_each(?)))
+       )`,
+    )
+    .bind(userId, JSON.stringify(normalized))
+    .all<{ id: string; project_id: string }>();
+  if (invitations.results.length === 0) return;
+  await db.batch(
+    invitations.results.flatMap((invitation) => [
+      db
+        .prepare(
+          'INSERT OR IGNORE INTO project_members (project_id, user_id, role, created_at) VALUES (?, ?, ?, ?)',
+        )
+        .bind(invitation.project_id, userId, 'member', now),
+      db
+        .prepare('UPDATE project_invitations SET accepted_at = ? WHERE id = ?')
+        .bind(now, invitation.id),
+    ]),
+  );
+}
 
+async function claimLegacyProject(userId: string, now: number) {
+  const db = database();
   const membership = await db
     .prepare('SELECT 1 AS found FROM project_members WHERE user_id = ? LIMIT 1')
-    .bind(user.id)
+    .bind(userId)
     .first<{ found: number }>();
-  if (!membership?.found) {
-    const legacy = await db
-      .prepare("SELECT owner_id FROM projects WHERE id = 'legacy'")
-      .first<{ owner_id: string | null }>();
-    if (legacy && !legacy.owner_id) {
-      await db.batch([
-        db
-          .prepare(
-            "UPDATE projects SET owner_id = ?, updated_at = ? WHERE id = 'legacy' AND owner_id IS NULL",
-          )
-          .bind(user.id, now),
-        db
-          .prepare(
-            "INSERT OR IGNORE INTO project_members (project_id, user_id, role, created_at) VALUES ('legacy', ?, 'owner', ?)",
-          )
-          .bind(user.id, now),
-      ]);
-    }
-  }
+  if (membership?.found) return;
+  const legacy = await db
+    .prepare("SELECT owner_id FROM projects WHERE id = 'legacy'")
+    .first<{ owner_id: string | null }>();
+  if (!legacy || legacy.owner_id) return;
+  await db.batch([
+    db
+      .prepare(
+        "UPDATE projects SET owner_id = ?, updated_at = ? WHERE id = 'legacy' AND owner_id IS NULL",
+      )
+      .bind(userId, now),
+    db
+      .prepare(
+        "INSERT OR IGNORE INTO project_members (project_id, user_id, role, created_at) VALUES ('legacy', ?, 'owner', ?)",
+      )
+      .bind(userId, now),
+  ]);
 }
 
 export async function listProjects(userId: string): Promise<ProjectRecord[]> {
@@ -465,7 +514,7 @@ export async function createProject(
   user: AuthUser,
   name: string,
 ): Promise<ProjectRecord> {
-  await registerUserAndAcceptInvitations(user);
+  await touchSessionUser(user);
   const db = database();
   const id = crypto.randomUUID();
   const slug = await uniqueProjectSlug(db, name, id);
@@ -589,6 +638,7 @@ export async function inviteProjectMember(
   const normalized = identity.trim().toLowerCase().replace(/^@/, '');
   const db = database();
   const now = Date.now();
+  let githubUserId: string | null = null;
   if (!normalized.includes('@')) {
     const resolution = resolveLogin
       ? await resolveLogin(normalized)
@@ -613,15 +663,23 @@ export async function inviteProjectMember(
         );
       await db.batch(statements);
       if (holder) return 'added';
+      githubUserId = resolution.id;
     }
   }
   await db
     .prepare(
-      `INSERT INTO project_invitations (id, project_id, identity, invited_by, created_at, accepted_at)
-     VALUES (?, ?, ?, ?, ?, NULL)
-     ON CONFLICT(project_id, identity) DO UPDATE SET invited_by = excluded.invited_by, created_at = excluded.created_at, accepted_at = NULL`,
+      `INSERT INTO project_invitations (id, project_id, identity, github_user_id, invited_by, created_at, accepted_at)
+     VALUES (?, ?, ?, ?, ?, ?, NULL)
+     ON CONFLICT(project_id, identity) DO UPDATE SET github_user_id = excluded.github_user_id, invited_by = excluded.invited_by, created_at = excluded.created_at, accepted_at = NULL`,
     )
-    .bind(crypto.randomUUID(), projectId, normalized, invitedBy, now)
+    .bind(
+      crypto.randomUUID(),
+      projectId,
+      normalized,
+      githubUserId,
+      invitedBy,
+      now,
+    )
     .run();
   return 'invited';
 }

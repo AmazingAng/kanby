@@ -4,7 +4,8 @@ import { POST as inviteMember } from '@/app/api/members/route';
 import { createSessionToken, SESSION_COOKIE } from '@/lib/auth';
 import {
   inviteProjectMember,
-  registerUserAndAcceptInvitations,
+  registerOAuthUser,
+  touchSessionUser,
 } from '@/lib/db';
 import { resolveGitHubLogin } from '@/lib/github';
 
@@ -45,14 +46,14 @@ describe('GitHub login renames', () => {
   });
 
   it('lets a new holder of a renamed login sign in and refreshes logins by id', async () => {
-    await registerUserAndAcceptInvitations({
+    await registerOAuthUser({
       id: '100',
       login: 'foo',
       name: 'Old Foo',
       avatarUrl: null,
     });
     // GitHub user 100 renamed to "bar"; user 200 now owns "foo".
-    await registerUserAndAcceptInvitations({
+    await registerOAuthUser({
       id: '200',
       login: 'Foo',
       name: 'New Foo',
@@ -63,7 +64,7 @@ describe('GitHub login renames', () => {
       { id: '200', login: 'foo' },
       { id: 'user-1', login: 'alice' },
     ]);
-    await registerUserAndAcceptInvitations({
+    await registerOAuthUser({
       id: '100',
       login: 'bar',
       name: 'Old Foo',
@@ -73,7 +74,7 @@ describe('GitHub login renames', () => {
   });
 
   it('adds the current holder of a login, never the stale row', async () => {
-    await registerUserAndAcceptInvitations({
+    await registerOAuthUser({
       id: '100',
       login: 'foo',
       name: 'Old Foo',
@@ -91,7 +92,7 @@ describe('GitHub login renames', () => {
     expect(members(database)).toEqual([{ user_id: 'user-1' }]);
     expect(users(database)[0]).toEqual({ id: '100', login: '#100' });
 
-    await registerUserAndAcceptInvitations({
+    await registerOAuthUser({
       id: '300',
       login: 'foo',
       name: 'Foo',
@@ -103,8 +104,98 @@ describe('GitHub login renames', () => {
     ]);
   });
 
+  it('never lets a stale session cookie take a login or its invitations back', async () => {
+    await registerOAuthUser({
+      id: '100',
+      login: 'alice',
+      name: 'A',
+      avatarUrl: null,
+    });
+    // 100 renamed on GitHub; 200 took "alice" and signed in.
+    await registerOAuthUser({
+      id: '200',
+      login: 'alice',
+      name: 'B',
+      avatarUrl: null,
+    });
+    // An invitation to @alice made while GitHub was unreachable (unbound).
+    await inviteProjectMember('project-1', 'user-1', 'alice', async () => ({
+      kind: 'unavailable',
+    }));
+    // 100 opens the app with its 30-day-old cookie that still says "alice".
+    await touchSessionUser({
+      id: '100',
+      login: 'alice',
+      name: 'A',
+      avatarUrl: null,
+    });
+
+    expect(users(database).slice(0, 2)).toEqual([
+      { id: '100', login: '#100' },
+      { id: '200', login: 'alice' },
+    ]);
+    expect(members(database)).toEqual([{ user_id: 'user-1' }]);
+    // The invitation is accepted by the current holder at OAuth sign-in.
+    await registerOAuthUser({
+      id: '200',
+      login: 'alice',
+      name: 'B',
+      avatarUrl: null,
+    });
+    expect(members(database)).toEqual([
+      { user_id: '200' },
+      { user_id: 'user-1' },
+    ]);
+  });
+
+  it('binds a resolved invitation to the GitHub id, not to the login', async () => {
+    // "carol" resolves to GitHub user 300, who has not signed up yet.
+    await inviteProjectMember('project-1', 'user-1', 'carol', async () => ({
+      kind: 'found',
+      id: '300',
+      login: 'carol',
+    }));
+    // 300 renames to "caroline"; someone else (400) takes "carol" and signs in.
+    await registerOAuthUser({
+      id: '400',
+      login: 'carol',
+      name: 'X',
+      avatarUrl: null,
+    });
+    expect(members(database)).toEqual([{ user_id: 'user-1' }]);
+    await registerOAuthUser({
+      id: '300',
+      login: 'caroline',
+      name: 'C',
+      avatarUrl: null,
+    });
+    expect(members(database)).toEqual([
+      { user_id: '300' },
+      { user_id: 'user-1' },
+    ]);
+  });
+
+  it('creates a session-only user without taking a held login', async () => {
+    await registerOAuthUser({
+      id: '200',
+      login: 'alice',
+      name: 'B',
+      avatarUrl: null,
+    });
+    await touchSessionUser({
+      id: '500',
+      login: 'alice',
+      name: 'Z',
+      avatarUrl: null,
+    });
+    expect(users(database).find((row) => row.id === '500')).toEqual({
+      id: '500',
+      login: '#500',
+    });
+  });
+
   it('adds a registered user directly when GitHub confirms the login', async () => {
-    await registerUserAndAcceptInvitations({
+    await registerOAuthUser({
       id: '100',
       login: 'foo',
       name: 'Foo',
@@ -124,7 +215,7 @@ describe('GitHub login renames', () => {
   });
 
   it('keeps the invitation pending when GitHub is unavailable and fails on unknown logins', async () => {
-    await registerUserAndAcceptInvitations({
+    await registerOAuthUser({
       id: '100',
       login: 'foo',
       name: 'Foo',

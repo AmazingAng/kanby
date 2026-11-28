@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "93945a80-be5e-42ef-a436-da653e6c488d",
+  "id": "4818b22d-28ec-4453-bb60-997cc52b132d",
   "prevId": "e0546a4c-e232-4e07-b1c2-6fafc2ce37bc",
   "tables": {
     "agent_idempotency_keys": {
@@ -1751,6 +1751,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
+          "autoincrement": false
+        },
+        "github_user_id": {
+          "name": "github_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         },
         "invited_by": {

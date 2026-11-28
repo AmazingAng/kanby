@@ -56,6 +56,9 @@ export const projectInvitations = sqliteTable(
     id: text('id').primaryKey(),
     projectId: text('project_id').notNull(),
     identity: text('identity').notNull(),
+    // GitHub user id the login resolved to when invited (null for e-mail or
+    // when GitHub was unreachable); binds the invitation to that account.
+    githubUserId: text('github_user_id'),
     invitedBy: text('invited_by').notNull(),
     createdAt: integer('created_at').notNull(),
     acceptedAt: integer('accepted_at'),
