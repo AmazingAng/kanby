@@ -87,3 +87,36 @@ The optional AppID is added to vite.config.ts's public Worker runtime-vars
 allowlist; AppSecret remains a secret binding. .env.example documents both names.
 Session retention is five latest logins with rowid as the tie-breaker when login
 creation times share a millisecond. Authentication tests freeze time to cover it.
+
+## Registered-app deployment follow-up — 2026-11-28
+
+The user supplied AppID wx358a6eafff0c9884 and placed AppSecret in the ignored
+root .env, authorizing configuration and deployment. This extends the original
+code-only scope. Use the existing xAPI Worker and selected KANBY-145 card.
+Isolation: feat/weixin-mini-release in /private/tmp/kanby-mini-release-20261128,
+based on origin/main 8473770. Spec approval: not obtained (autonomous run).
+
+- Set the public AppID in miniprogram/project.config.json. Declare the two mini
+  runtime bindings in xapi.worker.json. AppSecret is read in memory and sent only
+  to the existing xAPI secret store; never copy .env into build/client directories.
+- Reuse migration 0020 unchanged. Back up each environment, rehearse against its
+  populated SQLite snapshot, apply the additive migration atomically, verify
+  schema/ledger and every existing business row. Keep production data private.
+- Validate the normal artifact in preview before activating that same artifact
+  in production. Temporary authenticated migration access must expire, ordinary
+  writes and cron must be stopped during the snapshot/migration window, and the
+  normal build must remove migration access. Restore production-only scheduling.
+- Run the existing full gauntlet; compare new artifact bytes against both local
+  mini credentials to ensure they are absent. Verify /mini, API auth boundaries,
+  configured provider error behavior and existing web/Agent access after release.
+- The user requested miniprogram-ci for upload. Use a pinned official package in
+  an isolated operational directory, without adding runtime dependencies. Upload
+  requires the separate app-specific code-upload private key; AppSecret cannot
+  replace it. Preserve request-domain checks. Do not claim real login, upload,
+  review, release or notification-to-mini routing without their own evidence.
+
+Repository edits are configuration and documentation only; no new feature tests
+are required for a public AppID substitution. Existing security/permission tests
+remain unchanged. Operational backup and replay checks cover the migration.
+Independent verification is not performed; evidence will state remaining device
+and platform requirements. Commit, fetch, merge and push per AGENTS.md.
