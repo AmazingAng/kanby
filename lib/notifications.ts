@@ -191,6 +191,8 @@ export type TaskNotification = {
   taskTitle: string;
   kind: NotificationEventKind;
   actorName: string;
+  /** Member who caused the event (the token's member for agents). */
+  actorId?: string;
   recipients: { userId: string; name: string }[];
   reasonLabel: string | null;
   note: string | null;
@@ -317,7 +319,12 @@ type DeliveryOutcome =
 
 async function recordDelivery(
   channel: { id: string; kind: string },
-  event: { projectId: string; taskId: string | null; kind: string },
+  event: {
+    projectId: string;
+    taskId: string | null;
+    kind: string;
+    actorId?: string;
+  },
   recipientKey: string,
   outcome: DeliveryOutcome,
 ) {
@@ -328,8 +335,8 @@ async function recordDelivery(
     );
   await database()
     .prepare(
-      `INSERT INTO notification_deliveries (id, project_id, channel_id, task_id, event_kind, status, error, recipient_key, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO notification_deliveries (id, project_id, channel_id, task_id, event_kind, status, error, recipient_key, sender_key, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       crypto.randomUUID(),
@@ -344,6 +351,7 @@ async function recordDelivery(
           ? outcome.reason
           : null,
       recipientKey,
+      event.actorId ?? null,
       Date.now(),
     )
     .run()
@@ -358,51 +366,70 @@ function outcomeOf(error: string | null): DeliveryOutcome {
 
 // --- Rate limiting -----------------------------------------------------------
 
-/** Repeated pings about the same card to the same recipient collapse into one. */
+/**
+ * A repeat of the same kind of notification about the same card to the same
+ * recipient within this window collapses into one (a mention followed by a
+ * handoff is not a repeat).
+ */
 export const NOTIFICATION_COALESCE_MS = 2 * 60_000;
-/** At most this many notifications reach one recipient per rolling hour. */
+/**
+ * @-mentions from one sender in one project reach one member at most this
+ * many times per rolling hour, so nobody can silence another member's other
+ * notifications. Turn changes (assignment/handoff) and account notices are
+ * never capped, only coalesced.
+ */
 export const NOTIFICATION_HOURLY_CAP = 20;
+/** Project bot channels are shared, so they get their own, higher cap. */
+export const NOTIFICATION_CHANNEL_HOURLY_CAP = 60;
 
 export type SuppressionReason = 'coalesced' | 'hourly_cap';
 
 /**
- * Decides, before anything is sent, which recipients may be notified about this
- * task now. Only successful deliveries count. Suppressed decisions are logged
- * as `suppressed` deliveries so the history stays complete.
+ * Decides, before anything is sent, which recipients may be notified about
+ * this event now. Only successful deliveries in this project count.
+ * Suppressed decisions are logged as `suppressed` deliveries.
  */
 export async function throttleRecipients(
   recipientKeys: string[],
-  taskId: string,
+  event: Pick<TaskNotification, 'projectId' | 'taskId' | 'kind'> & {
+    senderKey: string | null;
+  },
   now = Date.now(),
 ) {
   const decisions = new Map<string, SuppressionReason | null>();
   if (recipientKeys.length === 0) return decisions;
   const recent = await database()
     .prepare(
-      `SELECT recipient_key, task_id, created_at FROM notification_deliveries
+      `SELECT recipient_key, task_id, event_kind, sender_key, created_at FROM notification_deliveries
        WHERE recipient_key IN (SELECT value FROM json_each(?))
-         AND status = 'sent' AND created_at > ?`,
+         AND project_id = ? AND status = 'sent' AND created_at > ?`,
     )
-    .bind(JSON.stringify(recipientKeys), now - 60 * 60_000)
+    .bind(JSON.stringify(recipientKeys), event.projectId, now - 60 * 60_000)
     .all<{
       recipient_key: string;
       task_id: string | null;
+      event_kind: string;
+      sender_key: string | null;
       created_at: number;
     }>();
   for (const key of recipientKeys) {
     const rows = recent.results.filter((row) => row.recipient_key === key);
-    decisions.set(
-      key,
-      rows.some(
-        (row) =>
-          row.task_id === taskId &&
-          Number(row.created_at) > now - NOTIFICATION_COALESCE_MS,
-      )
-        ? 'coalesced'
-        : rows.length >= NOTIFICATION_HOURLY_CAP
-          ? 'hourly_cap'
-          : null,
+    const coalesced = rows.some(
+      (row) =>
+        row.task_id === event.taskId &&
+        row.event_kind === event.kind &&
+        Number(row.created_at) > now - NOTIFICATION_COALESCE_MS,
     );
+    const cap = key.startsWith('channel:')
+      ? NOTIFICATION_CHANNEL_HOURLY_CAP
+      : NOTIFICATION_HOURLY_CAP;
+    const capped =
+      event.kind === 'mention' &&
+      rows.filter(
+        (row) =>
+          row.event_kind === 'mention' && row.sender_key === event.senderKey,
+      ).length >= cap;
+    decisions.set(key, coalesced ? 'coalesced' : capped ? 'hourly_cap' : null);
   }
   return decisions;
 }
@@ -439,7 +466,7 @@ export async function sendTaskNotification(event: TaskNotification) {
         ...channels.results.map(channelKey),
       ]),
     ],
-    event.taskId,
+    { ...event, senderKey: event.actorId ?? null },
   );
   const suppressed = new Set<string>();
   const suppress = async (

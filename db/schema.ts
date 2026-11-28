@@ -593,6 +593,8 @@ export const notificationDeliveries = sqliteTable(
     // Who the delivery was for: `user:<id>` or `channel:<id>` for a project
     // bot. Used to coalesce and cap notifications per recipient.
     recipientKey: text('recipient_key'),
+    // Member who caused the notification; mention caps are per sender.
+    senderKey: text('sender_key'),
     createdAt: integer('created_at').notNull(),
   },
   (table) => [

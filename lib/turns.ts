@@ -381,6 +381,7 @@ export async function setTaskTurn(input: {
         ? 'turn.rejected'
         : 'turn.changed') satisfies NotificationEventKind,
       actorName,
+      actorId: input.actor.userId,
       recipients: [{ userId: target.userId, name: turn.label }],
       reasonLabel: turn.reasonLabel,
       note,
@@ -484,6 +485,7 @@ export async function postTaskComment(input: {
       taskTitle: context.title,
       kind: 'mention',
       actorName,
+      actorId: input.actor.userId,
       recipients,
       reasonLabel: null,
       note: input.body,

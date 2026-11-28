@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "4818b22d-28ec-4453-bb60-997cc52b132d",
+  "id": "bbae71d4-e29b-4786-8dab-8b3575731aad",
   "prevId": "e0546a4c-e232-4e07-b1c2-6fafc2ce37bc",
   "tables": {
     "agent_idempotency_keys": {
@@ -1699,6 +1699,13 @@
         },
         "recipient_key": {
           "name": "recipient_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "sender_key": {
+          "name": "sender_key",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

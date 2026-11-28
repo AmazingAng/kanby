@@ -92,20 +92,50 @@ describe('notification rate limiting', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
-  it('caps deliveries per recipient per hour', async () => {
+  it('caps mentions per sender and project, never turn changes or other projects', async () => {
     const insert = database.sqlite.prepare(
-      `INSERT INTO notification_deliveries (id, project_id, channel_id, task_id, event_kind, status, error, recipient_key, created_at)
-       VALUES (?, 'project-1', 'alice-bot', ?, 'turn.changed', 'sent', NULL, 'user:user-1', ?)`,
+      `INSERT INTO notification_deliveries (id, project_id, channel_id, task_id, event_kind, status, error, recipient_key, sender_key, created_at)
+       VALUES (?, 'project-1', 'alice-bot', ?, 'mention', 'sent', NULL, 'user:user-1', 'spammer', ?)`,
     );
     for (let index = 0; index < NOTIFICATION_HOURLY_CAP; index += 1)
       insert.run(`old-${index}`, `other-${index}`, Date.now() - 10 * 60_000);
+    const mention = (actorId: string, taskId = 'fresh'): TaskNotification => ({
+      ...event(taskId),
+      kind: 'mention',
+      actorId,
+    });
 
-    await sendTaskNotification(event('fresh'));
+    await sendTaskNotification(mention('spammer'));
     expect(fetchMock).not.toHaveBeenCalled();
     expect(deliveries(database).at(-1)).toMatchObject({
       status: 'suppressed',
       error: 'hourly_cap',
     });
+    // Another sender, a handoff, and the same recipient elsewhere still arrive.
+    await sendTaskNotification(mention('colleague', 'fresh-2'));
+    await sendTaskNotification({ ...event('fresh-3'), actorId: 'spammer' });
+    database.sqlite
+      .prepare(
+        `INSERT INTO projects (id, name, slug, owner_id, created_at, updated_at) VALUES ('project-2', 'Two', 'two', 'user-1', 1, 1)`,
+      )
+      .run();
+    database.sqlite
+      .prepare(
+        `INSERT INTO notification_channels (id, project_id, user_id, kind, webhook_url, secret, enabled, created_by, created_at, updated_at)
+         VALUES ('alice-bot-2', 'project-2', 'user-1', 'wecom', ?, NULL, 1, 'user-1', 2, 2)`,
+      )
+      .run(wecomUrl);
+    await sendTaskNotification({
+      ...mention('spammer', 'fresh-4'),
+      projectId: 'project-2',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not coalesce a handoff that follows a mention on the same card', async () => {
+    await sendTaskNotification({ ...event(), kind: 'mention' });
+    await sendTaskNotification(event());
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('sends account notices to personal bots once per webhook, unthrottled', async () => {
