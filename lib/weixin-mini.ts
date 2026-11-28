@@ -25,6 +25,19 @@ export function miniConfig() {
     throw new MiniError(503, '微信小程序尚未配置');
   return { appId, secret };
 }
+/**
+ * A short, non-secret label for one WeChat identity (derived from the salted
+ * subject hash). The mini program shows it next to the pairing code and the
+ * browser shows it before confirming, so a member can tell whether a code
+ * really comes from their own WeChat.
+ */
+export function miniFingerprint(subjectHash: string) {
+  const value = subjectHash
+    .replace(/[^A-Za-z0-9]/g, '')
+    .slice(0, 8)
+    .toUpperCase();
+  return `${value.slice(0, 4)}-${value.slice(4)}`;
+}
 export function miniJson(body: unknown, status = 200) {
   return Response.json(body, {
     status,
@@ -139,7 +152,12 @@ export async function miniLogin(request: Request, code: string) {
       ON CONFLICT(app_id,subject_hash) DO UPDATE SET code_hash=excluded.code_hash,expires_at=excluded.expires_at`)
       .bind(await sha256Base64Url(pairingCode), appId, subject, expiresAt)
       .run();
-    return miniJson({ status: 'unlinked', pairingCode, expiresAt });
+    return miniJson({
+      status: 'unlinked',
+      pairingCode,
+      expiresAt,
+      fingerprint: miniFingerprint(subject),
+    });
   }
   const token = `km_${randomToken()}`;
   const expiresAt = now + 7 * 86400000;
