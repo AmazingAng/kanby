@@ -386,6 +386,18 @@ export async function POST(request: Request) {
   return Response.json(response, { status: 201 });
 }
 
+/** Conflicts raised by a write's own guard: nothing was saved. */
+function isExpectedWriteConflict(error: unknown) {
+  return (
+    error instanceof TaskRevisionConflictError ||
+    error instanceof AcceptanceCriterionRevisionConflictError ||
+    error instanceof AcceptanceCriteriaLimitError ||
+    error instanceof TaskClaimConflictError ||
+    error instanceof TaskHierarchyError ||
+    error instanceof TurnTaskNotFoundError
+  );
+}
+
 export async function PATCH(request: Request) {
   const auth = await authenticated(request, 'task:write');
   if (auth instanceof Response) return auth;
@@ -436,15 +448,24 @@ export async function PATCH(request: Request) {
   };
 
   let response: unknown;
-  // Set once any write has succeeded: after that, an unexpected failure must
-  // not release the key (a retry would repeat the write).
+  // Set once a write may have been saved: after that, an unexpected failure
+  // must not release the key (a retry would repeat the write). A write that
+  // throws unexpectedly counts too, because some writes commit their batch
+  // and then read it back (postTaskComment, setTaskTurn, splitTask), so the
+  // failure can come after the commit. Expected conflicts are raised by the
+  // write's own guard, so nothing was saved.
   let committed = false;
   const tracked =
     <A extends unknown[], R>(write: (...args: A) => Promise<R>) =>
     async (...args: A) => {
-      const result = await write(...args);
-      committed = true;
-      return result;
+      try {
+        const result = await write(...args);
+        committed = true;
+        return result;
+      } catch (error) {
+        if (!isExpectedWriteConflict(error)) committed = true;
+        throw error;
+      }
     };
   try {
     if (action === 'claim') {
@@ -888,14 +909,7 @@ export async function PATCH(request: Request) {
       );
     }
   } catch (error) {
-    if (
-      error instanceof TaskRevisionConflictError ||
-      error instanceof AcceptanceCriterionRevisionConflictError ||
-      error instanceof AcceptanceCriteriaLimitError ||
-      error instanceof TaskClaimConflictError ||
-      error instanceof TaskHierarchyError ||
-      error instanceof TurnTaskNotFoundError
-    ) {
+    if (isExpectedWriteConflict(error)) {
       if (idempotency.kind === 'acquired')
         await abortIdempotentRequest(idempotency.reservation);
       if (error instanceof TurnTaskNotFoundError)
@@ -925,7 +939,7 @@ export async function PATCH(request: Request) {
                 error: {
                   code: 'failed_after_write',
                   message:
-                    'The change was saved but the request failed afterwards. Re-read the task before retrying with a new idempotency key.',
+                    'The change may have been saved but the request failed afterwards. Re-read the task before retrying with a new idempotency key.',
                 },
               },
               500,
