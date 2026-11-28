@@ -713,8 +713,10 @@ export async function removeProjectMember(
       .bind(projectId, memberId),
     db
       .prepare(
+        // Every claim under any of the member's tokens, including tokens
+        // they revoked earlier.
         `DELETE FROM task_agent_claims WHERE project_id = ? AND token_id IN (
-           SELECT id FROM agent_tokens WHERE project_id = ? AND user_id = ? AND revoked_at IS NULL
+           SELECT id FROM agent_tokens WHERE project_id = ? AND user_id = ?
          ) AND ${removed}`,
       )
       .bind(projectId, projectId, memberId, projectId, memberId),

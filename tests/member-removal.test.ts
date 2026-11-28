@@ -77,6 +77,26 @@ describe('member removal', () => {
     ).toEqual({ n: 0 });
   });
 
+  it('releases claims held under a token the member revoked earlier', async () => {
+    seedAgentToken(database, tokenId, 'b'.repeat(48), 'bob-agent');
+    database.sqlite
+      .prepare(
+        "UPDATE agent_tokens SET user_id = 'user-2', revoked_at = 1 WHERE id = ?",
+      )
+      .run(tokenId);
+    database.sqlite
+      .prepare(
+        "INSERT INTO task_agent_claims (task_id, project_id, token_id, agent_name, lease_expires_at, created_at, updated_at) VALUES ('t', 'project-1', ?, 'bob-agent', ?, 1, 1)",
+      )
+      .run(tokenId, Date.now() + 60_000);
+    await removeProjectMember('project-1', 'user-2');
+    expect(
+      database.sqlite
+        .prepare('SELECT COUNT(*) AS n FROM task_agent_claims')
+        .get(),
+    ).toEqual({ n: 0 });
+  });
+
   it('never revokes the owner tokens', async () => {
     seedAgentToken(database, tokenId, 'b'.repeat(48), 'alice-agent');
     await removeProjectMember('project-1', 'user-1');
