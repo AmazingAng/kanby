@@ -1,11 +1,11 @@
 <view class="page">
   <view class="brand">Kanby <text class="muted">人和 Agent，一起交付</text></view>
-  <view wx:if="error" class="error" role="alert">{{error}}<text wx:if="authenticated" bindtap="refresh"> · 点此刷新</text></view>
-  <view wx:if="!authenticated" class="card">
+  <view wx:if="{{error}}" class="error" role="alert">{{error}}<text wx:if="{{authenticated}}" bindtap="refresh"> · 点此刷新</text></view>
+  <view wx:if="{{!authenticated}}" class="card">
     <view class="title">在微信里处理轮到你的任务</view>
     <view class="muted paragraph">使用微信登录，并绑定已有的 Kanby 账号。项目权限与网页保持一致。</view>
     <button class="primary" loading="{{busy}}" disabled="{{busy}}" bindtap="login">{{pairingCode ? '已在网页绑定，重新登录' : '微信登录'}}</button>
-    <block wx:if="pairingCode">
+    <block wx:if="{{pairingCode}}">
       <view class="section">首次绑定</view>
       <view class="paragraph">1. 复制绑定码，在你已登录的 Kanby 网页打开 /mini。</view>
       <view class="paragraph">2. 粘贴绑定码，确认绑定到你自己的账号。</view>
@@ -17,37 +17,37 @@
   </view>
   <block wx:else>
     <view class="toolbar"><text>{{user.name}}</text><text bindtap="logout">退出登录</text></view>
-    <picker wx:if="projects.length" mode="selector" range="{{projects}}" range-key="name" value="{{projectIndex}}" bindchange="switchProject" disabled="{{busy}}"><view class="picker">{{projects[projectIndex].name}} ▾</view></picker>
-    <view wx:if="!projects.length" class="card muted">暂无项目。请在 Kanby 网页接受项目邀请后下拉刷新。</view>
-    <block wx:elif="!taskId">
+    <picker wx:if="{{projects.length}}" mode="selector" range="{{projects}}" range-key="name" value="{{projectIndex}}" bindchange="switchProject" disabled="{{busy}}"><view class="picker">{{projects[projectIndex].name}} ▾</view></picker>
+    <view wx:if="{{!projects.length}}" class="card muted">暂无项目。请在 Kanby 网页接受项目邀请后下拉刷新。</view>
+    <block wx:elif="{{!taskId}}">
       <view class="section">轮到我 <text class="muted">{{items.length}}</text></view>
-      <view wx:if="!items.length" class="card muted">暂时没有轮到你的任务。</view>
+      <view wx:if="{{!items.length}}" class="card muted">暂时没有轮到你的任务。</view>
       <view wx:for="{{items}}" wx:key="key" class="card" data-id="{{item.taskId}}" bindtap="openTask">
         <view class="muted">{{item.ref}} · {{item.type === 'mention' ? '提到了你' : (item.turn.kind === 'agent' ? '轮到你的 Agent' : '轮到你')}}</view>
-        <view class="title">{{item.title}}</view><view wx:if="item.turn.note" class="paragraph">{{item.turn.note}}</view><view wx:if="item.mention.body" class="paragraph">{{item.mention.body}}</view>
+        <view class="title">{{item.title}}</view><view wx:if="{{item.turn.note}}" class="paragraph">{{item.turn.note}}</view><view wx:if="{{item.mention.body}}" class="paragraph">{{item.mention.body}}</view>
       </view>
     </block>
     <block wx:else>
       <button class="back" bindtap="back" disabled="{{busy}}">返回轮到我</button>
-      <view wx:if="task" class="card">
+      <view wx:if="{{task}}" class="card">
         <view class="muted">KANBY-{{task.number}} · {{task.status === 'shipped' ? '已完成' : task.status === 'building' ? '开发中' : '想法'}}</view>
         <view class="title">{{task.title}}</view>
         <view class="muted">负责人：<text wx:for="{{task.owners}}" wx:key="id">{{item.name}} </text></view>
-        <view wx:if="task.due" class="muted">截止：{{task.due}}</view>
+        <view wx:if="{{task.due}}" class="muted">截止：{{task.due}}</view>
         <text class="description" selectable="{{true}}">{{task.note || '暂无说明'}}</text>
-        <view wx:if="task.turn.note" class="handoff">交接：{{task.turn.note}}</view>
+        <view wx:if="{{task.turn.note}}" class="handoff">交接：{{task.turn.note}}</view>
         <view class="section">验收清单</view>
-        <view wx:if="!task.acceptanceCriteria.length" class="muted">暂无验收项</view>
+        <view wx:if="{{!task.acceptanceCriteria.length}}" class="muted">暂无验收项</view>
         <button wx:for="{{task.acceptanceCriteria}}" wx:key="id" class="criterion" data-id="{{item.id}}" disabled="{{busy}}" bindtap="check">{{item.completed ? '☑' : '☐'}} {{item.body}}</button>
-        <button wx:if="task.status === 'building'" class="primary" disabled="{{busy}}" bindtap="accept">验收完成</button>
-        <view wx:if="task.attachments.length || task.githubLink" class="section">相关资源（复制后在浏览器打开）</view>
+        <button wx:if="{{task.status === 'building'}}" class="primary" disabled="{{busy}}" bindtap="accept">验收完成</button>
+        <view wx:if="{{task.attachments.length || task.githubLink}}" class="section">相关资源（复制后在浏览器打开）</view>
         <button wx:for="{{task.attachments}}" wx:key="id" data-url="{{item.url}}" bindtap="copyResource">{{item.name}}</button>
-        <button wx:if="task.githubLink" data-url="{{task.githubLink.url}}" bindtap="copyResource">{{task.githubLink.repository}} #{{task.githubLink.number}}</button>
+        <button wx:if="{{task.githubLink}}" data-url="{{task.githubLink.url}}" bindtap="copyResource">{{task.githubLink.repository}} #{{task.githubLink.number}}</button>
       </view>
-      <view wx:if="task" class="card">
+      <view wx:if="{{task}}" class="card">
         <view class="section">评论与活动</view>
         <view wx:for="{{activity}}" wx:key="id" class="event"><view class="muted">{{item.summary}}</view><text selectable="{{true}}">{{item.body}}</text></view>
-        <button wx:if="nextCursor" bindtap="more" disabled="{{busy}}">加载更多活动</button>
+        <button wx:if="{{nextCursor}}" bindtap="more" disabled="{{busy}}">加载更多活动</button>
         <textarea value="{{comment}}" bindinput="inputComment" maxlength="2000" placeholder="写下反馈或 @成员…" disabled="{{busy}}" auto-height="{{true}}" />
         <button class="primary" disabled="{{busy || !comment}}" bindtap="comment">发送评论</button>
       </view>
