@@ -30,3 +30,31 @@ database, authentication or automatic-login changes.
   rendering and interaction acceptance pending until observed on a real device.
 
 Independent fresh-context verification: not performed.
+
+## Evidence and release
+
+Implementation `302feea` corrects all 19 wx:if/wx:elif attributes. No Page
+controller, server code, stored credentials or database records were changed.
+Before the fix, `npx vitest run tests/weixin-mini-client.test.ts` produced four
+new behavioral/contract failures and six passes. After the template change,
+all ten client tests passed. The new mutation restores the literal login guard
+and is killed by the regression tests.
+
+The final `npm run gauntlet` passed 19/19 layers: 324 tests in 45 files,
+116/116 mutations, existing coverage gates, TypeScript, lint, format, shuffled
+suite, secret scan, Worker build and schedule checks. Production audit reported
+zero vulnerabilities. The isolated expression harness evaluates conditions from
+the actual WXML against Page VM state; it is not a full renderer and does not
+prove phone layout. No WXML coverage percentage is claimed.
+
+Official miniprogram-ci 2.1.31 compiled and uploaded development version 0.1.1
+with robot 1, returning success (15,684-byte upload archive). A separate official
+preview also succeeded and generated a new QR code. Private receipts are kept
+under ignored outputs/mini-render-fix-20261128/private. The upload command is the
+same as miniprogram/README.md with --uv 0.1.1 and the corrected source checkout.
+
+The change is merged/pushed to main. The previously deployed Worker and database
+remain at the verified mini release; this client-only correction needs no backend
+deployment. Chrome confirmed the user's account already shows linked status.
+The existing binding is preserved. Opening the new preview and confirming the
+task UI on the user's phone remains pending; KANBY-145 stays open for acceptance.
