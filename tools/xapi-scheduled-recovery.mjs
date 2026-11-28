@@ -24,12 +24,20 @@ export async function scheduledRecovery(request, env, context, application) {
   }
   const text = new TextDecoder().decode(bytesIn);
   let signature;
+  let timestamp;
   try {
-    signature = JSON.parse(text)?.signature;
+    ({ signature, timestamp } = JSON.parse(text) ?? {});
   } catch {
     return deny();
   }
   if (typeof signature !== 'string' || !/^sha256=[a-f0-9]{64}$/.test(signature))
+    return deny();
+  // A static schedule body (the old constant `kanby-recovery-v1` signature) is
+  // replayable forever, so only fresh timestamped signatures are accepted.
+  if (
+    !Number.isSafeInteger(timestamp) ||
+    Math.abs(Date.now() - timestamp) > 5 * 60 * 1000
+  )
     return deny();
   const key = await crypto.subtle.importKey(
     'raw',
@@ -41,7 +49,7 @@ export async function scheduledRecovery(request, env, context, application) {
   const bytes = Uint8Array.from(signature.slice(7).match(/../g), (part) =>
     Number.parseInt(part, 16),
   );
-  const body = 'kanby-recovery-v1';
+  const body = `kanby-recovery-v2:${timestamp}`;
   if (!(await crypto.subtle.verify('HMAC', key, bytes, encoder.encode(body))))
     return deny();
   return application.fetch(

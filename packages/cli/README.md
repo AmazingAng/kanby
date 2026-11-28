@@ -20,9 +20,11 @@ kanby auth status
 
 CLI 0.4.1+ defaults to `https://kanby.dev`. Server selection uses `KANBY_URL`, then the saved CLI config URL, then this default. Keep `KANBY_URL` set to your own origin for a self-hosted instance. Run `kanby --help` for all commands and add `--json` for machine-readable output.
 
-To store a validated token in the local CLI config instead, run `kanby auth login` with `KANBY_TOKEN` set. Kanby writes the config with user-only permissions.
+To store a validated token in the local CLI config instead, run `kanby auth login` and paste the token at the hidden prompt, or pipe it in with `--token-stdin` (`printf '%s\n' "$TOKEN" | kanby auth login --token-stdin`; it reads one line and gives up after 10 seconds). `KANBY_TOKEN` also works. `--token <TOKEN>` still works but prints a warning, because it exposes the token in shell history and process lists. Kanby writes the config with user-only permissions.
 
-To move an existing official-service configuration to the new domain, run `KANBY_URL=https://kanby.dev kanby auth login` with `KANBY_TOKEN` set. This validates access before saving the new URL. Existing valid project tokens continue to work after the migration; they are not tied to the hostname. The previous native address (`https://kanby.0xaa.workers.dev`) is disabled and returns 404. If your environment or saved config still selects it, update that setting; upgrading the CLI alone does not override an explicit URL.
+Since CLI 0.8.0, saved tokens are stored per server origin. A saved token is only sent to the origin it was saved for: setting `KANBY_URL` to another origin never reuses it (use `KANBY_TOKEN`, or run `kanby auth login --url <origin>` for that server). Configs written by older versions (a single `token` + `url`) are read as a token for that URL only.
+
+To move an existing official-service configuration to the new domain, run `kanby auth login --url https://kanby.dev` and provide the token. This validates access before saving the new URL. Existing valid project tokens continue to work after the migration; they are not tied to the hostname. The previous native address (`https://kanby.0xaa.workers.dev`) is disabled and returns 404. If your environment or saved config still selects it, update that setting; upgrading the CLI alone does not override an explicit URL.
 
 ## Install the skill
 

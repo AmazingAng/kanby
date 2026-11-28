@@ -306,18 +306,23 @@ function mapTaskGitHubLink(row: TaskGitHubLinkRow): TaskGitHubLinkRecord {
 export async function hasPendingProjectInvitation(
   username: string,
   emails: string[],
+  githubUserId?: string,
 ): Promise<boolean> {
   await ensureSchema();
   const identities = [username, ...emails]
     .map((identity) => identity.trim().toLowerCase())
     .filter(Boolean);
-  if (identities.length === 0) return false;
-  const placeholders = identities.map(() => '?').join(', ');
+  if (identities.length === 0 && !githubUserId) return false;
+  // Same matching as acceptance: an invitation bound to another GitHub id
+  // does not admit whoever now holds that login.
   const row = await database()
     .prepare(
-      `SELECT 1 AS found FROM project_invitations WHERE accepted_at IS NULL AND identity IN (${placeholders}) LIMIT 1`,
+      `SELECT 1 AS found FROM project_invitations WHERE accepted_at IS NULL AND (
+         github_user_id = ?
+         OR (github_user_id IS NULL AND identity IN (SELECT value FROM json_each(?)))
+       ) LIMIT 1`,
     )
-    .bind(...identities)
+    .bind(githubUserId ?? null, JSON.stringify(identities))
     .first<{ found: number }>();
   return Boolean(row?.found);
 }
@@ -333,81 +338,143 @@ export async function hasActiveProjectMembership(
   return Boolean(row?.found);
 }
 
-export async function registerUserAndAcceptInvitations(
+/** Placeholder logins start with "#", which GitHub logins never contain. */
+export const STALE_LOGIN_PREFIX = '#';
+
+function releaseStaleLogin(db: D1Database, login: string, ownerId: string) {
+  return db
+    .prepare(
+      `UPDATE users SET login = '${STALE_LOGIN_PREFIX}' || id WHERE login = ? AND id != ?`,
+    )
+    .bind(login, ownerId);
+}
+
+/**
+ * Sign-in through GitHub OAuth, with the profile GitHub just returned. Only
+ * this path may move a login between rows: GitHub logins can be renamed and
+ * reused, so another row still holding this login is stale and is released
+ * (to a value no GitHub login can take) before this user claims it. Login- or
+ * e-mail-addressed invitations are accepted only here, from fresh data.
+ */
+export async function registerOAuthUser(
   user: AuthUser,
   emails: string[] = [],
 ): Promise<void> {
   await ensureSchema();
   const db = database();
   const now = Date.now();
+  const login = user.login.toLowerCase();
+  await db.batch([
+    releaseStaleLogin(db, login, user.id),
+    db
+      .prepare(
+        `INSERT INTO users (id, login, name, avatar_url, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET login = excluded.login, name = excluded.name, avatar_url = excluded.avatar_url, updated_at = excluded.updated_at`,
+      )
+      .bind(user.id, login, user.name, user.avatarUrl, now, now),
+  ]);
+  await acceptInvitations(user.id, [login, ...emails]);
+  await claimLegacyProject(user.id, now);
+}
+
+/**
+ * Keeps the row of a user with a valid session cookie. The cookie's login may
+ * be up to 30 days stale, so this updates by id only and never writes a login
+ * that another row holds; only invitations bound to this GitHub id are
+ * accepted.
+ */
+export async function touchSessionUser(user: AuthUser): Promise<void> {
+  await ensureSchema();
+  const db = database();
+  const now = Date.now();
+  const login = user.login.toLowerCase();
   await db
     .prepare(
       `INSERT INTO users (id, login, name, avatar_url, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET login = excluded.login, name = excluded.name, avatar_url = excluded.avatar_url, updated_at = excluded.updated_at`,
+     SELECT ?, CASE WHEN EXISTS (SELECT 1 FROM users WHERE login = ? AND id != ?)
+                    THEN '${STALE_LOGIN_PREFIX}' || ? ELSE ? END, ?, ?, ?, ?
+     WHERE 1
+     ON CONFLICT(id) DO UPDATE SET name = excluded.name, avatar_url = excluded.avatar_url, updated_at = excluded.updated_at`,
     )
     .bind(
       user.id,
-      user.login.toLowerCase(),
+      login,
+      user.id,
+      user.id,
+      login,
       user.name,
       user.avatarUrl,
       now,
       now,
     )
     .run();
+  await acceptInvitations(user.id, []);
+  await claimLegacyProject(user.id, now);
+}
 
-  const identities = [user.login, ...emails]
+/**
+ * Accepts pending invitations for this GitHub user: those bound to its id
+ * (resolved when the invitation was made), plus unbound ones addressed to one
+ * of `identities` (fresh OAuth login / verified e-mails). An invitation bound
+ * to another id is never accepted by whoever now holds that login.
+ */
+async function acceptInvitations(userId: string, identities: string[]) {
+  const db = database();
+  const now = Date.now();
+  const normalized = identities
     .map((identity) => identity.trim().toLowerCase())
     .filter(Boolean);
-  if (identities.length > 0) {
-    const placeholders = identities.map(() => '?').join(', ');
-    const invitations = await db
-      .prepare(
-        `SELECT id, project_id FROM project_invitations WHERE accepted_at IS NULL AND identity IN (${placeholders})`,
-      )
-      .bind(...identities)
-      .all<{ id: string; project_id: string }>();
-    if (invitations.results.length > 0) {
-      await db.batch(
-        invitations.results.flatMap((invitation) => [
-          db
-            .prepare(
-              'INSERT OR IGNORE INTO project_members (project_id, user_id, role, created_at) VALUES (?, ?, ?, ?)',
-            )
-            .bind(invitation.project_id, user.id, 'member', now),
-          db
-            .prepare(
-              'UPDATE project_invitations SET accepted_at = ? WHERE id = ?',
-            )
-            .bind(now, invitation.id),
-        ]),
-      );
-    }
-  }
+  const invitations = await db
+    .prepare(
+      `SELECT id, project_id FROM project_invitations
+       WHERE accepted_at IS NULL AND (
+         github_user_id = ?
+         OR (github_user_id IS NULL AND identity IN (SELECT value FROM json_each(?)))
+       )`,
+    )
+    .bind(userId, JSON.stringify(normalized))
+    .all<{ id: string; project_id: string }>();
+  if (invitations.results.length === 0) return;
+  await db.batch(
+    invitations.results.flatMap((invitation) => [
+      db
+        .prepare(
+          'INSERT OR IGNORE INTO project_members (project_id, user_id, role, created_at) VALUES (?, ?, ?, ?)',
+        )
+        .bind(invitation.project_id, userId, 'member', now),
+      db
+        .prepare('UPDATE project_invitations SET accepted_at = ? WHERE id = ?')
+        .bind(now, invitation.id),
+    ]),
+  );
+}
 
+async function claimLegacyProject(userId: string, now: number) {
+  const db = database();
   const membership = await db
-    .prepare('SELECT 1 AS found FROM project_members WHERE user_id = ? LIMIT 1')
-    .bind(user.id)
-    .first<{ found: number }>();
-  if (!membership?.found) {
-    const legacy = await db
-      .prepare("SELECT owner_id FROM projects WHERE id = 'legacy'")
-      .first<{ owner_id: string | null }>();
-    if (legacy && !legacy.owner_id) {
-      await db.batch([
-        db
-          .prepare(
-            "UPDATE projects SET owner_id = ?, updated_at = ? WHERE id = 'legacy' AND owner_id IS NULL",
-          )
-          .bind(user.id, now),
-        db
-          .prepare(
-            "INSERT OR IGNORE INTO project_members (project_id, user_id, role, created_at) VALUES ('legacy', ?, 'owner', ?)",
-          )
-          .bind(user.id, now),
-      ]);
-    }
-  }
+    .prepare(
+      'SELECT 1 AS member FROM project_members WHERE user_id = ? LIMIT 1',
+    )
+    .bind(userId)
+    .first<{ member: number }>();
+  if (membership?.member) return;
+  const legacy = await db
+    .prepare("SELECT owner_id FROM projects WHERE id = 'legacy'")
+    .first<{ owner_id: string | null }>();
+  if (!legacy || legacy.owner_id) return;
+  await db.batch([
+    db
+      .prepare(
+        "UPDATE projects SET owner_id = ?, updated_at = ? WHERE id = 'legacy' AND owner_id IS NULL",
+      )
+      .bind(userId, now),
+    db
+      .prepare(
+        "INSERT OR IGNORE INTO project_members (project_id, user_id, role, created_at) VALUES ('legacy', ?, 'owner', ?)",
+      )
+      .bind(userId, now),
+  ]);
 }
 
 export async function listProjects(userId: string): Promise<ProjectRecord[]> {
@@ -449,7 +516,7 @@ export async function createProject(
   user: AuthUser,
   name: string,
 ): Promise<ProjectRecord> {
-  await registerUserAndAcceptInvitations(user);
+  await touchSessionUser(user);
   const db = database();
   const id = crypto.randomUUID();
   const slug = await uniqueProjectSlug(db, name, id);
@@ -549,38 +616,74 @@ export async function listProjectMembers(
   ];
 }
 
+export type GitHubLoginResolution =
+  | { kind: 'found'; id: string; login: string }
+  | { kind: 'not_found' }
+  | { kind: 'unavailable' };
+
+export type InviteResult = 'added' | 'invited' | 'not_found';
+
+/**
+ * Invites by e-mail or GitHub login. A login is resolved through GitHub to the
+ * account that holds it now: a local row whose stored login is stale (renamed
+ * since its last sign-in) is never added in its place. When GitHub cannot be
+ * reached the invitation stays pending and is accepted only by whoever signs
+ * in with that login.
+ */
 export async function inviteProjectMember(
   projectId: string,
   invitedBy: string,
   identity: string,
-): Promise<void> {
+  resolveLogin?: (login: string) => Promise<GitHubLoginResolution>,
+): Promise<InviteResult> {
   await ensureSchema();
   const normalized = identity.trim().toLowerCase().replace(/^@/, '');
   const db = database();
-  const existingUser = normalized.includes('@')
-    ? null
-    : await db
-        .prepare('SELECT id FROM users WHERE login = ?')
-        .bind(normalized)
-        .first<{ id: string }>();
   const now = Date.now();
-  if (existingUser) {
-    await db
-      .prepare(
-        "INSERT OR IGNORE INTO project_members (project_id, user_id, role, created_at) VALUES (?, ?, 'member', ?)",
-      )
-      .bind(projectId, existingUser.id, now)
-      .run();
-    return;
+  let githubUserId: string | null = null;
+  if (!normalized.includes('@')) {
+    const resolution = resolveLogin
+      ? await resolveLogin(normalized)
+      : ({ kind: 'unavailable' } as const);
+    if (resolution.kind === 'not_found') return 'not_found';
+    if (resolution.kind === 'found') {
+      const holder = await db
+        .prepare('SELECT id FROM users WHERE id = ?')
+        .bind(resolution.id)
+        .first<{ id: string }>();
+      const statements = [releaseStaleLogin(db, normalized, resolution.id)];
+      if (holder)
+        statements.push(
+          db
+            .prepare('UPDATE users SET login = ? WHERE id = ?')
+            .bind(resolution.login.toLowerCase(), holder.id),
+          db
+            .prepare(
+              "INSERT OR IGNORE INTO project_members (project_id, user_id, role, created_at) VALUES (?, ?, 'member', ?)",
+            )
+            .bind(projectId, holder.id, now),
+        );
+      await db.batch(statements);
+      if (holder) return 'added';
+      githubUserId = resolution.id;
+    }
   }
   await db
     .prepare(
-      `INSERT INTO project_invitations (id, project_id, identity, invited_by, created_at, accepted_at)
-     VALUES (?, ?, ?, ?, ?, NULL)
-     ON CONFLICT(project_id, identity) DO UPDATE SET invited_by = excluded.invited_by, created_at = excluded.created_at, accepted_at = NULL`,
+      `INSERT INTO project_invitations (id, project_id, identity, github_user_id, invited_by, created_at, accepted_at)
+     VALUES (?, ?, ?, ?, ?, ?, NULL)
+     ON CONFLICT(project_id, identity) DO UPDATE SET github_user_id = excluded.github_user_id, invited_by = excluded.invited_by, created_at = excluded.created_at, accepted_at = NULL`,
     )
-    .bind(crypto.randomUUID(), projectId, normalized, invitedBy, now)
+    .bind(
+      crypto.randomUUID(),
+      projectId,
+      normalized,
+      githubUserId,
+      invitedBy,
+      now,
+    )
     .run();
+  return 'invited';
 }
 
 export async function removeProjectMember(
@@ -598,12 +701,36 @@ export async function removeProjectMember(
       .run();
     return;
   }
-  await db
-    .prepare(
-      "DELETE FROM project_members WHERE project_id = ? AND user_id = ? AND role != 'owner'",
-    )
-    .bind(projectId, memberId)
-    .run();
+  const now = Date.now();
+  const removed = `NOT EXISTS (SELECT 1 FROM project_members WHERE project_id = ? AND user_id = ?)`;
+  // Removing a member revokes their Agent Tokens for this project and frees
+  // their claims, so re-adding the member later cannot revive old tokens.
+  // Browser sessions are deliberately left alone: they are not project
+  // scoped, every request re-checks membership, and signing the user out
+  // everywhere would let any project owner log anyone out at will
+  // (invite, then remove).
+  await db.batch([
+    db
+      .prepare(
+        "DELETE FROM project_members WHERE project_id = ? AND user_id = ? AND role != 'owner'",
+      )
+      .bind(projectId, memberId),
+    db
+      .prepare(
+        // Every claim under any of the member's tokens, including tokens
+        // they revoked earlier.
+        `DELETE FROM task_agent_claims WHERE project_id = ? AND token_id IN (
+           SELECT id FROM agent_tokens WHERE project_id = ? AND user_id = ?
+         ) AND ${removed}`,
+      )
+      .bind(projectId, projectId, memberId, projectId, memberId),
+    db
+      .prepare(
+        `UPDATE agent_tokens SET revoked_at = ?
+         WHERE project_id = ? AND user_id = ? AND revoked_at IS NULL AND ${removed}`,
+      )
+      .bind(now, projectId, memberId, projectId, memberId),
+  ]);
 }
 
 export async function listTasks(
@@ -626,7 +753,7 @@ export async function listTasks(
            ${TURN_ROW_COLUMNS}
          FROM tasks t ${TURN_ROW_JOINS}
          WHERE t.project_id = ? AND t.archived_at IS ${archived ? 'NOT NULL' : 'NULL'}
-         ORDER BY ${archived ? 't.archived_at DESC' : "CASE t.status WHEN 'ideas' THEN 0 WHEN 'building' THEN 1 ELSE 2 END, t.position ASC"}`,
+         ORDER BY ${archived ? 't.archived_at DESC, t.id ASC' : "CASE t.status WHEN 'ideas' THEN 0 WHEN 'building' THEN 1 ELSE 2 END, t.position ASC, t.created_at ASC, t.id ASC"}`,
       )
       .bind(projectId)
       .all<TaskRow>(),
@@ -704,6 +831,29 @@ export async function listTasks(
   );
 }
 
+/**
+ * Reserves the next KANBY-n number for a project. The per-project counter
+ * never goes down, so deleting the highest-numbered task cannot hand its
+ * number (and any `Kanby-Task: KANBY-n` PR trailers) to a new card. MAX()
+ * with the existing numbers keeps it correct for rows created before the
+ * counter existed. Run it in the same batch, before the INSERT that reads
+ * TASK_NUMBER_SQL.
+ */
+export function reserveTaskNumberStatement(db: D1Database, projectId: string) {
+  return db
+    .prepare(
+      `UPDATE projects SET last_task_number = MAX(
+         last_task_number,
+         (SELECT COALESCE(MAX(task_number), 0) FROM tasks WHERE project_id = ?)
+       ) + 1 WHERE id = ?`,
+    )
+    .bind(projectId, projectId);
+}
+
+/** The number reserved by reserveTaskNumberStatement; binds one project id. */
+export const TASK_NUMBER_SQL =
+  '(SELECT last_task_number FROM projects WHERE id = ?)';
+
 export async function getTask(
   projectId: string,
   reference: string,
@@ -775,7 +925,7 @@ export async function getTask(
 export async function createTask(
   user: AuthUser,
   projectId: string,
-  input: { title: string; status: ColumnId; due?: string },
+  input: { title: string; status: ColumnId; due?: string; note?: string },
   activityActor?: TaskActivityActor,
 ): Promise<TaskRecord> {
   await ensureSchema();
@@ -799,7 +949,7 @@ export async function createTask(
     id: crypto.randomUUID(),
     number: Number(numberRow?.task_number ?? 1),
     title: input.title,
-    note: '刚刚创建，补充一点上下文吧',
+    note: input.note || '刚刚创建，补充一点上下文吧',
     tag: '产品',
     due: input.due || undefined,
     owner: user,
@@ -811,11 +961,12 @@ export async function createTask(
     acceptanceCriteria: [],
   };
   const statements: D1PreparedStatement[] = [
+    reserveTaskNumberStatement(db, projectId),
     db
       .prepare(
         `INSERT INTO tasks
         (id, project_id, task_number, title, note, tag, owner_id, owner_login, owner_name, owner_avatar_url, due, status, position, created_at, updated_at, created_by)
-       VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM tasks WHERE project_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ${TASK_NUMBER_SQL}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         task.id,
@@ -862,7 +1013,11 @@ export async function createTask(
     );
   }
   await db.batch(statements);
-  return task;
+  const stored = await db
+    .prepare('SELECT task_number FROM tasks WHERE id = ?')
+    .bind(task.id)
+    .first<{ task_number: number }>();
+  return { ...task, number: Number(stored?.task_number ?? task.number) };
 }
 
 export class TaskRevisionConflictError extends Error {
@@ -1303,28 +1458,32 @@ export async function splitTask(
   const firstPosition = Number(positionRow?.position ?? 0);
   const now = Math.max(Date.now(), Number(parent.updated_at) + 1);
   const taskIds = input.titles.map(() => crypto.randomUUID());
-  const statements: D1PreparedStatement[] = input.titles.map((title, index) =>
-    db
-      .prepare(
-        `INSERT INTO tasks
+  const statements: D1PreparedStatement[] = input.titles.flatMap(
+    (title, index) => [
+      reserveTaskNumberStatement(db, projectId),
+      db
+        .prepare(
+          `INSERT INTO tasks
          (id, project_id, task_number, title, note, tag, owner_id, owner_login, owner_name, owner_avatar_url, due, status, position, created_at, updated_at, created_by, parent_task_id)
          SELECT ?, project_id,
-                (SELECT COALESCE(MAX(numbered.task_number), 0) + 1 FROM tasks numbered WHERE numbered.project_id = tasks.project_id),
+                ${TASK_NUMBER_SQL},
                 ?, '', tag, owner_id, owner_login, owner_name, owner_avatar_url, due, 'ideas', ?, ?, ?, ?, id
          FROM tasks
          WHERE id = ? AND project_id = ? AND archived_at IS NULL AND parent_task_id IS NULL AND updated_at = ?`,
-      )
-      .bind(
-        taskIds[index],
-        title,
-        firstPosition + index,
-        now,
-        now,
-        user.id,
-        input.parentTaskId,
-        projectId,
-        input.expectedUpdatedAt,
-      ),
+        )
+        .bind(
+          taskIds[index],
+          projectId,
+          title,
+          firstPosition + index,
+          now,
+          now,
+          user.id,
+          input.parentTaskId,
+          projectId,
+          input.expectedUpdatedAt,
+        ),
+    ],
   );
   for (const taskId of taskIds) {
     statements.push(
@@ -2032,46 +2191,130 @@ export async function permanentlyDeleteArchivedTask(
   return attachments.results.map((attachment) => attachment.object_key);
 }
 
+/**
+ * Applies a drag-and-drop reorder.
+ *
+ * Only the moved card is a content change: it may change column, carries the
+ * client's revision (`expectedUpdatedAt`) and bumps `updated_at` when its
+ * column changes. Neighbours only receive position shifts inside the column the
+ * server currently has them in, never a status change, and keep their
+ * `updated_at`, so an open editor on a neighbour is not invalidated by someone
+ * else's drag. Rows whose stored status/position already match are skipped.
+ */
 export async function reorderTasks(
   projectId: string,
   items: { id: string; status: ColumnId; position: number }[],
-  activity?: { movedTaskId: string; actor: TaskActivityActor },
-): Promise<void> {
+  activity?: {
+    movedTaskId: string;
+    actor: TaskActivityActor;
+    expectedUpdatedAt?: number;
+  },
+): Promise<{ id: string; updatedAt: number } | null> {
   await ensureSchema();
   const db = database();
   const movedBefore = activity
     ? await db
         .prepare(
-          'SELECT status, updated_at FROM tasks WHERE id = ? AND project_id = ? AND archived_at IS NULL',
+          'SELECT status, position, updated_at FROM tasks WHERE id = ? AND project_id = ? AND archived_at IS NULL',
         )
         .bind(activity.movedTaskId, projectId)
-        .first<{ status: ColumnId; updated_at: number }>()
+        .first<{ status: ColumnId; position: number; updated_at: number }>()
     : null;
   const movedAfter = activity
     ? items.find((item) => item.id === activity.movedTaskId)
     : undefined;
+  const expected = activity?.expectedUpdatedAt;
+  if (movedBefore && expected !== undefined) {
+    if (Number(movedBefore.updated_at) !== expected)
+      throw new TaskRevisionConflictError(Number(movedBefore.updated_at));
+  }
+  const statusChanged = Boolean(
+    movedBefore && movedAfter && movedBefore.status !== movedAfter.status,
+  );
   const now = Math.max(
     Date.now(),
     movedBefore ? Number(movedBefore.updated_at) + 1 : 0,
   );
-  const statements: D1PreparedStatement[] = [
-    ...items.map((item) =>
+  const movedUpdatedAt =
+    movedBefore && statusChanged ? now : Number(movedBefore?.updated_at ?? 0);
+  const guard =
+    movedBefore && movedAfter && expected !== undefined
+      ? {
+          sql: ' AND EXISTS (SELECT 1 FROM tasks m WHERE m.id = ? AND m.project_id = ? AND m.status = ? AND m.updated_at = ?)',
+          values: [
+            activity!.movedTaskId,
+            projectId,
+            movedAfter.status,
+            movedUpdatedAt,
+          ],
+        }
+      : { sql: '', values: [] as unknown[] };
+  const statements: D1PreparedStatement[] = [];
+  if (movedBefore && movedAfter) {
+    statements.push(
       db
         .prepare(
-          'UPDATE tasks SET status = ?, position = ?, updated_at = ? WHERE id = ? AND project_id = ? AND archived_at IS NULL',
+          `UPDATE tasks SET status = ?, position = ?, updated_at = ?
+           WHERE id = ? AND project_id = ? AND archived_at IS NULL AND updated_at = ?
+             AND (status != ? OR position != ?)`,
         )
-        .bind(item.status, item.position, now, item.id, projectId),
-    ),
+        .bind(
+          movedAfter.status,
+          movedAfter.position,
+          movedUpdatedAt,
+          movedAfter.id,
+          projectId,
+          Number(movedBefore.updated_at),
+          movedAfter.status,
+          movedAfter.position,
+        ),
+    );
+  }
+  const neighbours = items.filter((item) => item.id !== movedAfter?.id);
+  if (neighbours.length > 0) {
+    // One statement with a JSON parameter keeps large columns under D1's
+    // 100-bound-parameter limit.
+    const payload = JSON.stringify(
+      neighbours.map(({ id, status, position }) => ({ id, status, position })),
+    );
+    statements.push(
+      db
+        .prepare(
+          `UPDATE tasks SET position = (
+             SELECT CAST(json_extract(j.value, '$.position') AS INTEGER)
+             FROM json_each(?) j WHERE json_extract(j.value, '$.id') = tasks.id)
+           WHERE project_id = ? AND archived_at IS NULL
+             AND id IN (SELECT json_extract(j.value, '$.id') FROM json_each(?) j
+                        WHERE json_extract(j.value, '$.status') = tasks.status
+                          AND CAST(json_extract(j.value, '$.position') AS INTEGER) != tasks.position)${guard.sql}`,
+        )
+        .bind(payload, projectId, payload, ...guard.values),
+    );
+  }
+  // Concurrent drops into one column can leave equal positions; renumber the
+  // touched columns 0..n-1 (ties broken by creation time, then id) so every
+  // client sees the same, stable order. Position-only: updated_at is kept.
+  const columns = new Set<ColumnId>(items.map((item) => item.status));
+  if (movedBefore) columns.add(movedBefore.status);
+  for (const column of columns)
+    statements.push(
+      db
+        .prepare(
+          `UPDATE tasks SET position = (
+             SELECT r.rank FROM (
+               SELECT id, ROW_NUMBER() OVER (ORDER BY position, created_at, id) - 1 AS rank
+               FROM tasks WHERE project_id = ? AND status = ? AND archived_at IS NULL
+             ) r WHERE r.id = tasks.id)
+           WHERE project_id = ? AND status = ? AND archived_at IS NULL${guard.sql}`,
+        )
+        .bind(projectId, column, projectId, column, ...guard.values),
+    );
+  statements.push(
     db
       .prepare('UPDATE projects SET updated_at = ? WHERE id = ?')
       .bind(now, projectId),
-  ];
-  if (
-    activity &&
-    movedBefore &&
-    movedAfter &&
-    movedBefore.status !== movedAfter.status
-  ) {
+  );
+  if (activity && movedBefore && movedAfter && statusChanged) {
     const { prepareTaskActivityStatement } =
       await import('@/lib/task-activity');
     statements.push(
@@ -2095,4 +2338,21 @@ export async function reorderTasks(
     );
   }
   await db.batch(statements);
+  if (!movedBefore || !movedAfter) return null;
+  const after = await db
+    .prepare(
+      'SELECT status, position, updated_at FROM tasks WHERE id = ? AND project_id = ?',
+    )
+    .bind(movedAfter.id, projectId)
+    .first<{ status: ColumnId; position: number; updated_at: number }>();
+  if (
+    expected !== undefined &&
+    (!after ||
+      after.status !== movedAfter.status ||
+      Number(after.updated_at) !== movedUpdatedAt)
+  )
+    throw new TaskRevisionConflictError(Number(after?.updated_at ?? 0));
+  return after
+    ? { id: movedAfter.id, updatedAt: Number(after.updated_at) }
+    : null;
 }

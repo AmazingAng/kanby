@@ -77,10 +77,38 @@ const mutations = [
     test: 'tests/weixin-mini.test.ts',
   },
   {
+    name: 'reorder never changes a neighbour column',
+    file: 'lib/db.ts',
+    from: "WHERE json_extract(j.value, '$.status') = tasks.status",
+    to: 'WHERE 1 = 1',
+    test: 'tests/task-reorder.test.ts',
+  },
+  {
+    name: 'unlinked repository stops driving tasks',
+    file: 'lib/github-db.ts',
+    from: 'return `EXISTS (',
+    to: 'return `1 OR EXISTS (',
+    test: 'tests/github-security.test.ts',
+  },
+  {
+    name: 'backfill never moves cards',
+    file: 'lib/github-webhook.ts',
+    from: 'automationTrigger: options.backfill ? undefined : automationTrigger,',
+    to: 'automationTrigger,',
+    test: 'tests/github-backfill.test.ts',
+  },
+  {
+    name: 'scheduled recovery signature expires',
+    file: 'lib/github.ts',
+    from: 'if (Math.abs(now - Number(timestamp)) > RECOVERY_SIGNATURE_MAX_AGE_MS)',
+    to: 'if (Number(timestamp) < 0)',
+    test: 'tests/github-recovery-limits.test.ts',
+  },
+  {
     name: 'mini binding expiry',
     file: 'app/api/mini/account/route.ts',
-    from: 'AND expires_at>?',
-    to: 'AND ?>0',
+    from: 'SELECT ?,app_id,subject_hash,?,? FROM mini_pairs WHERE code_hash=? AND app_id=? AND expires_at>?',
+    to: 'SELECT ?,app_id,subject_hash,?,? FROM mini_pairs WHERE code_hash=? AND app_id=? AND ?>0',
     test: 'tests/weixin-mini.test.ts',
   },
   {
@@ -289,8 +317,8 @@ const mutations = [
   {
     name: 'create note preserves deadline',
     file: 'app/api/v1/tasks/route.ts',
-    from: 'due: task.due,\n        tag: task.tag,',
-    to: 'due: undefined,\n        tag: task.tag,',
+    from: '        status,\n        due,\n        note:',
+    to: '        status,\n        due: undefined,\n        note:',
     test: 'tests/agent-deadline-workflow.test.ts',
   },
   {
@@ -359,8 +387,8 @@ const mutations = [
   {
     name: 'GitHub API redirect rejection',
     file: 'lib/github.ts',
-    from: "redirect: 'manual',",
-    to: "redirect: 'follow',",
+    from: "headers,\n    redirect: 'manual',",
+    to: "headers,\n    redirect: 'follow',",
     test: 'tests/github-security.test.ts',
   },
   {
@@ -406,10 +434,24 @@ const mutations = [
     test: 'tests/github-oauth-callback.test.ts',
   },
   {
+    name: 'stale session cookie cannot take a login',
+    file: 'lib/db.ts',
+    from: 'SELECT ?, CASE WHEN EXISTS (SELECT 1 FROM users WHERE login = ? AND id != ?)',
+    to: 'SELECT ?, CASE WHEN 0 AND EXISTS (SELECT 1 FROM users WHERE login = ? AND id != ?)',
+    test: 'tests/github-login-rename.test.ts',
+  },
+  {
+    name: 'bound invitation needs its GitHub id',
+    file: 'lib/db.ts',
+    from: '       OR (github_user_id IS NULL AND identity IN (SELECT value FROM json_each(?)))\n       )`,\n    )\n    .bind(userId,',
+    to: '       OR (identity IN (SELECT value FROM json_each(?)))\n       )`,\n    )\n    .bind(userId,',
+    test: 'tests/github-login-rename.test.ts',
+  },
+  {
     name: 'pending invitation excludes accepted history',
     file: 'lib/db.ts',
-    from: '`SELECT 1 AS found FROM project_invitations WHERE accepted_at IS NULL AND identity IN (${placeholders}) LIMIT 1`',
-    to: '`SELECT 1 AS found FROM project_invitations WHERE accepted_at IS NOT NULL AND identity IN (${placeholders}) LIMIT 1`',
+    from: '`SELECT 1 AS found FROM project_invitations WHERE accepted_at IS NULL AND (',
+    to: '`SELECT 1 AS found FROM project_invitations WHERE accepted_at IS NOT NULL AND (',
     test: 'tests/github-oauth-callback.test.ts',
   },
   {
@@ -539,10 +581,45 @@ const mutations = [
     test: 'tests/github-automation.test.ts',
   },
   {
+    name: 'not planned Issue does not complete',
+    file: 'lib/github-webhook.ts',
+    from: "!['not_planned', 'duplicate'].includes(",
+    to: "!['duplicate'].includes(",
+    test: 'tests/github-backfill.test.ts',
+  },
+  {
+    name: 'task numbers are never reused',
+    file: 'lib/db.ts',
+    from: '  ) + 1 WHERE id = ?`,',
+    to: '  ) * 0 + (SELECT COALESCE(MAX(task_number), 0) FROM tasks WHERE project_id = id) + 1 WHERE id = ?`,',
+    test: 'tests/task-lifecycle.test.ts',
+  },
+  {
+    name: 'member removal revokes tokens',
+    file: 'lib/db.ts',
+    from: '`UPDATE agent_tokens SET revoked_at = ?',
+    to: '`UPDATE agent_tokens SET last_used_at = ?',
+    test: 'tests/member-removal.test.ts',
+  },
+  {
+    name: 'logout revokes the session',
+    file: 'lib/auth.ts',
+    from: 'row?.logged_out ||',
+    to: 'false ||',
+    test: 'tests/session-revocation.test.ts',
+  },
+  {
+    name: 'saved token stays with its origin',
+    file: 'packages/cli/bin/kanby.js',
+    from: "token: process.env.KANBY_TOKEN || config.servers[url]?.token || '',",
+    to: "token: process.env.KANBY_TOKEN || Object.values(config.servers)[0]?.token || '',",
+    test: 'tests/cli.test.ts',
+  },
+  {
     name: 'closed Issue completion trigger',
     file: 'lib/github-webhook.ts',
-    from: "kind === 'issue' && action === 'closed'",
-    to: "kind === 'issue' && action === 'opened'",
+    from: "(kind === 'issue' &&\n                action === 'closed' &&",
+    to: "(kind === 'issue' &&\n                action === 'opened' &&",
     test: 'tests/github-automation.test.ts',
   },
   {
@@ -859,6 +936,20 @@ const mutations = [
     from: "source = readFileSync(resolve(repo, file), 'utf8');",
     to: "source = readFileSync(resolve(process.cwd(), file), 'utf8');",
     test: 'tests/public-release.test.ts',
+  },
+  {
+    name: 'idempotency treats a failing write as possibly committed',
+    file: 'app/api/v1/tasks/route.ts',
+    from: 'if (!isExpectedWriteConflict(error)) committed = true;',
+    to: 'if (false) committed = true;',
+    test: 'tests/agent-concurrency.test.ts',
+  },
+  {
+    name: 'turn changes are capped per sender',
+    file: 'lib/notifications.ts',
+    from: 'isTurnKind(row.event_kind) === turn &&',
+    to: "row.event_kind === 'mention' && !turn &&",
+    test: 'tests/notification-throttle.test.ts',
   },
 ];
 

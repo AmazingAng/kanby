@@ -148,6 +148,20 @@
       "when": 1795999200000,
       "tag": "0020_weixin_mini",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1796085600000,
+      "tag": "0021_review_integrity",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1796172000000,
+      "tag": "0022_review_hardening",
+      "breakpoints": true
     }
   ]
 }

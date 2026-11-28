@@ -30,6 +30,7 @@ import {
   origin,
   sessionSecret,
   agentRequest,
+  linkGitHubRepository,
 } from './support/fixtures';
 const user = { id: 'user-1', name: 'Alice', login: 'alice', avatarUrl: null };
 const actor = {
@@ -87,7 +88,9 @@ describe('transactional metric collection and read boundaries', () => {
     });
     expect(rows()).toHaveLength(1);
     db.sqlite
-      .prepare("INSERT INTO users VALUES ('user-2','bob','Bob',NULL,1,1)")
+      .prepare(
+        "INSERT INTO users (id, login, name, avatar_url, created_at, updated_at) VALUES ('user-2','bob','Bob',NULL,1,1)",
+      )
       .run();
     db.sqlite
       .prepare(
@@ -163,6 +166,7 @@ describe('transactional metric collection and read boundaries', () => {
         "INSERT INTO github_task_links (task_id,project_id,repository_id,kind,item_number,url,title,state,updated_at) VALUES (?,'project-1','repo','pull_request',1,'https://github.com/a/b/pull/1','PR','open',1)",
       )
       .run(task.id);
+    linkGitHubRepository(db, 'repo');
     await updateLinkedTasksFromGitHub({
       repositoryId: 'repo',
       kind: 'pull_request',
@@ -401,9 +405,11 @@ describe('transactional metric collection and read boundaries', () => {
       title: 'One',
       status: 'building',
     });
-    await reorderTasks('project-1', [
-      { id: task.id, status: 'shipped', position: 0 },
-    ]);
+    await reorderTasks(
+      'project-1',
+      [{ id: task.id, status: 'shipped', position: 0 }],
+      { movedTaskId: task.id, actor },
+    );
     const now = Date.now();
     const from = new Date(now - 86400000).toISOString().slice(0, 10);
     const to = new Date(now + 86400000).toISOString().slice(0, 10);

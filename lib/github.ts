@@ -234,16 +234,38 @@ export async function listInstallationRepositories(
   return repositories;
 }
 
+/** Next-page cursor from a GitHub `Link` header, if any. */
+export function nextDeliveryCursor(link: string | null) {
+  for (const part of (link ?? '').split(',')) {
+    const match = /<([^>]+)>\s*;\s*rel="next"/.exec(part);
+    if (!match) continue;
+    try {
+      return new URL(match[1]!).searchParams.get('cursor');
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Lists recent App webhook deliveries. This endpoint paginates with a
+ * `cursor` taken from the Link header; it ignores `page`.
+ */
 export async function listGitHubAppDeliveries(config: GitHubAppConfig) {
   const token = await githubAppJwt(config);
   const deliveries: GitHubAppDelivery[] = [];
-  for (let page = 1; page <= 3; page += 1) {
-    const pageItems = await githubFetch<GitHubAppDelivery[]>(
-      `/app/hook/deliveries?per_page=100&page=${page}`,
-      token,
+  let cursor: string | null = null;
+  for (let page = 0; page < 3; page += 1) {
+    const query = new URLSearchParams({ per_page: '100' });
+    if (cursor) query.set('cursor', cursor);
+    const response = await fetch(
+      githubApiRequest(`/app/hook/deliveries?${query}`, token),
     );
-    deliveries.push(...pageItems);
-    if (pageItems.length < 100) break;
+    if (!response.ok) throw new Error(`GitHub API ${response.status}`);
+    deliveries.push(...((await response.json()) as GitHubAppDelivery[]));
+    cursor = nextDeliveryCursor(response.headers.get('Link'));
+    if (!cursor) break;
   }
   return deliveries;
 }
@@ -464,6 +486,29 @@ export async function verifyGitHubWebhook(
   return crypto.subtle.verify('HMAC', key, signature, encoder.encode(rawBody));
 }
 
+/** Scheduled recovery requests sign `kanby-recovery-v2:<unix ms>`. */
+export const RECOVERY_SIGNATURE_PREFIX = 'kanby-recovery-v2:';
+export const RECOVERY_SIGNATURE_MAX_AGE_MS = 5 * 60 * 1000;
+
+/**
+ * Accepts a scheduled recovery body only when it is HMAC-signed and its
+ * timestamp is within five minutes, so a captured signature cannot be
+ * replayed later (the earlier constant `kanby-recovery-v1` body could).
+ */
+export async function verifyRecoveryRequest(
+  rawBody: string,
+  signatureHeader: string | null,
+  secret: string,
+  now = Date.now(),
+) {
+  if (!rawBody.startsWith(RECOVERY_SIGNATURE_PREFIX)) return false;
+  const timestamp = rawBody.slice(RECOVERY_SIGNATURE_PREFIX.length);
+  if (!/^\d{13}$/.test(timestamp)) return false;
+  if (Math.abs(now - Number(timestamp)) > RECOVERY_SIGNATURE_MAX_AGE_MS)
+    return false;
+  return verifyGitHubWebhook(rawBody, signatureHeader, secret);
+}
+
 export function parseGitHubItemUrl(value: string) {
   try {
     const url = new URL(value.trim());
@@ -482,5 +527,50 @@ export function parseGitHubItemUrl(value: string) {
     return { fullName: `${owner}/${repo}`, kind, number } as const;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Resolves a GitHub login to the account that currently holds it. Uses an
+ * installation token when one is available (higher rate limit) and falls back
+ * to an unauthenticated request. Any failure other than 404 is "unavailable".
+ */
+export async function resolveGitHubLogin(
+  login: string,
+  token?: string | null,
+): Promise<
+  | { kind: 'found'; id: string; login: string }
+  | { kind: 'not_found' }
+  | { kind: 'unavailable' }
+> {
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,38})$/i.test(login))
+    return { kind: 'not_found' };
+  try {
+    const path = `/users/${encodeURIComponent(login)}`;
+    const request = token
+      ? githubApiRequest(path, token)
+      : new Request(new URL(path, 'https://api.github.com'), {
+          headers: {
+            Accept: 'application/vnd.github+json',
+            'User-Agent': 'kanby-github-app',
+            'X-GitHub-Api-Version': '2022-11-28',
+          },
+          redirect: 'manual',
+        });
+    const response = await fetch(request);
+    if (response.status === 404) return { kind: 'not_found' };
+    if (!response.ok) return { kind: 'unavailable' };
+    const profile = (await response.json()) as {
+      id?: unknown;
+      login?: unknown;
+    };
+    if (
+      (typeof profile.id !== 'number' && typeof profile.id !== 'string') ||
+      typeof profile.login !== 'string'
+    )
+      return { kind: 'unavailable' };
+    return { kind: 'found', id: String(profile.id), login: profile.login };
+  } catch {
+    return { kind: 'unavailable' };
   }
 }

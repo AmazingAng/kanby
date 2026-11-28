@@ -209,6 +209,82 @@ describe('mini identity and member API', () => {
     expect(stored).not.toContain(session.token);
     expect(provider.mock.calls[0]?.[1]).toMatchObject({ redirect: 'manual' });
   });
+  it('shows the WeChat label before binding, notifies the member and revokes single sessions', async () => {
+    db.sqlite
+      .prepare(
+        `INSERT INTO notification_channels (id, project_id, user_id, kind, webhook_url, secret, enabled, created_by, created_at, updated_at)
+         VALUES ('alice-bot', 'project-1', 'user-1', 'wecom', 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=abcdefgh-1234', NULL, 1, 'user-1', 1, 1)`,
+      )
+      .run();
+    const pending = (await (await login()).json()) as {
+      pairingCode: string;
+      fingerprint: string;
+    };
+    expect(pending.fingerprint).toMatch(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/);
+    const browser = (body: unknown, method = 'POST') =>
+      request('account', method, body, undefined, true);
+    const preview = await account.POST(
+      browser({ pairingCode: pending.pairingCode, preview: true }),
+    );
+    expect(await preview.json()).toMatchObject({
+      fingerprint: pending.fingerprint,
+    });
+    expect(
+      (await (await account.GET(browser(undefined, 'GET'))).json()) as unknown,
+    ).toMatchObject({ linked: false, fingerprint: null, sessions: [] });
+    expect(
+      (
+        await account.POST(
+          browser({ pairingCode: 'A'.repeat(43), preview: true }),
+        )
+      ).status,
+    ).toBe(409);
+
+    const bound = await account.POST(
+      browser({ pairingCode: pending.pairingCode }),
+    );
+    expect(await bound.json()).toEqual({
+      linked: true,
+      fingerprint: pending.fingerprint,
+    });
+    const notice = provider.mock.calls.find((call) =>
+      String(call[0]).startsWith('https://qyapi.weixin.qq.com/'),
+    );
+    expect((notice![1] as { body: string }).body).toContain(
+      pending.fingerprint,
+    );
+
+    const first = await payload(await login());
+    const second = await payload(await login());
+    const state = (await (
+      await account.GET(browser(undefined, 'GET'))
+    ).json()) as {
+      fingerprint: string;
+      lastLoginAt: number;
+      sessions: { id: number; createdAt: number }[];
+    };
+    expect(state.fingerprint).toBe(pending.fingerprint);
+    expect(state.sessions).toHaveLength(2);
+    expect(state.lastLoginAt).toBe(state.sessions[0]!.createdAt);
+
+    expect(
+      (await account.DELETE(browser({ sessionId: 'x' }, 'DELETE'))).status,
+    ).toBe(400);
+    expect(
+      (
+        await account.DELETE(
+          browser({ sessionId: state.sessions[0]!.id }, 'DELETE'),
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (await tasks.GET(request('tasks', 'GET', undefined, second.token)))
+        .status,
+    ).toBe(401);
+    expect(
+      (await tasks.GET(request('tasks', 'GET', undefined, first.token))).status,
+    ).toBe(200);
+  });
   it('rejects expired pair codes and stale browser authorization', async () => {
     const pending = await payload(await login());
     vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 16 * 60 * 1000);
@@ -459,7 +535,9 @@ describe('mini adversarial and concurrency checks', () => {
   it('allows only one binding winner, rejects reassignment, and never creates users', async () => {
     const pending = await payload(await login());
     db.sqlite
-      .prepare('INSERT INTO users VALUES (?,?,?,?,?,?)')
+      .prepare(
+        'INSERT INTO users (id, login, name, avatar_url, created_at, updated_at) VALUES (?,?,?,?,?,?)',
+      )
       .run('user-2', 'bob', 'Bob', null, 1, 1);
     const alice = request(
       'account',
@@ -1016,7 +1094,7 @@ describe('mini board and scoped detail regressions', () => {
     seedTask(db, { id: 'task-parent', title: 'Archived parent' });
     seedAgentToken(db, 'agent-1', 'secret', 'Codex');
     db.sqlite.exec(`
-      INSERT INTO users VALUES ('user-2','bob','Bob',NULL,1,1);
+      INSERT INTO users (id,login,name,avatar_url,created_at,updated_at) VALUES ('user-2','bob','Bob',NULL,1,1);
       INSERT INTO project_members VALUES ('project-1','user-2','member',1);
       UPDATE tasks SET archived_at=1 WHERE id='task-parent';
       UPDATE tasks SET task_number=99,parent_task_id='task-parent',due='2026-12-01',

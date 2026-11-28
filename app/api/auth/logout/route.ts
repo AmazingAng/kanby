@@ -2,6 +2,7 @@ import {
   clearCookieHeader,
   getAuthConfig,
   isSameOriginMutation,
+  revokeRequestSession,
   SESSION_COOKIE,
 } from '@/lib/auth';
 
@@ -11,6 +12,10 @@ export async function POST(request: Request) {
   const config = getAuthConfig();
   if (!config || !isSameOriginMutation(request, config))
     return new Response('Forbidden', { status: 403 });
+  // The cookie is cleared even if recording the revocation fails.
+  await revokeRequestSession(request).catch((error: unknown) =>
+    console.error('Kanby session revocation failed', error),
+  );
   const headers = new Headers({
     Location: config.origin,
     'Cache-Control': 'no-store',

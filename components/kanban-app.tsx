@@ -101,6 +101,13 @@ import {
 import { cn } from '@/lib/utils';
 import { mergePolledTasks, shouldCloseTaskEditor } from '@/lib/task-sync';
 import {
+  dialogEscapeAction,
+  FOCUSABLE_SELECTOR,
+  trappedFocusTarget,
+} from '@/lib/dialog-focus';
+import {
+  changedTaskPlacements,
+  createSerialQueue,
   columnAtPoint,
   keyboardInsertAfter,
   orderedColumnTasks,
@@ -352,6 +359,33 @@ function taskDraftFingerprint(draft: TaskDraft) {
     draft.due.trim(),
     draft.status,
   ]);
+}
+
+type MutationState = { inFlight: number; epoch: number };
+
+function beginMutation(state: MutationState) {
+  state.inFlight += 1;
+  state.epoch += 1;
+  let ended = false;
+  return () => {
+    if (ended) return;
+    ended = true;
+    state.inFlight = Math.max(0, state.inFlight - 1);
+    state.epoch += 1;
+  };
+}
+
+function draftFromTask(task: Task): TaskDraft {
+  return {
+    id: task.id,
+    title: task.title,
+    note: task.note,
+    tag: task.tag,
+    ownerIds: taskOwners(task).map((owner) => owner.id),
+    due: task.due ?? '',
+    status: task.status,
+    updatedAt: task.updatedAt,
+  };
 }
 
 function formatFileSize(bytes: number) {
@@ -1097,6 +1131,10 @@ export function KanbanApp({
   const [members, setMembers] = useState<ProjectMember[]>([]);
   const [newMemberIdentity, setNewMemberIdentity] = useState('');
   const [syncError, setSyncError] = useState('');
+  const [taskConflict, setTaskConflict] = useState<{
+    taskId: string;
+    draft: TaskDraft;
+  } | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [mobileColumn, setMobileColumn] = useState<ColumnId>('ideas');
@@ -1147,15 +1185,20 @@ export function KanbanApp({
   const dragProjectedTasks = useRef<Task[] | null>(null);
   const dragging = useRef(false);
   const suppressTaskOpenUntil = useRef(0);
-  const mutationInFlight = useRef(false);
+  // Count concurrent mutations instead of a single flag so one finishing does
+  // not let a poll overwrite another's optimistic state, and bump an epoch on
+  // every start/finish so a poll that began before a mutation is discarded.
+  const mutationState = useRef<MutationState>({ inFlight: 0, epoch: 0 });
+  const reorderQueue = useRef(createSerialQueue());
+  const reorderSequence = useRef(0);
   const taskSaveQueue = useRef<Promise<void>>(Promise.resolve());
   const queuedTaskSaves = useRef(new Map<string, Promise<boolean>>());
   const lastSavedTask = useRef('');
   const latestTaskRevision = useRef(new Map<string, number>());
   const taskDraftRef = useRef<TaskDraft | null>(null);
+  const taskDialogRef = useRef<HTMLDialogElement>(null);
   const taskEditSessionId = useRef('');
   const pendingTaskSaves = useRef(0);
-  const attachmentMutation = useRef(false);
   const attachmentInput = useRef<HTMLInputElement | null>(null);
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
@@ -1338,6 +1381,7 @@ export function KanbanApp({
     async function refreshWorkspace() {
       if (inFlight) return;
       inFlight = true;
+      const pollEpoch = mutationState.current.epoch;
       try {
         void fetch(`/api/turns?projectId=${encodeURIComponent(projectId)}`, {
           cache: 'no-store',
@@ -1389,8 +1433,8 @@ export function KanbanApp({
         if (cancelled) return;
         if (
           !dragging.current &&
-          !mutationInFlight.current &&
-          !attachmentMutation.current
+          mutationState.current.inFlight === 0 &&
+          mutationState.current.epoch === pollEpoch
         ) {
           const editingTaskId = taskDraftRef.current?.id ?? null;
           setTasks((current) =>
@@ -1401,7 +1445,10 @@ export function KanbanApp({
               latestTaskRevision.current.set(task.id, task.updatedAt);
           }
         }
-        if (!mutationInFlight.current) {
+        if (
+          mutationState.current.inFlight === 0 &&
+          mutationState.current.epoch === pollEpoch
+        ) {
           setMembers(memberPayload.members);
           const memberCount = memberPayload.members.filter(
             (member) => !member.pending,
@@ -1440,6 +1487,22 @@ export function KanbanApp({
   }, [activeProjectId, auth?.user, isDemo]);
 
   const openTaskId = taskDraft?.id ?? null;
+  const taskDialogOpen = openTaskId !== null;
+
+  // The task editor is a modal dialog: focus moves into it when it opens and
+  // returns to whatever opened it (usually the card) when it closes.
+  useEffect(() => {
+    if (!taskDialogOpen) return;
+    const opener =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    const dialog = taskDialogRef.current;
+    if (dialog && !dialog.contains(document.activeElement)) dialog.focus();
+    return () => {
+      if (opener?.isConnected) opener.focus();
+    };
+  }, [taskDialogOpen]);
 
   useEffect(() => {
     if (!openTaskId) {
@@ -1586,26 +1649,69 @@ export function KanbanApp({
     );
     setTasks(nextTasks);
     if (!isDemo && auth?.user && activeProjectId) {
-      mutationInFlight.current = true;
-      void fetch('/api/tasks', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: activeProjectId,
-          movedTaskId: String(active.id),
-          items: nextTasks.map(({ id, status, position }) => ({
-            id,
-            status,
-            position,
-          })),
-        }),
-      })
-        .then((response) => {
-          if (!response.ok) setSyncError('排序保存失败，请刷新后重试。');
+      const movedTaskId = String(active.id);
+      const changed = changedTaskPlacements(snapshot, nextTasks, movedTaskId);
+      if (changed.length === 0) return;
+      const moved = snapshot.find((task) => task.id === movedTaskId);
+      const endMutation = beginMutation(mutationState.current);
+      const projectId = activeProjectId;
+      const sequence = ++reorderSequence.current;
+      // Reorders are sent one at a time, in drag order: each request reads the
+      // moved card's revision only after the previous response updated it, so
+      // a quick second drag of the same card never conflicts with the first,
+      // and responses cannot arrive out of order.
+      void reorderQueue
+        .current(async () => {
+          const response = await fetch('/api/tasks', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              projectId,
+              movedTaskId,
+              ...(moved
+                ? {
+                    expectedUpdatedAt:
+                      latestTaskRevision.current.get(movedTaskId) ??
+                      moved.updatedAt,
+                  }
+                : {}),
+              items: changed,
+            }),
+          });
+          if (response.status === 409) {
+            // Only the newest drag may restore its snapshot; an older one
+            // would undo later drags. The next poll reloads the server order.
+            if (sequence === reorderSequence.current) setTasks(snapshot);
+            setSyncError(
+              '这张卡片刚被其他成员或 Agent 修改，已恢复，请再拖一次。',
+            );
+            return;
+          }
+          if (!response.ok) {
+            setSyncError('排序保存失败，请刷新后重试。');
+            return;
+          }
+          const payload = (await response.json()) as {
+            movedTask?: { id: string; updatedAt: number };
+          };
+          const movedTask = payload.movedTask;
+          if (!movedTask) return;
+          latestTaskRevision.current.set(movedTask.id, movedTask.updatedAt);
+          setTasks((current) =>
+            current.map((task) =>
+              task.id === movedTask.id
+                ? { ...task, updatedAt: movedTask.updatedAt }
+                : task,
+            ),
+          );
+          setTaskDraft((current) =>
+            current?.id === movedTask.id
+              ? { ...current, updatedAt: movedTask.updatedAt }
+              : current,
+          );
         })
-        .finally(() => {
-          mutationInFlight.current = false;
-        });
+        .catch(() => setSyncError('排序保存失败，请刷新后重试。'))
+        .finally(endMutation);
     }
   }
   async function addTask(event: React.SyntheticEvent<HTMLFormElement>) {
@@ -1616,7 +1722,7 @@ export function KanbanApp({
     setNewTitle('');
     setComposer(null);
     if (!isDemo && auth?.user && activeProjectId) {
-      mutationInFlight.current = true;
+      const endMutation = beginMutation(mutationState.current);
       try {
         const response = await fetch('/api/tasks', {
           method: 'POST',
@@ -1625,11 +1731,15 @@ export function KanbanApp({
         });
         if (!response.ok) throw new Error('create');
         const payload = (await response.json()) as { task: Task };
-        setTasks((current) => [...current, payload.task]);
+        setTasks((current) =>
+          current.some((task) => task.id === payload.task.id)
+            ? current
+            : [...current, payload.task],
+        );
       } catch {
         setSyncError('任务创建失败，请重试。');
       } finally {
-        mutationInFlight.current = false;
+        endMutation();
       }
       return;
     }
@@ -1703,14 +1813,15 @@ export function KanbanApp({
     event.preventDefault();
     const identity = newMemberIdentity.trim();
     if (!identity || !activeProjectId) return;
-    mutationInFlight.current = true;
+    const endMutation = beginMutation(mutationState.current);
     try {
       const response = await fetch('/api/members', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: activeProjectId, identity }),
       });
-      if (!response.ok) throw new Error('invite');
+      if (!response.ok)
+        throw new Error(response.status === 404 ? 'not_found' : 'invite');
       const payload = (await response.json()) as { members: ProjectMember[] };
       setMembers(payload.members);
       setProjects((current) =>
@@ -1721,16 +1832,20 @@ export function KanbanApp({
         ),
       );
       setNewMemberIdentity('');
-    } catch {
-      setSyncError('成员添加失败，请检查 GitHub 用户名或邮箱。');
+    } catch (error) {
+      setSyncError(
+        error instanceof Error && error.message === 'not_found'
+          ? 'GitHub 上找不到这个用户名，请检查拼写。'
+          : '成员添加失败，请检查 GitHub 用户名或邮箱。',
+      );
     } finally {
-      mutationInFlight.current = false;
+      endMutation();
     }
   }
 
   async function removeMember(memberId: string) {
     if (!activeProjectId) return;
-    mutationInFlight.current = true;
+    const endMutation = beginMutation(mutationState.current);
     try {
       const response = await fetch('/api/members', {
         method: 'DELETE',
@@ -1750,22 +1865,14 @@ export function KanbanApp({
     } catch {
       setSyncError('成员移除失败，请重试。');
     } finally {
-      mutationInFlight.current = false;
+      endMutation();
     }
   }
 
   function openTask(task: Task) {
     if (taskOpenIsSuppressed(suppressTaskOpenUntil.current)) return;
-    const draft = {
-      id: task.id,
-      title: task.title,
-      note: task.note,
-      tag: task.tag,
-      ownerIds: taskOwners(task).map((owner) => owner.id),
-      due: task.due ?? '',
-      status: task.status,
-      updatedAt: task.updatedAt,
-    } satisfies TaskDraft;
+    const draft = draftFromTask(task);
+    setTaskConflict(null);
     lastSavedTask.current = taskDraftFingerprint(draft);
     setLastSavedFingerprint(lastSavedTask.current);
     latestTaskRevision.current.set(task.id, task.updatedAt);
@@ -1857,7 +1964,7 @@ export function KanbanApp({
       return;
     }
     setAcceptanceSaving('new');
-    mutationInFlight.current = true;
+    const endMutation = beginMutation(mutationState.current);
     try {
       if (!(await queueTaskSave(taskDraft, true))) return;
       const taskUpdatedAt =
@@ -1907,7 +2014,7 @@ export function KanbanApp({
       );
     } finally {
       setAcceptanceSaving('');
-      mutationInFlight.current = false;
+      endMutation();
     }
   }
 
@@ -1927,7 +2034,7 @@ export function KanbanApp({
     )
       return;
     setAcceptanceSaving(item.id);
-    mutationInFlight.current = true;
+    const endMutation = beginMutation(mutationState.current);
     try {
       if (!(await queueTaskSave(taskDraft, true))) return;
       const taskUpdatedAt =
@@ -1983,14 +2090,14 @@ export function KanbanApp({
       );
     } finally {
       setAcceptanceSaving('');
-      mutationInFlight.current = false;
+      endMutation();
     }
   }
 
   async function removeAcceptanceItem(item: TaskAcceptanceCriterion) {
     if (!taskDraft || acceptanceSaving) return;
     setAcceptanceSaving(item.id);
-    mutationInFlight.current = true;
+    const endMutation = beginMutation(mutationState.current);
     try {
       if (!(await queueTaskSave(taskDraft, true))) return;
       const taskUpdatedAt =
@@ -2034,7 +2141,7 @@ export function KanbanApp({
       );
     } finally {
       setAcceptanceSaving('');
-      mutationInFlight.current = false;
+      endMutation();
     }
   }
 
@@ -2053,7 +2160,7 @@ export function KanbanApp({
       return;
     }
     setTaskSplitting(true);
-    mutationInFlight.current = true;
+    const endMutation = beginMutation(mutationState.current);
     try {
       if (!(await queueTaskSave(taskDraft, true))) return;
       const parentUpdatedAt =
@@ -2148,7 +2255,7 @@ export function KanbanApp({
       );
     } finally {
       setTaskSplitting(false);
-      mutationInFlight.current = false;
+      endMutation();
     }
   }
 
@@ -2156,7 +2263,7 @@ export function KanbanApp({
     if (subtaskStatusSaving) return;
     const status: ColumnId = task.status === 'shipped' ? 'ideas' : 'shipped';
     setSubtaskStatusSaving(task.id);
-    mutationInFlight.current = true;
+    const endMutation = beginMutation(mutationState.current);
     try {
       if (isDemo) {
         const now = task.updatedAt + 1;
@@ -2214,7 +2321,7 @@ export function KanbanApp({
       );
     } finally {
       setSubtaskStatusSaving('');
-      mutationInFlight.current = false;
+      endMutation();
     }
   }
 
@@ -2563,7 +2670,7 @@ export function KanbanApp({
     )
       return;
     setGithubIssueImporting(activity.id);
-    mutationInFlight.current = true;
+    const endMutation = beginMutation(mutationState.current);
     try {
       const response = await fetch('/api/github/issue-task', {
         method: 'POST',
@@ -2593,7 +2700,7 @@ export function KanbanApp({
           : '从 GitHub Issue 创建任务失败，请重试。',
       );
     } finally {
-      mutationInFlight.current = false;
+      endMutation();
       setGithubIssueImporting('');
     }
   }
@@ -2697,7 +2804,7 @@ export function KanbanApp({
 
     pendingTaskSaves.current += 1;
     setTaskSaving(true);
-    mutationInFlight.current = true;
+    const endMutation = beginMutation(mutationState.current);
 
     const save = taskSaveQueue.current
       .catch(() => undefined)
@@ -2788,20 +2895,21 @@ export function KanbanApp({
         return saved;
       })
       .catch((error: Error) => {
-        setSyncError(
-          error.message === 'conflict'
-            ? '任务已被其他成员或 Agent 修改；你的内容仍保留在编辑器中，请确认后重试。'
-            : '任务自动保存失败；内容仍保留在编辑器中，请重试。',
-        );
+        if (error.message === 'conflict') {
+          setTaskConflict({ taskId: draft.id, draft });
+          setSyncError(
+            '任务已被其他成员或 Agent 修改；你的内容仍保留在编辑器中，可以加载最新版本或放弃修改。',
+          );
+        } else {
+          setSyncError('任务自动保存失败；内容仍保留在编辑器中，请重试。');
+        }
         return false;
       })
       .finally(() => {
         queuedTaskSaves.current.delete(saveKey);
         pendingTaskSaves.current = Math.max(0, pendingTaskSaves.current - 1);
-        if (pendingTaskSaves.current === 0) {
-          setTaskSaving(false);
-          mutationInFlight.current = false;
-        }
+        endMutation();
+        if (pendingTaskSaves.current === 0) setTaskSaving(false);
       });
     queuedTaskSaves.current.set(saveKey, save);
     taskSaveQueue.current = save.then(() => undefined);
@@ -2840,6 +2948,97 @@ export function KanbanApp({
     }
   }
 
+  async function loadLatestTask() {
+    if (!taskConflict || !activeProjectId) return;
+    const taskId = taskConflict.taskId;
+    try {
+      const response = await fetch(
+        `/api/tasks?projectId=${encodeURIComponent(activeProjectId)}`,
+        { cache: 'no-store' },
+      );
+      if (!response.ok) throw new Error('load');
+      const payload = (await response.json()) as { tasks: Task[] };
+      const latest = payload.tasks.find((task) => task.id === taskId);
+      if (!latest) {
+        setSyncError(
+          '这张任务已不在看板上（可能已被归档），可以放弃修改并关闭。',
+        );
+        return;
+      }
+      const draft = draftFromTask(latest);
+      lastSavedTask.current = taskDraftFingerprint(draft);
+      setLastSavedFingerprint(lastSavedTask.current);
+      latestTaskRevision.current.set(latest.id, latest.updatedAt);
+      setTasks((current) =>
+        current.map((task) => (task.id === latest.id ? latest : task)),
+      );
+      setTaskDraft((current) => (current?.id === latest.id ? draft : current));
+      setTaskConflict(null);
+      setSyncError('');
+    } catch {
+      setSyncError('最新版本加载失败，请重试。');
+    }
+  }
+
+  function discardTaskChanges() {
+    setTaskConflict(null);
+    setSyncError('');
+    setDuePickerOpen(false);
+    setTaskDraft(null);
+  }
+
+  function copyConflictDraft() {
+    if (!taskConflict) return;
+    const { title, note } = taskConflict.draft;
+    void navigator.clipboard
+      ?.writeText(note ? `${title}\n\n${note}` : title)
+      .catch(() => undefined);
+  }
+
+  function handleTaskDialogKeyDown(
+    event: React.KeyboardEvent<HTMLDialogElement>,
+  ) {
+    const dialog = event.currentTarget;
+    // Popovers render in portals; their keys belong to them, not the dialog.
+    if (!(event.target instanceof Node) || !dialog.contains(event.target))
+      return;
+    if (event.key === 'Escape') {
+      const target = event.target;
+      const action = dialogEscapeAction({
+        defaultPrevented: event.defaultPrevented,
+        popoverOpen: duePickerOpen,
+        inTextField:
+          target instanceof HTMLTextAreaElement ||
+          (target instanceof HTMLInputElement &&
+            !['checkbox', 'radio', 'button', 'submit'].includes(target.type)),
+      });
+      if (action === 'ignore') return;
+      event.preventDefault();
+      if (action === 'leave-field') {
+        // A second Escape, now on the dialog itself, closes it.
+        dialog.focus();
+        return;
+      }
+      // Saves first and stays open when the save fails or conflicts, so
+      // Escape never silently discards edits.
+      void closeTaskEditor();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = [
+      ...dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+    ].filter((element) => element.getClientRects().length > 0);
+    const target = trappedFocusTarget(
+      focusable,
+      document.activeElement as HTMLElement | null,
+      event.shiftKey,
+      dialog as HTMLElement,
+    );
+    if (!target) return;
+    event.preventDefault();
+    target.focus();
+  }
+
   function finishTaskEditing(event: React.SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     void closeTaskEditor();
@@ -2862,7 +3061,7 @@ export function KanbanApp({
     }
 
     setAttachmentUploading(true);
-    attachmentMutation.current = true;
+    const endMutation = beginMutation(mutationState.current);
     try {
       for (const file of files) {
         let attachment: TaskAttachment;
@@ -2912,14 +3111,14 @@ export function KanbanApp({
     } finally {
       setAttachmentUploading(false);
       setAttachmentDragActive(false);
-      attachmentMutation.current = false;
+      endMutation();
       if (attachmentInput.current) attachmentInput.current.value = '';
     }
   }
 
   async function removeTaskAttachment(attachment: TaskAttachment) {
     if (!taskDraft || attachmentUploading) return;
-    attachmentMutation.current = true;
+    const endMutation = beginMutation(mutationState.current);
     try {
       if (!isDemo) {
         if (!activeProjectId) throw new Error('project');
@@ -2950,7 +3149,7 @@ export function KanbanApp({
     } catch {
       setSyncError('附件删除失败，请重试。');
     } finally {
-      attachmentMutation.current = false;
+      endMutation();
     }
   }
 
@@ -3710,1083 +3909,1157 @@ export function KanbanApp({
             onClick={() => void closeTaskEditor()}
             aria-label="保存并关闭任务详情"
           />
-          <form
-            onSubmit={finishTaskEditing}
-            className="relative flex max-h-[92dvh] w-full flex-col rounded-t-[28px] border border-b-0 border-ink/10 bg-card p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-[0_24px_80px_rgba(20,20,15,0.18)] sm:max-h-[calc(100dvh-2rem)] sm:max-w-3xl sm:rounded-[24px] sm:border-b sm:p-6 lg:max-w-[1120px]"
+          <dialog
+            ref={taskDialogRef}
+            open
+            aria-modal="true"
             aria-labelledby="task-editor-title"
+            tabIndex={-1}
+            onKeyDown={handleTaskDialogKeyDown}
+            className="m-0 relative flex max-h-[92dvh] w-full flex-col rounded-t-[28px] border border-b-0 border-ink/10 bg-card p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-[0_24px_80px_rgba(20,20,15,0.18)] sm:max-h-[calc(100dvh-2rem)] sm:max-w-3xl sm:rounded-[24px] sm:border-b sm:p-6 lg:max-w-[1120px] sm:m-auto"
           >
-            <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-ink/10 sm:hidden" />
-            <div className="mb-5 flex shrink-0 items-start justify-between">
-              <div>
-                <p className="text-xs text-ink-faint">
-                  任务详情 · 自动保存
-                  {editedTask?.number ? ` · KANBY-${editedTask.number}` : ''}
-                </p>
-                <h2
-                  id="task-editor-title"
-                  className="mt-1 text-xl font-semibold tracking-tight"
-                >
-                  编辑任务
-                </h2>
-                {editedTask?.parent ? (
-                  <span className="mt-2 inline-flex max-w-[min(70vw,32rem)] items-center gap-1.5 rounded-full border border-child-border bg-child-surface px-2.5 py-1 text-[10px] font-semibold text-ink-subtle">
-                    <ListTree className="size-3 shrink-0" />
-                    <span className="shrink-0">子任务</span>
-                    <span className="text-child-accent">·</span>
-                    <span className="truncate">{editedTask.parent.title}</span>
-                  </span>
-                ) : progressByParent.get(taskDraft.id) ? (
-                  <span className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-acid/50 bg-acid/15 px-2.5 py-1 text-[10px] font-semibold text-ink">
-                    <ListTree aria-hidden="true" className="size-3" />
-                    父任务 · {progressByParent.get(taskDraft.id)?.total}{' '}
-                    个子任务
-                  </span>
-                ) : null}
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="rounded-full"
-                onClick={() => void closeTaskEditor()}
-                aria-label="保存并关闭"
-              >
-                <X />
-              </Button>
-            </div>
-            <div className="-mx-1 grid min-h-0 flex-1 gap-5 overflow-y-auto px-1 pb-1 lg:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)] lg:items-start lg:gap-6">
-              <div className="space-y-5">
-                <div className="space-y-2">
-                  <Label htmlFor="task-title">标题</Label>
-                  <Input
-                    id="task-title"
-                    value={taskDraft.title}
-                    onChange={(event) =>
-                      setTaskDraft((current) =>
-                        current
-                          ? { ...current, title: event.target.value }
-                          : current,
-                      )
-                    }
-                    maxLength={160}
-                    className="h-11 rounded-xl border-ink/15 px-3 focus-visible:border-ink/30 focus-visible:ring-0"
-                  />
+            <form onSubmit={finishTaskEditing} className="contents">
+              <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-ink/10 sm:hidden" />
+              <div className="mb-5 flex shrink-0 items-start justify-between">
+                <div>
+                  <p className="text-xs text-ink-faint">
+                    任务详情 · 自动保存
+                    {editedTask?.number ? ` · KANBY-${editedTask.number}` : ''}
+                  </p>
+                  <h2
+                    id="task-editor-title"
+                    className="mt-1 text-xl font-semibold tracking-tight"
+                  >
+                    编辑任务
+                  </h2>
+                  {editedTask?.parent ? (
+                    <span className="mt-2 inline-flex max-w-[min(70vw,32rem)] items-center gap-1.5 rounded-full border border-child-border bg-child-surface px-2.5 py-1 text-[10px] font-semibold text-ink-subtle">
+                      <ListTree className="size-3 shrink-0" />
+                      <span className="shrink-0">子任务</span>
+                      <span className="text-child-accent">·</span>
+                      <span className="truncate">
+                        {editedTask.parent.title}
+                      </span>
+                    </span>
+                  ) : progressByParent.get(taskDraft.id) ? (
+                    <span className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-acid/50 bg-acid/15 px-2.5 py-1 text-[10px] font-semibold text-ink">
+                      <ListTree aria-hidden="true" className="size-3" />
+                      父任务 · {progressByParent.get(taskDraft.id)?.total}{' '}
+                      个子任务
+                    </span>
+                  ) : null}
                 </div>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <Label htmlFor="task-note">描述</Label>
-                    <button
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="rounded-full"
+                  onClick={() => void closeTaskEditor()}
+                  aria-label="保存并关闭"
+                >
+                  <X />
+                </Button>
+              </div>
+              {taskConflict?.taskId === taskDraft.id && (
+                <div
+                  role="alert"
+                  className="mb-4 shrink-0 space-y-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm"
+                >
+                  <p className="font-medium">
+                    这张任务已被其他成员或 Agent 修改，你的修改没有保存。
+                  </p>
+                  <p className="text-ink-subtle">
+                    可以先复制下面的内容，再加载最新版本重新编辑，或放弃修改并关闭。
+                  </p>
+                  <textarea
+                    readOnly
+                    aria-label="未保存的修改"
+                    value={
+                      taskConflict.draft.note
+                        ? `${taskConflict.draft.title}\n\n${taskConflict.draft.note}`
+                        : taskConflict.draft.title
+                    }
+                    className="max-h-40 min-h-20 w-full resize-y rounded-xl border border-ink/10 bg-card p-2 text-xs"
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <Button
                       type="button"
-                      className="text-xs font-medium text-ink-faint transition-colors hover:text-ink"
-                      onClick={() => setNoteEditing((current) => !current)}
+                      size="sm"
+                      onClick={() => void loadLatestTask()}
                     >
-                      {noteEditing ? '预览' : '编辑 Markdown'}
-                    </button>
+                      加载最新
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={copyConflictDraft}
+                    >
+                      复制我的内容
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={discardTaskChanges}
+                    >
+                      放弃我的修改
+                    </Button>
                   </div>
-                  {noteEditing ? (
-                    <Textarea
-                      id="task-note"
-                      value={taskDraft.note}
-                      onFocus={() =>
-                        setTaskDraft((current) =>
-                          current
-                            ? {
-                                ...current,
-                                note: clearStarterTaskNote(current.note),
-                              }
-                            : current,
-                        )
-                      }
+                </div>
+              )}
+              <div className="-mx-1 grid min-h-0 flex-1 gap-5 overflow-y-auto px-1 pb-1 lg:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)] lg:items-start lg:gap-6">
+                <div className="space-y-5">
+                  <div className="space-y-2">
+                    <Label htmlFor="task-title">标题</Label>
+                    <Input
+                      id="task-title"
+                      value={taskDraft.title}
                       onChange={(event) =>
                         setTaskDraft((current) =>
                           current
-                            ? { ...current, note: event.target.value }
+                            ? { ...current, title: event.target.value }
                             : current,
                         )
                       }
-                      maxLength={2000}
-                      placeholder="支持 Markdown；验收条件请添加到右侧验收清单"
-                      className="min-h-52 resize-y rounded-xl border-ink/15 px-3 font-mono text-sm focus-visible:border-ink/30 focus-visible:ring-0"
+                      maxLength={160}
+                      className="h-11 rounded-xl border-ink/15 px-3 focus-visible:border-ink/30 focus-visible:ring-0"
                     />
-                  ) : clearStarterTaskNote(taskDraft.note) ? (
-                    <div className="min-h-28 w-full rounded-xl border border-ink/10 bg-canvas/60 px-3 py-3 text-left">
-                      <TaskMarkdown>
-                        {clearStarterTaskNote(taskDraft.note)}
-                      </TaskMarkdown>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      className="min-h-28 w-full rounded-xl border border-ink/10 bg-canvas/60 px-3 py-3 text-left text-sm text-ink-faint transition-colors hover:border-ink/20"
-                      onClick={() => setNoteEditing(true)}
-                    >
-                      添加描述，支持 Markdown
-                    </button>
-                  )}
-                  <p className="text-[10px] text-ink-faint">
-                    描述用于上下文；可验证的完成条件请使用验收清单。
-                  </p>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label htmlFor="task-status">状态</Label>
-                    <Select
-                      value={taskDraft.status}
-                      onValueChange={(value) =>
-                        value &&
-                        setTaskDraft((current) =>
-                          current
-                            ? { ...current, status: value as ColumnId }
-                            : current,
-                        )
-                      }
-                    >
-                      <SelectTrigger
-                        id="task-status"
-                        className="h-11 w-full rounded-xl border-ink/15"
-                      >
-                        <SelectValue>
-                          {
-                            columns.find(
-                              (column) => column.id === taskDraft.status,
-                            )?.title
-                          }
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {columns.map((column) => (
-                          <SelectItem key={column.id} value={column.id}>
-                            {column.title}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="task-tag">标签</Label>
-                    <Select
-                      value={taskDraft.tag}
-                      onValueChange={(value) =>
-                        value &&
-                        setTaskDraft((current) =>
-                          current
-                            ? { ...current, tag: value as TaskTag }
-                            : current,
-                        )
-                      }
-                    >
-                      <SelectTrigger
-                        id="task-tag"
-                        className="h-11 w-full rounded-xl border-ink/15"
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {taskTags.map((tag) => (
-                          <SelectItem key={tag} value={tag}>
-                            {tag}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="col-span-2 space-y-2">
                     <div className="flex items-center justify-between gap-3">
-                      <Label>负责人</Label>
-                      <span className="text-[10px] text-ink-faint">
-                        {taskDraft.ownerIds.length}/3
-                      </span>
+                      <Label htmlFor="task-note">描述</Label>
+                      <button
+                        type="button"
+                        className="text-xs font-medium text-ink-faint transition-colors hover:text-ink"
+                        onClick={() => setNoteEditing((current) => !current)}
+                      >
+                        {noteEditing ? '预览' : '编辑 Markdown'}
+                      </button>
                     </div>
-                    <div className="grid gap-2 sm:grid-cols-3">
-                      {assignableMembers.map((member) => {
-                        const selected = taskDraft.ownerIds.includes(member.id);
-                        const disabled =
-                          (selected && taskDraft.ownerIds.length === 1) ||
-                          (!selected && taskDraft.ownerIds.length >= 3);
-                        return (
-                          <div
-                            key={member.id}
-                            className={cn(
-                              'flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2.5 transition-colors',
-                              selected
-                                ? 'border-acid/70 bg-acid/10'
-                                : 'border-ink/10 bg-canvas',
-                              disabled && 'opacity-55',
-                            )}
-                          >
-                            <Checkbox
-                              checked={selected}
-                              disabled={disabled}
-                              aria-label={`${selected ? '移除' : '添加'}负责人 ${member.name}`}
-                              onCheckedChange={() =>
-                                setTaskDraft((current) =>
-                                  current
-                                    ? {
-                                        ...current,
-                                        ownerIds: toggleTaskOwnerIds(
-                                          current.ownerIds,
-                                          member.id,
-                                        ),
-                                      }
-                                    : current,
-                                )
-                              }
-                            />
-                            <MemberIdentity user={member} />
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <p className="text-[10px] text-ink-faint">
-                      至少保留 1 位，最多选择 3 位项目成员
-                    </p>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>截止日</Label>
-                  <Popover open={duePickerOpen} onOpenChange={setDuePickerOpen}>
-                    <PopoverTrigger
-                      render={
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className={cn(
-                            'h-11 w-full justify-start rounded-xl border-ink/15 px-3 text-left font-normal hover:bg-canvas',
-                            !taskDraft.due && 'text-ink-faint',
-                          )}
-                          aria-label={
-                            taskDraft.due
-                              ? `截止日 ${taskDueLabel(taskDraft.due)}，点击修改`
-                              : '选择截止日期'
-                          }
-                        >
-                          <CalendarDays className="size-4 text-ink-faint" />
-                          <span className="flex-1">
-                            {taskDueLabel(taskDraft.due)}
-                          </span>
-                          <ChevronDown className="size-4 text-ink-faint" />
-                        </Button>
-                      }
-                    />
-                    <PopoverContent
-                      align="start"
-                      className="w-auto rounded-2xl border-ink/10 bg-card p-2 shadow-[0_18px_60px_rgba(20,20,15,0.16)]"
-                    >
-                      <Calendar
-                        mode="single"
-                        locale={zhCN}
-                        selected={parseTaskDueDate(taskDraft.due)}
-                        defaultMonth={
-                          parseTaskDueDate(taskDraft.due) ?? new Date()
-                        }
-                        onSelect={(date) => {
-                          if (!date) return;
+                    {noteEditing ? (
+                      <Textarea
+                        id="task-note"
+                        value={taskDraft.note}
+                        onFocus={() =>
                           setTaskDraft((current) =>
                             current
                               ? {
                                   ...current,
-                                  due: serializeTaskDueDate(date),
+                                  note: clearStarterTaskNote(current.note),
                                 }
                               : current,
-                          );
-                          setDuePickerOpen(false);
-                        }}
+                          )
+                        }
+                        onChange={(event) =>
+                          setTaskDraft((current) =>
+                            current
+                              ? { ...current, note: event.target.value }
+                              : current,
+                          )
+                        }
+                        maxLength={2000}
+                        placeholder="支持 Markdown；验收条件请添加到右侧验收清单"
+                        className="min-h-52 resize-y rounded-xl border-ink/15 px-3 font-mono text-sm focus-visible:border-ink/30 focus-visible:ring-0"
                       />
-                      <div className="flex items-center justify-between border-t border-ink/10 px-1 pt-2">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setTaskDraft((current) =>
-                              current ? { ...current, due: '' } : current,
-                            );
-                            setDuePickerOpen(false);
-                          }}
-                          disabled={!taskDraft.due}
-                          className="rounded-lg text-ink-subtle"
+                    ) : clearStarterTaskNote(taskDraft.note) ? (
+                      <div className="min-h-28 w-full rounded-xl border border-ink/10 bg-canvas/60 px-3 py-3 text-left">
+                        <TaskMarkdown>
+                          {clearStarterTaskNote(taskDraft.note)}
+                        </TaskMarkdown>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="min-h-28 w-full rounded-xl border border-ink/10 bg-canvas/60 px-3 py-3 text-left text-sm text-ink-faint transition-colors hover:border-ink/20"
+                        onClick={() => setNoteEditing(true)}
+                      >
+                        添加描述，支持 Markdown
+                      </button>
+                    )}
+                    <p className="text-[10px] text-ink-faint">
+                      描述用于上下文；可验证的完成条件请使用验收清单。
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="task-status">状态</Label>
+                      <Select
+                        value={taskDraft.status}
+                        onValueChange={(value) =>
+                          value &&
+                          setTaskDraft((current) =>
+                            current
+                              ? { ...current, status: value as ColumnId }
+                              : current,
+                          )
+                        }
+                      >
+                        <SelectTrigger
+                          id="task-status"
+                          className="h-11 w-full rounded-xl border-ink/15"
                         >
-                          清除日期
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
+                          <SelectValue>
+                            {
+                              columns.find(
+                                (column) => column.id === taskDraft.status,
+                              )?.title
+                            }
+                          </SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {columns.map((column) => (
+                            <SelectItem key={column.id} value={column.id}>
+                              {column.title}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="task-tag">标签</Label>
+                      <Select
+                        value={taskDraft.tag}
+                        onValueChange={(value) =>
+                          value &&
+                          setTaskDraft((current) =>
+                            current
+                              ? { ...current, tag: value as TaskTag }
+                              : current,
+                          )
+                        }
+                      >
+                        <SelectTrigger
+                          id="task-tag"
+                          className="h-11 w-full rounded-xl border-ink/15"
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {taskTags.map((tag) => (
+                            <SelectItem key={tag} value={tag}>
+                              {tag}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="col-span-2 space-y-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <Label>负责人</Label>
+                        <span className="text-[10px] text-ink-faint">
+                          {taskDraft.ownerIds.length}/3
+                        </span>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        {assignableMembers.map((member) => {
+                          const selected = taskDraft.ownerIds.includes(
+                            member.id,
+                          );
+                          const disabled =
+                            (selected && taskDraft.ownerIds.length === 1) ||
+                            (!selected && taskDraft.ownerIds.length >= 3);
+                          return (
+                            <div
+                              key={member.id}
+                              className={cn(
+                                'flex min-w-0 items-center gap-2 rounded-xl border px-3 py-2.5 transition-colors',
+                                selected
+                                  ? 'border-acid/70 bg-acid/10'
+                                  : 'border-ink/10 bg-canvas',
+                                disabled && 'opacity-55',
+                              )}
+                            >
+                              <Checkbox
+                                checked={selected}
+                                disabled={disabled}
+                                aria-label={`${selected ? '移除' : '添加'}负责人 ${member.name}`}
+                                onCheckedChange={() =>
+                                  setTaskDraft((current) =>
+                                    current
+                                      ? {
+                                          ...current,
+                                          ownerIds: toggleTaskOwnerIds(
+                                            current.ownerIds,
+                                            member.id,
+                                          ),
+                                        }
+                                      : current,
+                                  )
+                                }
+                              />
+                              <MemberIdentity user={member} />
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <p className="text-[10px] text-ink-faint">
+                        至少保留 1 位，最多选择 3 位项目成员
+                      </p>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>截止日</Label>
+                    <Popover
+                      open={duePickerOpen}
+                      onOpenChange={setDuePickerOpen}
+                    >
+                      <PopoverTrigger
+                        render={
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className={cn(
+                              'h-11 w-full justify-start rounded-xl border-ink/15 px-3 text-left font-normal hover:bg-canvas',
+                              !taskDraft.due && 'text-ink-faint',
+                            )}
+                            aria-label={
+                              taskDraft.due
+                                ? `截止日 ${taskDueLabel(taskDraft.due)}，点击修改`
+                                : '选择截止日期'
+                            }
+                          >
+                            <CalendarDays className="size-4 text-ink-faint" />
+                            <span className="flex-1">
+                              {taskDueLabel(taskDraft.due)}
+                            </span>
+                            <ChevronDown className="size-4 text-ink-faint" />
+                          </Button>
+                        }
+                      />
+                      <PopoverContent
+                        align="start"
+                        className="w-auto rounded-2xl border-ink/10 bg-card p-2 shadow-[0_18px_60px_rgba(20,20,15,0.16)]"
+                      >
+                        <Calendar
+                          mode="single"
+                          locale={zhCN}
+                          selected={parseTaskDueDate(taskDraft.due)}
+                          defaultMonth={
+                            parseTaskDueDate(taskDraft.due) ?? new Date()
+                          }
+                          onSelect={(date) => {
+                            if (!date) return;
                             setTaskDraft((current) =>
                               current
                                 ? {
                                     ...current,
-                                    due: serializeTaskDueDate(new Date()),
+                                    due: serializeTaskDueDate(date),
                                   }
                                 : current,
                             );
                             setDuePickerOpen(false);
                           }}
-                          className="rounded-lg font-semibold"
-                        >
-                          今天
-                        </Button>
-                      </div>
-                    </PopoverContent>
-                  </Popover>
-                </div>
-                <section
-                  className="space-y-3 rounded-2xl border border-ink/10 bg-canvas/70 p-4"
-                  aria-labelledby="acceptance-checklist-title"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <Label
-                        id="acceptance-checklist-title"
-                        className="flex items-center gap-2"
-                      >
-                        <ListChecks className="size-4" /> 验收清单
-                      </Label>
-                      <p className="mt-1 text-[10px] text-ink-faint">
-                        写清楚做到什么才算完成
-                      </p>
-                    </div>
-                    {(editedTask?.acceptanceCriteria?.length ?? 0) > 0 && (
-                      <span className="rounded-full bg-card px-2.5 py-1 text-[10px] font-semibold text-ink-subtle">
-                        {editedTask?.acceptanceCriteria?.filter(
-                          (item) => item.completed,
-                        ).length ?? 0}
-                        /{editedTask?.acceptanceCriteria?.length ?? 0} 已达成
-                      </span>
-                    )}
-                  </div>
-                  {(editedTask?.acceptanceCriteria?.length ?? 0) === 0 ? (
-                    <div className="rounded-xl border border-dashed border-ink/15 bg-card px-3 py-4 text-center text-[11px] text-ink-faint">
-                      暂无验收条件，先添加第一条
-                    </div>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {editedTask?.acceptanceCriteria?.map((item) => (
-                        <div
-                          key={item.id}
-                          className={cn(
-                            'group flex items-center gap-2 rounded-xl border border-transparent bg-card px-3 py-2 transition-colors focus-within:border-ink/15',
-                            item.completed && 'bg-acid/10',
-                          )}
-                        >
-                          <Checkbox
-                            checked={item.completed}
-                            disabled={Boolean(acceptanceSaving)}
-                            onCheckedChange={(checked) =>
-                              void updateAcceptanceItem(item, {
-                                completed: checked,
-                              })
-                            }
-                            className="size-5 rounded-md data-checked:border-acid data-checked:bg-acid data-checked:text-ink"
-                            aria-label={
-                              item.completed
-                                ? `取消完成：${item.body}`
-                                : `完成：${item.body}`
-                            }
-                          />
-                          <Input
-                            key={`${item.id}:${item.updatedAt}`}
-                            defaultValue={item.body}
-                            disabled={acceptanceSaving === item.id}
-                            maxLength={240}
-                            onBlur={(event) => {
-                              const body = event.currentTarget.value.trim();
-                              if (!body) {
-                                event.currentTarget.value = item.body;
-                                return;
-                              }
-                              void updateAcceptanceItem(item, { body });
-                            }}
-                            onKeyDown={(event) => {
-                              if (event.key === 'Enter') {
-                                event.preventDefault();
-                                event.currentTarget.blur();
-                              }
-                              if (event.key === 'Escape') {
-                                event.currentTarget.value = item.body;
-                                event.currentTarget.blur();
-                              }
-                            }}
-                            className={cn(
-                              'h-8 min-w-0 flex-1 border-0 bg-transparent px-1 text-xs shadow-none focus-visible:ring-0',
-                              item.completed &&
-                                'text-ink-faint line-through decoration-ink/30',
-                            )}
-                            aria-label="验收条件"
-                          />
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon-sm"
-                            disabled={Boolean(acceptanceSaving)}
-                            onClick={() => void removeAcceptanceItem(item)}
-                            className="shrink-0 rounded-full text-ink-faint opacity-60 hover:text-[#9d3026] group-hover:opacity-100"
-                            aria-label={`删除验收条件：${item.body}`}
-                          >
-                            {acceptanceSaving === item.id ? (
-                              <LoaderCircle className="animate-spin" />
-                            ) : (
-                              <Trash2 />
-                            )}
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div className="flex gap-2 border-t border-ink/10 pt-3">
-                    <Input
-                      value={acceptanceDraft}
-                      onChange={(event) =>
-                        setAcceptanceDraft(event.target.value)
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault();
-                          void addAcceptanceCriterion();
-                        }
-                      }}
-                      disabled={
-                        Boolean(acceptanceSaving) ||
-                        (editedTask?.acceptanceCriteria?.length ?? 0) >= 20
-                      }
-                      maxLength={240}
-                      placeholder="例如：移动端可完成整个流程"
-                      className="h-10 rounded-xl border-ink/15 bg-card px-3 text-xs focus-visible:ring-0"
-                      aria-label="新增验收条件"
-                    />
-                    <Button
-                      type="button"
-                      size="icon"
-                      disabled={
-                        !acceptanceDraft.trim() ||
-                        Boolean(acceptanceSaving) ||
-                        (editedTask?.acceptanceCriteria?.length ?? 0) >= 20
-                      }
-                      onClick={() => void addAcceptanceCriterion()}
-                      className="size-10 shrink-0 rounded-xl bg-ink text-background"
-                      aria-label="添加验收条件"
-                    >
-                      {acceptanceSaving === 'new' ? (
-                        <LoaderCircle className="animate-spin" />
-                      ) : (
-                        <Plus />
-                      )}
-                    </Button>
-                  </div>
-                </section>
-                {editedTask?.parent ? (
-                  <section className="rounded-2xl border border-child-border bg-child-surface p-4">
-                    <div className="flex items-center gap-2 text-xs font-medium text-ink-subtle">
-                      <ListTree aria-hidden="true" className="size-3" />{' '}
-                      所属父任务
-                    </div>
-                    <button
-                      type="button"
-                      disabled={!editedParent}
-                      onClick={() =>
-                        editedParent && void openRelatedTask(editedParent)
-                      }
-                      className="mt-3 flex w-full items-center justify-between gap-3 rounded-xl bg-card px-3 py-3 text-left transition-colors enabled:hover:bg-ink/[0.04] disabled:cursor-default"
-                    >
-                      <span className="min-w-0">
-                        <span className="block truncate text-xs font-semibold">
-                          {editedTask.parent.title}
-                        </span>
-                        <span className="mt-1 block text-[10px] text-ink-faint">
-                          {editedTask.parent.archived
-                            ? '父任务已归档'
-                            : '打开父任务'}
-                        </span>
-                      </span>
-                      {!editedTask.parent.archived && (
-                        <ArrowUpRight className="size-3.5 shrink-0 text-ink-faint" />
-                      )}
-                    </button>
-                  </section>
-                ) : editedTask ? (
-                  <section
-                    className="space-y-3 rounded-2xl border border-acid/35 bg-parent-surface p-4"
-                    aria-labelledby="subtasks-title"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <Label
-                          id="subtasks-title"
-                          className="flex items-center gap-2"
-                        >
-                          <ListTree aria-hidden="true" className="size-3" />{' '}
-                          子任务
-                        </Label>
-                        <p className="mt-1 text-[10px] text-ink-faint">
-                          子任务是看板上可独立推进的卡片
-                        </p>
-                      </div>
-                      {progressByParent.get(editedTask.id) && (
-                        <span className="rounded-full bg-card px-2.5 py-1 text-[10px] font-semibold text-ink-subtle">
-                          {progressByParent.get(editedTask.id)?.done}/
-                          {progressByParent.get(editedTask.id)?.total} 已完成
-                        </span>
-                      )}
-                    </div>
-                    {editedSubtasks.length > 0 && (
-                      <div className="space-y-1.5">
-                        {editedSubtasks.map((subtask) => (
-                          <div
-                            key={subtask.id}
-                            className="flex items-center gap-2 rounded-xl border border-child-border bg-child-surface p-2"
-                          >
-                            <button
-                              type="button"
-                              disabled={subtaskStatusSaving === subtask.id}
-                              onClick={() => void toggleSubtaskStatus(subtask)}
-                              className={cn(
-                                'grid size-8 shrink-0 place-items-center rounded-full border transition-colors',
-                                subtask.status === 'shipped'
-                                  ? 'border-acid bg-acid text-ink'
-                                  : 'border-ink/15 text-ink-faint hover:border-ink/30 hover:text-ink',
-                              )}
-                              aria-label={
-                                subtask.status === 'shipped'
-                                  ? `将 ${subtask.title} 标为待开始`
-                                  : `完成 ${subtask.title}`
-                              }
-                            >
-                              {subtaskStatusSaving === subtask.id ? (
-                                <LoaderCircle className="size-3.5 animate-spin" />
-                              ) : subtask.status === 'shipped' ? (
-                                <Check className="size-3.5" />
-                              ) : (
-                                <Circle className="size-3.5" />
-                              )}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void openRelatedTask(subtask)}
-                              className="min-w-0 flex-1 rounded-lg px-1 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-acid"
-                            >
-                              <span
-                                className={cn(
-                                  'block truncate text-xs font-medium',
-                                  subtask.status === 'shipped' &&
-                                    'text-ink-faint line-through',
-                                )}
-                              >
-                                {subtask.title}
-                              </span>
-                              <span className="mt-0.5 block text-[10px] text-ink-faint">
-                                {
-                                  columns.find(
-                                    (column) => column.id === subtask.status,
-                                  )?.title
-                                }
-                              </span>
-                            </button>
-                            <ArrowUpRight className="mr-1 size-3.5 shrink-0 text-ink-faint" />
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    <div className="space-y-2 border-t border-ink/10 pt-3">
-                      <Label htmlFor="split-task-titles" className="text-xs">
-                        拆分卡片
-                      </Label>
-                      <Textarea
-                        id="split-task-titles"
-                        value={splitTitles}
-                        onChange={(event) => setSplitTitles(event.target.value)}
-                        placeholder={'设计空状态\n接入数据接口\n补充发布检查'}
-                        className="min-h-24 resize-y rounded-xl border-ink/15 bg-card px-3 text-sm focus-visible:ring-0"
-                      />
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-[10px] text-ink-faint">
-                          每行一个，最多 20 个
-                        </span>
-                        <Button
-                          type="button"
-                          size="sm"
-                          disabled={!splitTitles.trim() || taskSplitting}
-                          onClick={() => void splitCurrentTask()}
-                          className="rounded-full bg-ink px-4 text-background"
-                        >
-                          {taskSplitting ? (
-                            <LoaderCircle className="animate-spin" />
-                          ) : (
-                            <ListTree />
-                          )}
-                          拆分为子任务
-                        </Button>
-                      </div>
-                    </div>
-                  </section>
-                ) : null}
-                {!isDemo && (
-                  <div className="space-y-3 rounded-2xl border border-ink/10 bg-canvas p-4">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <Label htmlFor="github-item-url">
-                          GitHub Issue / PR
-                        </Label>
-                        <p className="mt-1 text-[10px] text-ink-faint">
-                          Webhook 会同步状态、合并结果和 CI。
-                        </p>
-                      </div>
-                      <GitBranch className="size-4 text-ink-faint" />
-                    </div>
-                    {editedTask?.githubLink ? (
-                      <div className="rounded-xl bg-card p-3">
-                        <div className="flex items-start justify-between gap-3">
-                          <a
-                            href={editedTask.githubLink.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="min-w-0"
-                          >
-                            <p className="truncate text-xs font-semibold">
-                              {editedTask.githubLink.title}
-                            </p>
-                            <p className="mt-1 truncate text-[10px] text-ink-faint">
-                              {editedTask.githubLink.repository} #
-                              {editedTask.githubLink.number} ·{' '}
-                              {editedTask.githubLink.state}
-                              {editedTask.githubLink.ciStatus
-                                ? ` · CI ${editedTask.githubLink.ciStatus}`
-                                : ''}
-                            </p>
-                          </a>
+                        />
+                        <div className="flex items-center justify-between border-t border-ink/10 px-1 pt-2">
                           <Button
                             type="button"
                             variant="ghost"
                             size="sm"
-                            disabled={githubLinkSaving}
-                            onClick={() => void unlinkGitHubItem()}
-                            className="shrink-0 rounded-full text-ink-faint"
+                            onClick={() => {
+                              setTaskDraft((current) =>
+                                current ? { ...current, due: '' } : current,
+                              );
+                              setDuePickerOpen(false);
+                            }}
+                            disabled={!taskDraft.due}
+                            className="rounded-lg text-ink-subtle"
                           >
-                            移除
+                            清除日期
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setTaskDraft((current) =>
+                                current
+                                  ? {
+                                      ...current,
+                                      due: serializeTaskDueDate(new Date()),
+                                    }
+                                  : current,
+                              );
+                              setDuePickerOpen(false);
+                            }}
+                            className="rounded-lg font-semibold"
+                          >
+                            今天
+                          </Button>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                  <section
+                    className="space-y-3 rounded-2xl border border-ink/10 bg-canvas/70 p-4"
+                    aria-labelledby="acceptance-checklist-title"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <Label
+                          id="acceptance-checklist-title"
+                          className="flex items-center gap-2"
+                        >
+                          <ListChecks className="size-4" /> 验收清单
+                        </Label>
+                        <p className="mt-1 text-[10px] text-ink-faint">
+                          写清楚做到什么才算完成
+                        </p>
+                      </div>
+                      {(editedTask?.acceptanceCriteria?.length ?? 0) > 0 && (
+                        <span className="rounded-full bg-card px-2.5 py-1 text-[10px] font-semibold text-ink-subtle">
+                          {editedTask?.acceptanceCriteria?.filter(
+                            (item) => item.completed,
+                          ).length ?? 0}
+                          /{editedTask?.acceptanceCriteria?.length ?? 0} 已达成
+                        </span>
+                      )}
+                    </div>
+                    {(editedTask?.acceptanceCriteria?.length ?? 0) === 0 ? (
+                      <div className="rounded-xl border border-dashed border-ink/15 bg-card px-3 py-4 text-center text-[11px] text-ink-faint">
+                        暂无验收条件，先添加第一条
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {editedTask?.acceptanceCriteria?.map((item) => (
+                          <div
+                            key={item.id}
+                            className={cn(
+                              'group flex items-center gap-2 rounded-xl border border-transparent bg-card px-3 py-2 transition-colors focus-within:border-ink/15',
+                              item.completed && 'bg-acid/10',
+                            )}
+                          >
+                            <Checkbox
+                              checked={item.completed}
+                              disabled={Boolean(acceptanceSaving)}
+                              onCheckedChange={(checked) =>
+                                void updateAcceptanceItem(item, {
+                                  completed: checked,
+                                })
+                              }
+                              className="size-5 rounded-md data-checked:border-acid data-checked:bg-acid data-checked:text-ink"
+                              aria-label={
+                                item.completed
+                                  ? `取消完成：${item.body}`
+                                  : `完成：${item.body}`
+                              }
+                            />
+                            <Input
+                              key={`${item.id}:${item.updatedAt}`}
+                              defaultValue={item.body}
+                              disabled={acceptanceSaving === item.id}
+                              maxLength={240}
+                              onBlur={(event) => {
+                                const body = event.currentTarget.value.trim();
+                                if (!body) {
+                                  event.currentTarget.value = item.body;
+                                  return;
+                                }
+                                void updateAcceptanceItem(item, { body });
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter') {
+                                  event.preventDefault();
+                                  event.currentTarget.blur();
+                                }
+                                if (event.key === 'Escape') {
+                                  // Cancels this edit only; must not reach
+                                  // the dialog and close the whole editor.
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  event.currentTarget.value = item.body;
+                                  event.currentTarget.blur();
+                                }
+                              }}
+                              className={cn(
+                                'h-8 min-w-0 flex-1 border-0 bg-transparent px-1 text-xs shadow-none focus-visible:ring-0',
+                                item.completed &&
+                                  'text-ink-faint line-through decoration-ink/30',
+                              )}
+                              aria-label="验收条件"
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              disabled={Boolean(acceptanceSaving)}
+                              onClick={() => void removeAcceptanceItem(item)}
+                              className="shrink-0 rounded-full text-ink-faint opacity-60 hover:text-[#9d3026] group-hover:opacity-100"
+                              aria-label={`删除验收条件：${item.body}`}
+                            >
+                              {acceptanceSaving === item.id ? (
+                                <LoaderCircle className="animate-spin" />
+                              ) : (
+                                <Trash2 />
+                              )}
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex gap-2 border-t border-ink/10 pt-3">
+                      <Input
+                        value={acceptanceDraft}
+                        onChange={(event) =>
+                          setAcceptanceDraft(event.target.value)
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            void addAcceptanceCriterion();
+                          }
+                        }}
+                        disabled={
+                          Boolean(acceptanceSaving) ||
+                          (editedTask?.acceptanceCriteria?.length ?? 0) >= 20
+                        }
+                        maxLength={240}
+                        placeholder="例如：移动端可完成整个流程"
+                        className="h-10 rounded-xl border-ink/15 bg-card px-3 text-xs focus-visible:ring-0"
+                        aria-label="新增验收条件"
+                      />
+                      <Button
+                        type="button"
+                        size="icon"
+                        disabled={
+                          !acceptanceDraft.trim() ||
+                          Boolean(acceptanceSaving) ||
+                          (editedTask?.acceptanceCriteria?.length ?? 0) >= 20
+                        }
+                        onClick={() => void addAcceptanceCriterion()}
+                        className="size-10 shrink-0 rounded-xl bg-ink text-background"
+                        aria-label="添加验收条件"
+                      >
+                        {acceptanceSaving === 'new' ? (
+                          <LoaderCircle className="animate-spin" />
+                        ) : (
+                          <Plus />
+                        )}
+                      </Button>
+                    </div>
+                  </section>
+                  {editedTask?.parent ? (
+                    <section className="rounded-2xl border border-child-border bg-child-surface p-4">
+                      <div className="flex items-center gap-2 text-xs font-medium text-ink-subtle">
+                        <ListTree aria-hidden="true" className="size-3" />{' '}
+                        所属父任务
+                      </div>
+                      <button
+                        type="button"
+                        disabled={!editedParent}
+                        onClick={() =>
+                          editedParent && void openRelatedTask(editedParent)
+                        }
+                        className="mt-3 flex w-full items-center justify-between gap-3 rounded-xl bg-card px-3 py-3 text-left transition-colors enabled:hover:bg-ink/[0.04] disabled:cursor-default"
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate text-xs font-semibold">
+                            {editedTask.parent.title}
+                          </span>
+                          <span className="mt-1 block text-[10px] text-ink-faint">
+                            {editedTask.parent.archived
+                              ? '父任务已归档'
+                              : '打开父任务'}
+                          </span>
+                        </span>
+                        {!editedTask.parent.archived && (
+                          <ArrowUpRight className="size-3.5 shrink-0 text-ink-faint" />
+                        )}
+                      </button>
+                    </section>
+                  ) : editedTask ? (
+                    <section
+                      className="space-y-3 rounded-2xl border border-acid/35 bg-parent-surface p-4"
+                      aria-labelledby="subtasks-title"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <Label
+                            id="subtasks-title"
+                            className="flex items-center gap-2"
+                          >
+                            <ListTree aria-hidden="true" className="size-3" />{' '}
+                            子任务
+                          </Label>
+                          <p className="mt-1 text-[10px] text-ink-faint">
+                            子任务是看板上可独立推进的卡片
+                          </p>
+                        </div>
+                        {progressByParent.get(editedTask.id) && (
+                          <span className="rounded-full bg-card px-2.5 py-1 text-[10px] font-semibold text-ink-subtle">
+                            {progressByParent.get(editedTask.id)?.done}/
+                            {progressByParent.get(editedTask.id)?.total} 已完成
+                          </span>
+                        )}
+                      </div>
+                      {editedSubtasks.length > 0 && (
+                        <div className="space-y-1.5">
+                          {editedSubtasks.map((subtask) => (
+                            <div
+                              key={subtask.id}
+                              className="flex items-center gap-2 rounded-xl border border-child-border bg-child-surface p-2"
+                            >
+                              <button
+                                type="button"
+                                disabled={subtaskStatusSaving === subtask.id}
+                                onClick={() =>
+                                  void toggleSubtaskStatus(subtask)
+                                }
+                                className={cn(
+                                  'grid size-8 shrink-0 place-items-center rounded-full border transition-colors',
+                                  subtask.status === 'shipped'
+                                    ? 'border-acid bg-acid text-ink'
+                                    : 'border-ink/15 text-ink-faint hover:border-ink/30 hover:text-ink',
+                                )}
+                                aria-label={
+                                  subtask.status === 'shipped'
+                                    ? `将 ${subtask.title} 标为待开始`
+                                    : `完成 ${subtask.title}`
+                                }
+                              >
+                                {subtaskStatusSaving === subtask.id ? (
+                                  <LoaderCircle className="size-3.5 animate-spin" />
+                                ) : subtask.status === 'shipped' ? (
+                                  <Check className="size-3.5" />
+                                ) : (
+                                  <Circle className="size-3.5" />
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void openRelatedTask(subtask)}
+                                className="min-w-0 flex-1 rounded-lg px-1 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-acid"
+                              >
+                                <span
+                                  className={cn(
+                                    'block truncate text-xs font-medium',
+                                    subtask.status === 'shipped' &&
+                                      'text-ink-faint line-through',
+                                  )}
+                                >
+                                  {subtask.title}
+                                </span>
+                                <span className="mt-0.5 block text-[10px] text-ink-faint">
+                                  {
+                                    columns.find(
+                                      (column) => column.id === subtask.status,
+                                    )?.title
+                                  }
+                                </span>
+                              </button>
+                              <ArrowUpRight className="mr-1 size-3.5 shrink-0 text-ink-faint" />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="space-y-2 border-t border-ink/10 pt-3">
+                        <Label htmlFor="split-task-titles" className="text-xs">
+                          拆分卡片
+                        </Label>
+                        <Textarea
+                          id="split-task-titles"
+                          value={splitTitles}
+                          onChange={(event) =>
+                            setSplitTitles(event.target.value)
+                          }
+                          placeholder={'设计空状态\n接入数据接口\n补充发布检查'}
+                          className="min-h-24 resize-y rounded-xl border-ink/15 bg-card px-3 text-sm focus-visible:ring-0"
+                        />
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-[10px] text-ink-faint">
+                            每行一个，最多 20 个
+                          </span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={!splitTitles.trim() || taskSplitting}
+                            onClick={() => void splitCurrentTask()}
+                            className="rounded-full bg-ink px-4 text-background"
+                          >
+                            {taskSplitting ? (
+                              <LoaderCircle className="animate-spin" />
+                            ) : (
+                              <ListTree />
+                            )}
+                            拆分为子任务
                           </Button>
                         </div>
                       </div>
-                    ) : (
-                      <div className="flex gap-2">
-                        <Input
-                          id="github-item-url"
-                          value={githubLinkUrl}
-                          onChange={(event) =>
-                            setGithubLinkUrl(event.target.value)
-                          }
-                          placeholder="https://github.com/org/repo/issues/123"
-                          className="h-10 rounded-xl border-ink/15 bg-card px-3 text-xs focus-visible:ring-0"
-                        />
-                        <Button
-                          type="button"
-                          disabled={githubLinkSaving || !githubLinkUrl.trim()}
-                          onClick={() => void linkGitHubItem()}
-                          className="h-10 shrink-0 rounded-xl bg-ink text-background"
-                        >
-                          {githubLinkSaving && (
-                            <LoaderCircle className="animate-spin" />
-                          )}
-                          关联
-                        </Button>
+                    </section>
+                  ) : null}
+                  {!isDemo && (
+                    <div className="space-y-3 rounded-2xl border border-ink/10 bg-canvas p-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label htmlFor="github-item-url">
+                            GitHub Issue / PR
+                          </Label>
+                          <p className="mt-1 text-[10px] text-ink-faint">
+                            Webhook 会同步状态、合并结果和 CI。
+                          </p>
+                        </div>
+                        <GitBranch className="size-4 text-ink-faint" />
                       </div>
-                    )}
-                    {!editedTask?.githubLink && (
-                      <Link
-                        href={`/settings?project=${encodeURIComponent(activeProjectId ?? '')}`}
-                        className="inline-flex items-center gap-1 text-[10px] font-medium text-ink-subtle hover:text-ink"
-                      >
-                        先在设置中启用仓库 <ArrowUpRight className="size-3" />
-                      </Link>
-                    )}
-                  </div>
-                )}
-              </div>
-              <div className="space-y-5 lg:border-l lg:border-ink/10 lg:pl-6">
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <Label>附件</Label>
-                    <span className="text-[11px] text-ink-faint">
-                      {editedTask?.attachments?.length ?? 0}/10 · 单个最大 10 MB
-                    </span>
-                  </div>
-                  {Boolean(editedTask?.attachments?.length) && (
-                    <div className="grid grid-cols-2 gap-2">
-                      {editedTask?.attachments?.map((attachment) =>
-                        isPreviewableImage(attachment) ? (
-                          <div
-                            key={attachment.id}
-                            className="group/attachment relative overflow-hidden rounded-xl border border-ink/10 bg-canvas"
-                          >
+                      {editedTask?.githubLink ? (
+                        <div className="rounded-xl bg-card p-3">
+                          <div className="flex items-start justify-between gap-3">
                             <a
-                              href={attachment.url}
+                              href={editedTask.githubLink.url}
                               target="_blank"
                               rel="noreferrer"
-                              className="block"
-                              aria-label={`打开图片 ${attachment.name}`}
+                              className="min-w-0"
                             >
-                              <Image
-                                src={attachment.url}
-                                alt={attachment.name}
-                                width={640}
-                                height={360}
-                                unoptimized
-                                className="h-28 w-full object-cover sm:h-32"
-                              />
-                              <div className="flex items-center justify-between gap-2 px-2.5 py-2">
-                                <span className="truncate text-[11px] font-medium">
-                                  {attachment.name}
-                                </span>
-                                <span className="shrink-0 text-[10px] text-ink-faint">
-                                  {formatFileSize(attachment.size)}
-                                </span>
-                              </div>
-                            </a>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                void removeTaskAttachment(attachment)
-                              }
-                              className="absolute right-2 top-2 grid size-7 place-items-center rounded-full bg-ink/70 text-background opacity-100 backdrop-blur-sm transition-opacity hover:bg-ink sm:opacity-0 sm:group-hover/attachment:opacity-100"
-                              aria-label={`删除 ${attachment.name}`}
-                            >
-                              <X className="size-3.5" />
-                            </button>
-                          </div>
-                        ) : (
-                          <div
-                            key={attachment.id}
-                            className="col-span-2 flex items-center gap-3 rounded-xl border border-ink/10 bg-canvas p-3"
-                          >
-                            <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-ink/5 text-ink-subtle">
-                              <FileText className="size-4" />
-                            </div>
-                            <a
-                              href={attachment.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="min-w-0 flex-1"
-                            >
-                              <p className="truncate text-xs font-medium">
-                                {attachment.name}
+                              <p className="truncate text-xs font-semibold">
+                                {editedTask.githubLink.title}
                               </p>
-                              <p className="mt-0.5 text-[10px] text-ink-faint">
-                                {formatFileSize(attachment.size)}
+                              <p className="mt-1 truncate text-[10px] text-ink-faint">
+                                {editedTask.githubLink.repository} #
+                                {editedTask.githubLink.number} ·{' '}
+                                {editedTask.githubLink.state}
+                                {editedTask.githubLink.ciStatus
+                                  ? ` · CI ${editedTask.githubLink.ciStatus}`
+                                  : ''}
                               </p>
                             </a>
                             <Button
                               type="button"
                               variant="ghost"
-                              size="icon-sm"
+                              size="sm"
+                              disabled={githubLinkSaving}
+                              onClick={() => void unlinkGitHubItem()}
                               className="shrink-0 rounded-full text-ink-faint"
-                              onClick={() =>
-                                void removeTaskAttachment(attachment)
-                              }
-                              aria-label={`删除 ${attachment.name}`}
                             >
-                              <X />
+                              移除
                             </Button>
                           </div>
-                        ),
+                        </div>
+                      ) : (
+                        <div className="flex gap-2">
+                          <Input
+                            id="github-item-url"
+                            value={githubLinkUrl}
+                            onChange={(event) =>
+                              setGithubLinkUrl(event.target.value)
+                            }
+                            placeholder="https://github.com/org/repo/issues/123"
+                            className="h-10 rounded-xl border-ink/15 bg-card px-3 text-xs focus-visible:ring-0"
+                          />
+                          <Button
+                            type="button"
+                            disabled={githubLinkSaving || !githubLinkUrl.trim()}
+                            onClick={() => void linkGitHubItem()}
+                            className="h-10 shrink-0 rounded-xl bg-ink text-background"
+                          >
+                            {githubLinkSaving && (
+                              <LoaderCircle className="animate-spin" />
+                            )}
+                            关联
+                          </Button>
+                        </div>
+                      )}
+                      {!editedTask?.githubLink && (
+                        <Link
+                          href={`/settings?project=${encodeURIComponent(activeProjectId ?? '')}`}
+                          className="inline-flex items-center gap-1 text-[10px] font-medium text-ink-subtle hover:text-ink"
+                        >
+                          先在设置中启用仓库 <ArrowUpRight className="size-3" />
+                        </Link>
                       )}
                     </div>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => attachmentInput.current?.click()}
-                    onDragEnter={(event) => {
-                      event.preventDefault();
-                      setAttachmentDragActive(true);
-                    }}
-                    onDragOver={(event) => {
-                      event.preventDefault();
-                      event.dataTransfer.dropEffect = 'copy';
-                      setAttachmentDragActive(true);
-                    }}
-                    onDragLeave={(event) => {
-                      if (
-                        !event.currentTarget.contains(
-                          event.relatedTarget as Node | null,
-                        )
-                      )
-                        setAttachmentDragActive(false);
-                    }}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      setAttachmentDragActive(false);
-                      void uploadTaskAttachments(event.dataTransfer.files);
-                    }}
-                    className={cn(
-                      'flex min-h-24 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-ink/15 bg-canvas px-4 py-4 text-center outline-none transition-colors hover:border-ink/30 focus-visible:border-ink/30 focus-visible:ring-2 focus-visible:ring-acid',
-                      attachmentDragActive && 'border-acid bg-acid/10',
-                      attachmentUploading && 'pointer-events-none opacity-60',
-                    )}
-                  >
-                    {attachmentUploading ? (
-                      <LoaderCircle className="mb-2 size-5 animate-spin text-ink-subtle" />
-                    ) : (
-                      <Upload className="mb-2 size-5 text-ink-subtle" />
-                    )}
-                    <span className="text-xs font-medium">
-                      {attachmentUploading
-                        ? '正在上传附件…'
-                        : '拖拽文件到这里，或点击选择'}
-                    </span>
-                    <span className="mt-1 flex items-center gap-1 text-[10px] text-ink-faint">
-                      <ImageIcon className="size-3" /> 图片会自动生成预览
-                    </span>
-                  </button>
-                  <input
-                    ref={attachmentInput}
-                    type="file"
-                    multiple
-                    className="sr-only"
-                    onChange={(event) =>
-                      event.target.files &&
-                      void uploadTaskAttachments(event.target.files)
-                    }
-                  />
                 </div>
-                <section
-                  className="space-y-3 border-t border-ink/10 pt-5 lg:border-t-0 lg:pt-0"
-                  aria-labelledby="task-activity-title"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <Label id="task-activity-title">活动</Label>
-                      <p className="mt-1 text-[10px] text-ink-faint">
-                        成员、Coding Agent 与 GitHub 的最新进展
-                      </p>
-                    </div>
-                    {editedTask?.agentState && (
-                      <span className="flex max-w-[55%] items-center gap-1.5 rounded-full bg-acid/15 px-2.5 py-1 text-[10px] font-medium text-ink">
-                        <span className="size-1.5 shrink-0 rounded-full bg-acid" />
-                        <Bot className="size-3 shrink-0" />
-                        <span className="truncate">
-                          {editedTask.agentState.agentLabel ??
-                            editedTask.agentState.agentName}{' '}
-                          正在处理
-                        </span>
+                <div className="space-y-5 lg:border-l lg:border-ink/10 lg:pl-6">
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <Label>附件</Label>
+                      <span className="text-[11px] text-ink-faint">
+                        {editedTask?.attachments?.length ?? 0}/10 · 单个最大 10
+                        MB
                       </span>
-                    )}
-                  </div>
-                  {!isDemo && editedTask && (
-                    <TurnEditor
-                      key={`${editedTask.id}:${editedTask.turn?.since ?? 0}`}
-                      projectId={activeProjectId}
-                      taskId={editedTask.id}
-                      turn={editedTask.turn}
-                      members={members}
-                      onError={setSyncError}
-                      onChanged={(turn) => {
-                        setTasks((current) =>
-                          current.map((task) =>
-                            task.id === editedTask.id
-                              ? { ...task, turn: turn ?? undefined }
-                              : task,
-                          ),
-                        );
-                        setTurnQueue((current) =>
-                          current.filter(
-                            (item) =>
-                              item.taskId !== editedTask.id ||
-                              item.type === 'mention',
-                          ),
-                        );
-                      }}
-                    />
-                  )}
-                  <div className="rounded-2xl bg-canvas p-3">
-                    {taskActivityLoading && taskActivity.length === 0 ? (
-                      <div className="grid min-h-20 place-items-center">
-                        <LoaderCircle className="size-4 animate-spin text-ink-faint" />
-                      </div>
-                    ) : taskActivity.length > 0 ? (
-                      <div className="space-y-0">
-                        {taskActivity.map((activity, index) => (
-                          <article
-                            key={activity.id}
-                            className={cn(
-                              'relative flex gap-3 rounded-xl pb-4 last:pb-1',
-                              activity.kind.startsWith('github.ci.') &&
-                                isFailingCiStatus(
-                                  activity.kind.slice('github.ci.'.length),
-                                ) &&
-                                'mb-2 bg-[#c94032]/8 p-2 text-[#9d3026]',
-                            )}
-                          >
-                            {index < taskActivity.length - 1 && (
-                              <span className="absolute bottom-0 left-4 top-8 w-px bg-ink/10" />
-                            )}
-                            {activity.source === 'github' ? (
-                              <span
-                                className={cn(
-                                  'relative z-10 grid size-8 shrink-0 place-items-center rounded-full bg-card text-ink-subtle ring-1 ring-ink/10',
-                                  activity.kind.startsWith('github.ci.') &&
-                                    isFailingCiStatus(
-                                      activity.kind.slice('github.ci.'.length),
-                                    ) &&
-                                    'text-[#9d3026] ring-[#c94032]/30',
-                                )}
+                    </div>
+                    {Boolean(editedTask?.attachments?.length) && (
+                      <div className="grid grid-cols-2 gap-2">
+                        {editedTask?.attachments?.map((attachment) =>
+                          isPreviewableImage(attachment) ? (
+                            <div
+                              key={attachment.id}
+                              className="group/attachment relative overflow-hidden rounded-xl border border-ink/10 bg-canvas"
+                            >
+                              <a
+                                href={attachment.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="block"
+                                aria-label={`打开图片 ${attachment.name}`}
                               >
-                                {activity.kind.startsWith('github.ci.') &&
-                                isFailingCiStatus(
-                                  activity.kind.slice('github.ci.'.length),
-                                ) ? (
-                                  <CircleAlert className="size-3.5" />
-                                ) : (
-                                  <GitBranch className="size-3.5" />
-                                )}
-                              </span>
-                            ) : activity.source === 'agent' ? (
-                              <span className="relative z-10 grid size-8 shrink-0 place-items-center rounded-full bg-acid/25 text-ink ring-1 ring-acid/40">
-                                <Bot className="size-3.5" />
-                              </span>
-                            ) : (
-                              <Avatar
-                                size="sm"
-                                className="relative z-10 shrink-0"
-                              >
-                                <AvatarImage
-                                  src={activity.actor.avatarUrl ?? undefined}
-                                  alt=""
+                                <Image
+                                  src={attachment.url}
+                                  alt={attachment.name}
+                                  width={640}
+                                  height={360}
+                                  unoptimized
+                                  className="h-28 w-full object-cover sm:h-32"
                                 />
-                                <AvatarFallback className="bg-card text-[10px] font-semibold ring-1 ring-ink/10">
-                                  {activity.actor.name
-                                    .slice(0, 1)
-                                    .toUpperCase()}
-                                </AvatarFallback>
-                              </Avatar>
-                            )}
-                            <div className="min-w-0 flex-1 pt-0.5">
-                              <div className="flex items-start justify-between gap-2">
-                                <p className="text-[11px] font-medium leading-4 text-ink">
-                                  {activity.summary}
-                                </p>
-                                <time className="shrink-0 text-[9px] text-ink-faint">
-                                  {taskActivityTime(activity.createdAt)}
-                                </time>
-                              </div>
-                              {activity.body && (
-                                <p className="mt-1 whitespace-pre-wrap break-words text-[11px] leading-5 text-ink-subtle">
-                                  {activity.body}
-                                </p>
-                              )}
-                              {typeof activity.metadata?.url === 'string' && (
-                                <a
-                                  href={activity.metadata.url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-ink-subtle hover:text-ink"
-                                >
-                                  查看 GitHub{' '}
-                                  <ArrowUpRight className="size-3" />
-                                </a>
-                              )}
+                                <div className="flex items-center justify-between gap-2 px-2.5 py-2">
+                                  <span className="truncate text-[11px] font-medium">
+                                    {attachment.name}
+                                  </span>
+                                  <span className="shrink-0 text-[10px] text-ink-faint">
+                                    {formatFileSize(attachment.size)}
+                                  </span>
+                                </div>
+                              </a>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  void removeTaskAttachment(attachment)
+                                }
+                                className="absolute right-2 top-2 grid size-7 place-items-center rounded-full bg-ink/70 text-background opacity-100 backdrop-blur-sm transition-opacity hover:bg-ink sm:opacity-0 sm:group-hover/attachment:opacity-100"
+                                aria-label={`删除 ${attachment.name}`}
+                              >
+                                <X className="size-3.5" />
+                              </button>
                             </div>
-                          </article>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="grid min-h-20 place-items-center text-center text-[11px] text-ink-faint">
-                        还没有活动
+                          ) : (
+                            <div
+                              key={attachment.id}
+                              className="col-span-2 flex items-center gap-3 rounded-xl border border-ink/10 bg-canvas p-3"
+                            >
+                              <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-ink/5 text-ink-subtle">
+                                <FileText className="size-4" />
+                              </div>
+                              <a
+                                href={attachment.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="min-w-0 flex-1"
+                              >
+                                <p className="truncate text-xs font-medium">
+                                  {attachment.name}
+                                </p>
+                                <p className="mt-0.5 text-[10px] text-ink-faint">
+                                  {formatFileSize(attachment.size)}
+                                </p>
+                              </a>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon-sm"
+                                className="shrink-0 rounded-full text-ink-faint"
+                                onClick={() =>
+                                  void removeTaskAttachment(attachment)
+                                }
+                                aria-label={`删除 ${attachment.name}`}
+                              >
+                                <X />
+                              </Button>
+                            </div>
+                          ),
+                        )}
                       </div>
                     )}
-                    {taskActivityCursor && (
+                    <button
+                      type="button"
+                      onClick={() => attachmentInput.current?.click()}
+                      onDragEnter={(event) => {
+                        event.preventDefault();
+                        setAttachmentDragActive(true);
+                      }}
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                        event.dataTransfer.dropEffect = 'copy';
+                        setAttachmentDragActive(true);
+                      }}
+                      onDragLeave={(event) => {
+                        if (
+                          !event.currentTarget.contains(
+                            event.relatedTarget as Node | null,
+                          )
+                        )
+                          setAttachmentDragActive(false);
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        setAttachmentDragActive(false);
+                        void uploadTaskAttachments(event.dataTransfer.files);
+                      }}
+                      className={cn(
+                        'flex min-h-24 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-ink/15 bg-canvas px-4 py-4 text-center outline-none transition-colors hover:border-ink/30 focus-visible:border-ink/30 focus-visible:ring-2 focus-visible:ring-acid',
+                        attachmentDragActive && 'border-acid bg-acid/10',
+                        attachmentUploading && 'pointer-events-none opacity-60',
+                      )}
+                    >
+                      {attachmentUploading ? (
+                        <LoaderCircle className="mb-2 size-5 animate-spin text-ink-subtle" />
+                      ) : (
+                        <Upload className="mb-2 size-5 text-ink-subtle" />
+                      )}
+                      <span className="text-xs font-medium">
+                        {attachmentUploading
+                          ? '正在上传附件…'
+                          : '拖拽文件到这里，或点击选择'}
+                      </span>
+                      <span className="mt-1 flex items-center gap-1 text-[10px] text-ink-faint">
+                        <ImageIcon className="size-3" /> 图片会自动生成预览
+                      </span>
+                    </button>
+                    <input
+                      ref={attachmentInput}
+                      type="file"
+                      multiple
+                      className="sr-only"
+                      onChange={(event) =>
+                        event.target.files &&
+                        void uploadTaskAttachments(event.target.files)
+                      }
+                    />
+                  </div>
+                  <section
+                    className="space-y-3 border-t border-ink/10 pt-5 lg:border-t-0 lg:pt-0"
+                    aria-labelledby="task-activity-title"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <Label id="task-activity-title">活动</Label>
+                        <p className="mt-1 text-[10px] text-ink-faint">
+                          成员、Coding Agent 与 GitHub 的最新进展
+                        </p>
+                      </div>
+                      {editedTask?.agentState && (
+                        <span className="flex max-w-[55%] items-center gap-1.5 rounded-full bg-acid/15 px-2.5 py-1 text-[10px] font-medium text-ink">
+                          <span className="size-1.5 shrink-0 rounded-full bg-acid" />
+                          <Bot className="size-3 shrink-0" />
+                          <span className="truncate">
+                            {editedTask.agentState.agentLabel ??
+                              editedTask.agentState.agentName}{' '}
+                            正在处理
+                          </span>
+                        </span>
+                      )}
+                    </div>
+                    {!isDemo && editedTask && (
+                      <TurnEditor
+                        key={`${editedTask.id}:${editedTask.turn?.since ?? 0}`}
+                        projectId={activeProjectId}
+                        taskId={editedTask.id}
+                        turn={editedTask.turn}
+                        members={members}
+                        onError={setSyncError}
+                        onChanged={(turn) => {
+                          setTasks((current) =>
+                            current.map((task) =>
+                              task.id === editedTask.id
+                                ? { ...task, turn: turn ?? undefined }
+                                : task,
+                            ),
+                          );
+                          setTurnQueue((current) =>
+                            current.filter(
+                              (item) =>
+                                item.taskId !== editedTask.id ||
+                                item.type === 'mention',
+                            ),
+                          );
+                        }}
+                      />
+                    )}
+                    <div className="rounded-2xl bg-canvas p-3">
+                      {taskActivityLoading && taskActivity.length === 0 ? (
+                        <div className="grid min-h-20 place-items-center">
+                          <LoaderCircle className="size-4 animate-spin text-ink-faint" />
+                        </div>
+                      ) : taskActivity.length > 0 ? (
+                        <div className="space-y-0">
+                          {taskActivity.map((activity, index) => (
+                            <article
+                              key={activity.id}
+                              className={cn(
+                                'relative flex gap-3 rounded-xl pb-4 last:pb-1',
+                                activity.kind.startsWith('github.ci.') &&
+                                  isFailingCiStatus(
+                                    activity.kind.slice('github.ci.'.length),
+                                  ) &&
+                                  'mb-2 bg-[#c94032]/8 p-2 text-[#9d3026]',
+                              )}
+                            >
+                              {index < taskActivity.length - 1 && (
+                                <span className="absolute bottom-0 left-4 top-8 w-px bg-ink/10" />
+                              )}
+                              {activity.source === 'github' ? (
+                                <span
+                                  className={cn(
+                                    'relative z-10 grid size-8 shrink-0 place-items-center rounded-full bg-card text-ink-subtle ring-1 ring-ink/10',
+                                    activity.kind.startsWith('github.ci.') &&
+                                      isFailingCiStatus(
+                                        activity.kind.slice(
+                                          'github.ci.'.length,
+                                        ),
+                                      ) &&
+                                      'text-[#9d3026] ring-[#c94032]/30',
+                                  )}
+                                >
+                                  {activity.kind.startsWith('github.ci.') &&
+                                  isFailingCiStatus(
+                                    activity.kind.slice('github.ci.'.length),
+                                  ) ? (
+                                    <CircleAlert className="size-3.5" />
+                                  ) : (
+                                    <GitBranch className="size-3.5" />
+                                  )}
+                                </span>
+                              ) : activity.source === 'agent' ? (
+                                <span className="relative z-10 grid size-8 shrink-0 place-items-center rounded-full bg-acid/25 text-ink ring-1 ring-acid/40">
+                                  <Bot className="size-3.5" />
+                                </span>
+                              ) : (
+                                <Avatar
+                                  size="sm"
+                                  className="relative z-10 shrink-0"
+                                >
+                                  <AvatarImage
+                                    src={activity.actor.avatarUrl ?? undefined}
+                                    alt=""
+                                  />
+                                  <AvatarFallback className="bg-card text-[10px] font-semibold ring-1 ring-ink/10">
+                                    {activity.actor.name
+                                      .slice(0, 1)
+                                      .toUpperCase()}
+                                  </AvatarFallback>
+                                </Avatar>
+                              )}
+                              <div className="min-w-0 flex-1 pt-0.5">
+                                <div className="flex items-start justify-between gap-2">
+                                  <p className="text-[11px] font-medium leading-4 text-ink">
+                                    {activity.summary}
+                                  </p>
+                                  <time className="shrink-0 text-[9px] text-ink-faint">
+                                    {taskActivityTime(activity.createdAt)}
+                                  </time>
+                                </div>
+                                {activity.body && (
+                                  <p className="mt-1 whitespace-pre-wrap break-words text-[11px] leading-5 text-ink-subtle">
+                                    {activity.body}
+                                  </p>
+                                )}
+                                {typeof activity.metadata?.url === 'string' && (
+                                  <a
+                                    href={activity.metadata.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-ink-subtle hover:text-ink"
+                                  >
+                                    查看 GitHub{' '}
+                                    <ArrowUpRight className="size-3" />
+                                  </a>
+                                )}
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="grid min-h-20 place-items-center text-center text-[11px] text-ink-faint">
+                          还没有活动
+                        </div>
+                      )}
+                      {taskActivityCursor && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          disabled={taskActivityLoading}
+                          onClick={() => void loadOlderTaskActivity()}
+                          className="mt-2 w-full rounded-xl text-[11px] text-ink-faint"
+                        >
+                          {taskActivityLoading && (
+                            <LoaderCircle className="animate-spin" />
+                          )}
+                          加载更早活动
+                        </Button>
+                      )}
+                    </div>
+                    <div className="flex items-end gap-2">
+                      <div className="min-w-0 flex-1">
+                        <Label htmlFor="task-comment" className="sr-only">
+                          写一条评论
+                        </Label>
+                        <Textarea
+                          id="task-comment"
+                          value={taskComment}
+                          onChange={(event) =>
+                            setTaskComment(event.target.value)
+                          }
+                          onKeyDown={(event) => {
+                            if (
+                              (event.metaKey || event.ctrlKey) &&
+                              event.key === 'Enter'
+                            ) {
+                              event.preventDefault();
+                              void submitTaskComment();
+                            }
+                          }}
+                          maxLength={2000}
+                          placeholder="写一条评论…（@login 提醒成员，@login/agent 提醒其 agent）"
+                          className="min-h-11 resize-none rounded-xl border-ink/15 px-3 py-2.5 text-sm focus-visible:ring-0"
+                        />
+                      </div>
                       <Button
                         type="button"
-                        variant="ghost"
-                        size="sm"
-                        disabled={taskActivityLoading}
-                        onClick={() => void loadOlderTaskActivity()}
-                        className="mt-2 w-full rounded-xl text-[11px] text-ink-faint"
+                        size="icon"
+                        disabled={!taskComment.trim() || taskCommentSaving}
+                        onClick={() => void submitTaskComment()}
+                        className="shrink-0 rounded-xl bg-ink text-background"
+                        aria-label="发送评论"
                       >
-                        {taskActivityLoading && (
+                        {taskCommentSaving ? (
                           <LoaderCircle className="animate-spin" />
+                        ) : (
+                          <Send />
                         )}
-                        加载更早活动
                       </Button>
-                    )}
-                  </div>
-                  <div className="flex items-end gap-2">
-                    <div className="min-w-0 flex-1">
-                      <Label htmlFor="task-comment" className="sr-only">
-                        写一条评论
-                      </Label>
-                      <Textarea
-                        id="task-comment"
-                        value={taskComment}
-                        onChange={(event) => setTaskComment(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (
-                            (event.metaKey || event.ctrlKey) &&
-                            event.key === 'Enter'
-                          ) {
-                            event.preventDefault();
-                            void submitTaskComment();
-                          }
-                        }}
-                        maxLength={2000}
-                        placeholder="写一条评论…（@login 提醒成员，@login/agent 提醒其 agent）"
-                        className="min-h-11 resize-none rounded-xl border-ink/15 px-3 py-2.5 text-sm focus-visible:ring-0"
-                      />
                     </div>
-                    <Button
-                      type="button"
-                      size="icon"
-                      disabled={!taskComment.trim() || taskCommentSaving}
-                      onClick={() => void submitTaskComment()}
-                      className="shrink-0 rounded-xl bg-ink text-background"
-                      aria-label="发送评论"
-                    >
-                      {taskCommentSaving ? (
-                        <LoaderCircle className="animate-spin" />
-                      ) : (
-                        <Send />
-                      )}
-                    </Button>
-                  </div>
-                  <p className="flex items-center gap-1 text-[10px] text-ink-faint">
-                    <MessageCircle className="size-3" /> ⌘/Ctrl + Enter 发送
+                    <p className="flex items-center gap-1 text-[10px] text-ink-faint">
+                      <MessageCircle className="size-3" /> ⌘/Ctrl + Enter 发送
+                    </p>
+                  </section>
+                </div>
+              </div>
+              <div className="mt-5 flex shrink-0 items-center justify-between gap-3 border-t border-ink/10 pt-4">
+                <div className="flex min-w-0 items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={taskLifecycleSaving || taskSaving}
+                    onClick={() => void archiveCurrentTask()}
+                    className="shrink-0 rounded-full px-2 text-ink-faint hover:text-ink"
+                  >
+                    <Archive /> 归档
+                  </Button>
+                  <p className="hidden items-center gap-1.5 text-[11px] text-ink-faint sm:flex">
+                    {taskSaving && (
+                      <LoaderCircle className="size-3 animate-spin" />
+                    )}
+                    {taskSaving
+                      ? '正在自动保存…'
+                      : taskHasUnsavedChanges
+                        ? '等待自动保存…'
+                        : '所有修改已保存'}
                   </p>
-                </section>
-              </div>
-            </div>
-            <div className="mt-5 flex shrink-0 items-center justify-between gap-3 border-t border-ink/10 pt-4">
-              <div className="flex min-w-0 items-center gap-1">
+                </div>
                 <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  disabled={taskLifecycleSaving || taskSaving}
-                  onClick={() => void archiveCurrentTask()}
-                  className="shrink-0 rounded-full px-2 text-ink-faint hover:text-ink"
+                  type="submit"
+                  disabled={
+                    taskLifecycleSaving ||
+                    !taskDraft.title.trim() ||
+                    taskDraft.ownerIds.length < 1
+                  }
+                  className="rounded-full bg-acid px-5 text-ink hover:bg-acid/80"
                 >
-                  <Archive /> 归档
+                  完成
                 </Button>
-                <p className="hidden items-center gap-1.5 text-[11px] text-ink-faint sm:flex">
-                  {taskSaving && (
-                    <LoaderCircle className="size-3 animate-spin" />
-                  )}
-                  {taskSaving
-                    ? '正在自动保存…'
-                    : taskHasUnsavedChanges
-                      ? '等待自动保存…'
-                      : '所有修改已保存'}
-                </p>
               </div>
-              <Button
-                type="submit"
-                disabled={
-                  taskLifecycleSaving ||
-                  !taskDraft.title.trim() ||
-                  taskDraft.ownerIds.length < 1
-                }
-                className="rounded-full bg-acid px-5 text-ink hover:bg-acid/80"
-              >
-                完成
-              </Button>
-            </div>
-          </form>
+            </form>
+          </dialog>
         </div>
       )}
 

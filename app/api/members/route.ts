@@ -10,6 +10,12 @@ import {
   removeProjectMember,
 } from '@/lib/db';
 import {
+  createInstallationToken,
+  getGitHubAppConfig,
+  resolveGitHubLogin,
+} from '@/lib/github';
+import { projectGitHubInstallation } from '@/lib/github-db';
+import {
   isJsonContentType,
   readJsonObjectWithLimit,
 } from '@/lib/request-limits';
@@ -18,6 +24,19 @@ export const dynamic = 'force-dynamic';
 
 function projectIdFrom(request: Request): string {
   return new URL(request.url).searchParams.get('projectId')?.trim() ?? '';
+}
+
+async function installationToken(projectId: string) {
+  const config = getGitHubAppConfig();
+  if (!config) return null;
+  try {
+    const installation = await projectGitHubInstallation(projectId);
+    return installation
+      ? await createInstallationToken(config, installation.installation_id)
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function GET(request: Request) {
@@ -66,9 +85,17 @@ export async function POST(request: Request) {
   }
   if ((await getProjectRole(projectId, user.id)) !== 'owner')
     return Response.json({ error: 'Owner required' }, { status: 403 });
-  await inviteProjectMember(projectId, user.id, identity);
+  const result = await inviteProjectMember(
+    projectId,
+    user.id,
+    identity,
+    async (login) =>
+      resolveGitHubLogin(login, await installationToken(projectId)),
+  );
+  if (result === 'not_found')
+    return Response.json({ error: 'GitHub user not found' }, { status: 404 });
   return Response.json(
-    { members: await listProjectMembers(projectId) },
+    { result, members: await listProjectMembers(projectId) },
     { status: 201 },
   );
 }

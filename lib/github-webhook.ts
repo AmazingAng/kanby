@@ -37,8 +37,14 @@ export async function processGitHubWebhook(
   event: string,
   deliveryId: string,
   raw: string,
-  onlyProjectId?: string,
+  options: {
+    /** Only this project's tasks and activity are touched. */
+    onlyProjectId?: string;
+    /** History backfill: record events, links and activity, never move cards. */
+    backfill?: boolean;
+  } = {},
 ) {
+  const { onlyProjectId } = options;
   const payload = JSON.parse(raw) as WebhookPayload;
   const installationId = String(payload.installation?.id ?? '');
   const repositoryId = String(payload.repository?.id ?? '');
@@ -99,13 +105,20 @@ export async function processGitHubWebhook(
           deliveryId,
           actorLogin,
           actorAvatarUrl,
+          projectId: onlyProjectId,
         });
       }
       const automationTrigger =
         kind === 'pull_request' &&
         ['opened', 'reopened', 'ready_for_review'].includes(action)
           ? ('pull_request_opened' as const)
-          : (kind === 'issue' && action === 'closed') ||
+          : // An issue closed as "not planned" (or a duplicate) was not
+            // delivered, so it must not complete the card.
+            (kind === 'issue' &&
+                action === 'closed' &&
+                !['not_planned', 'duplicate'].includes(
+                  text(item.state_reason),
+                )) ||
               (kind === 'pull_request' &&
                 action === 'closed' &&
                 item.merged === true)
@@ -119,8 +132,9 @@ export async function processGitHubWebhook(
         state: item.merged === true ? 'merged' : text(item.state, action),
         url: targetUrl,
         branch: branch || null,
-        automationTrigger,
+        automationTrigger: options.backfill ? undefined : automationTrigger,
         activity: { deliveryId, action, actorLogin, actorAvatarUrl, summary },
+        projectId: onlyProjectId,
       });
     }
   } else if (event === 'workflow_run') {
@@ -131,13 +145,13 @@ export async function processGitHubWebhook(
     targetUrl = text(run.html_url) || null;
     summary = `${repoName} · ${branch || 'workflow'} · ${status}`;
     if (branch)
-      await updateLinkedTaskCi(repositoryId, branch, status, {
-        deliveryId,
-        action,
-        actorLogin,
-        actorAvatarUrl,
-        summary,
-      });
+      await updateLinkedTaskCi(
+        repositoryId,
+        branch,
+        status,
+        { deliveryId, action, actorLogin, actorAvatarUrl, summary },
+        onlyProjectId,
+      );
   } else if (event === 'push') {
     const commits = Array.isArray(payload.commits)
       ? payload.commits
@@ -153,13 +167,12 @@ export async function processGitHubWebhook(
     const branch = text(payload.ref).replace('refs/heads/', '');
     summary = `${repoName} · ${branch || 'push'}`;
     if (branch) {
-      await recordLinkedTaskPush(repositoryId, branch, {
-        deliveryId,
-        action,
-        actorLogin,
-        actorAvatarUrl,
-        summary,
-      });
+      await recordLinkedTaskPush(
+        repositoryId,
+        branch,
+        { deliveryId, action, actorLogin, actorAvatarUrl, summary },
+        onlyProjectId,
+      );
       await recordReferencedPush({
         repositoryId,
         branch,
@@ -168,6 +181,7 @@ export async function processGitHubWebhook(
         actorLogin,
         actorAvatarUrl,
         url: targetUrl,
+        projectId: onlyProjectId,
       });
     }
   }

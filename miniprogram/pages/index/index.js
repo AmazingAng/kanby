@@ -65,6 +65,7 @@ Page({
     nextCursor: null,
     comment: '',
     pairingCode: '',
+    pairingFingerprint: '',
     pairingUntil: '',
     user: null,
     userInitial: '',
@@ -194,6 +195,7 @@ Page({
           userInitial: '',
           projects: [],
           pairingCode: result.pairingCode,
+          pairingFingerprint: result.fingerprint || '',
           pairingUntil: new Date(result.expiresAt).toLocaleTimeString(),
         });
         return;
@@ -201,7 +203,11 @@ Page({
       wx.setStorageSync(tokenKey, result.token);
       context.token = result.token;
       this.clearContent();
-      this.setData({ pairingCode: '', pairingUntil: '' });
+      this.setData({
+        pairingCode: '',
+        pairingFingerprint: '',
+        pairingUntil: '',
+      });
       await this.loadProjects();
     });
   },

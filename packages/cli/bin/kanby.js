@@ -95,27 +95,127 @@ function positional() {
 }
 
 async function readConfig() {
+  let config;
   try {
-    return JSON.parse(await readFile(configPath, 'utf8'));
+    config = JSON.parse(await readFile(configPath, 'utf8'));
   } catch {
-    return {};
+    return { servers: {} };
   }
+  if (!config || typeof config !== 'object') return { servers: {} };
+  // Tokens are stored per server origin. Older configs kept one token next to
+  // one URL; read them as a token for that URL only.
+  const servers =
+    config.servers && typeof config.servers === 'object' ? config.servers : {};
+  if (typeof config.token === 'string' && config.token) {
+    try {
+      const legacyUrl = normalizeServerUrl(config.url || DEFAULT_URL);
+      servers[legacyUrl] ??= { token: config.token };
+    } catch {
+      // An invalid legacy URL never receives the legacy token.
+    }
+  }
+  return { url: config.url, servers };
 }
 
 async function saveConfig(config) {
   await mkdir(dirname(configPath), { recursive: true, mode: 0o700 });
-  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, {
-    mode: 0o600,
-  });
+  await writeFile(
+    configPath,
+    `${JSON.stringify({ version: 2, url: config.url, servers: config.servers }, null, 2)}\n`,
+    { mode: 0o600 },
+  );
   await chmod(configPath, 0o600);
 }
 
 async function credentials() {
   const config = await readConfig();
+  const url = normalizeServerUrl(
+    process.env.KANBY_URL || config.url || DEFAULT_URL,
+  );
   return {
-    url: normalizeServerUrl(process.env.KANBY_URL || config.url || DEFAULT_URL),
-    token: process.env.KANBY_TOKEN || config.token || '',
+    url,
+    // A saved token is only ever sent to the origin it was saved for, so a
+    // KANBY_URL override cannot leak another server's token.
+    token: process.env.KANBY_TOKEN || config.servers[url]?.token || '',
   };
+}
+
+/**
+ * Reads the token from stdin up to the first newline or EOF. A pipe that never
+ * sends anything fails after a timeout instead of hanging.
+ */
+function readStdinToken(timeoutMs = 10_000) {
+  return new Promise((resolve, reject) => {
+    let value = '';
+    const input = process.stdin;
+    const finish = (error) => {
+      clearTimeout(timer);
+      input.removeListener('data', onData);
+      input.removeListener('end', onEnd);
+      input.pause();
+      if (error) reject(error);
+      else resolve(value.split(/\r?\n/)[0].trim());
+    };
+    const onData = (chunk) => {
+      value += chunk;
+      if (value.includes('\n') || value.length > 4096) finish();
+    };
+    const onEnd = () => finish();
+    const timer = setTimeout(
+      () => finish(new Error('Timed out waiting for the token on stdin')),
+      timeoutMs,
+    );
+    input.setEncoding('utf8');
+    input.on('data', onData);
+    input.on('end', onEnd);
+    input.resume();
+  });
+}
+
+function promptHidden(question) {
+  return new Promise((resolve, reject) => {
+    const input = process.stdin;
+    let value = '';
+    process.stderr.write(question);
+    input.setRawMode(true);
+    input.resume();
+    input.setEncoding('utf8');
+    const finish = (error) => {
+      input.setRawMode(false);
+      input.pause();
+      input.removeListener('data', onData);
+      process.stderr.write('\n');
+      if (error) reject(error);
+      else resolve(value.trim());
+    };
+    const onData = (chunk) => {
+      for (const character of chunk) {
+        if (character === '\u0003') return finish(new Error('Cancelled'));
+        if (character === '\r' || character === '\n') return finish();
+        if (character === '\u007f' || character === '\b')
+          value = value.slice(0, -1);
+        else value += character;
+      }
+    };
+    input.on('data', onData);
+  });
+}
+
+/** --token-stdin, the hidden prompt, KANBY_TOKEN, or --token (discouraged). */
+async function loginToken() {
+  const flag = option('token', undefined);
+  if (flag !== undefined) {
+    console.error(
+      'Warning: --token exposes the token in shell history and process lists. Prefer --token-stdin or the prompt.',
+    );
+    return String(flag);
+  }
+  if (has('token-stdin')) return readStdinToken();
+  if (process.env.KANBY_TOKEN) return process.env.KANBY_TOKEN;
+  if (process.stdin.isTTY) return promptHidden('Kanby Agent Token: ');
+  throw new Error(
+    'No terminal for the token prompt: pipe it with --token-stdin or set KANBY_TOKEN',
+  );
 }
 
 function apiError(status, payload) {
@@ -130,7 +230,7 @@ async function request(path, init = {}, credentialOverride) {
   const { url, token } = credentialOverride ?? (await credentials());
   if (!token) {
     const error = new Error(
-      'Not authenticated. Set KANBY_TOKEN or run: kanby auth login --token <TOKEN>',
+      'Not authenticated. Set KANBY_TOKEN or run: kanby auth login',
     );
     error.status = 401;
     throw error;
@@ -279,7 +379,7 @@ function usage() {
   return `Kanby CLI
 
 Usage:
-  kanby auth login --token <TOKEN> [--url <URL>]
+  kanby auth login [--url <URL>] [--token-stdin]   (token from the prompt, stdin or KANBY_TOKEN)
   kanby auth status [--json]
   kanby project list [--json]
   kanby report --from YYYY-MM-DD --to YYYY-MM-DD [--timezone Asia/Shanghai] [--json]
@@ -411,16 +511,21 @@ async function main() {
     return;
   }
   if (group === 'auth' && command === 'login') {
-    const token = String(option('token', process.env.KANBY_TOKEN || ''));
     const url = normalizeServerUrl(
       option('url', process.env.KANBY_URL || DEFAULT_URL),
     );
+    const token = await loginToken();
     if (!token.startsWith('kby_'))
-      throw new Error('Pass a Kanby Agent Token with --token or KANBY_TOKEN');
+      throw new Error(
+        'Pass a Kanby Agent Token at the prompt, with --token-stdin, or with KANBY_TOKEN',
+      );
     const project = (await api('/api/v1/projects', {}, { token, url }))[0];
     if (!project) throw new Error('The Agent Token does not have a project');
     const current = await readConfig();
-    await saveConfig({ ...current, token, url });
+    await saveConfig({
+      url,
+      servers: { ...current.servers, [url]: { token } },
+    });
     console.log(`Authenticated for ${project.name} (${project.slug})`);
     return;
   }

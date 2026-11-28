@@ -13,6 +13,8 @@ import {
   SESSION_COOKIE,
 } from '@/lib/auth';
 
+import { createMigratedDatabase, type TestD1Database } from './support/d1';
+
 const runtime = env as Record<string, unknown>;
 const strongSecret = '0123456789abcdef0123456789abcdef';
 
@@ -30,8 +32,16 @@ function configureAuth(overrides: Record<string, string> = {}) {
 }
 
 describe('OAuth and session security boundaries', () => {
-  beforeEach(() => configureAuth());
-  afterEach(() => vi.useRealTimers());
+  let database: TestD1Database;
+  beforeEach(() => {
+    database = createMigratedDatabase();
+    runtime.DB = database;
+    configureAuth();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    database.close();
+  });
 
   it('canonicalizes local OAuth return paths and rejects browser-normalized external targets', () => {
     expect(safeReturnTo('/settings?project=one#github')).toBe(

@@ -1,11 +1,19 @@
 'use client';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+type MiniSession = { id: number; createdAt: number; expiresAt: number };
 type AccountState = {
   linked: boolean;
+  linkedAt?: number | null;
+  fingerprint?: string | null;
+  lastLoginAt?: number | null;
+  sessions?: MiniSession[];
   user?: { login: string; name: string };
   error?: string;
 };
+function formatTime(value: number | null | undefined) {
+  return value ? new Date(value).toLocaleString('zh-CN') : '—';
+}
 async function loadAccount(): Promise<AccountState> {
   const response = await fetch('/api/mini/account', { cache: 'no-store' });
   const data = (await response.json()) as AccountState;
@@ -13,10 +21,7 @@ async function loadAccount(): Promise<AccountState> {
   return data;
 }
 export function MiniAccount() {
-  const [state, setState] = useState<{
-    linked: boolean;
-    user?: { login: string; name: string };
-  } | null>(null);
+  const [state, setState] = useState<AccountState | null>(null);
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -34,35 +39,60 @@ export function MiniAccount() {
       active = false;
     };
   }, []);
-  async function change(method: 'POST' | 'DELETE') {
+  async function request(method: 'POST' | 'DELETE', body?: unknown) {
+    const response = await fetch('/api/mini/account', {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const data = (await response.json()) as AccountState & {
+      fingerprint?: string;
+    };
+    if (!response.ok) throw new Error(data.error);
+    return data;
+  }
+  async function run(action: () => Promise<boolean>) {
     if (busy) return;
-    if (
-      !window.confirm(
-        method === 'POST'
-          ? `确认将你自己小程序中的微信绑定到 @${state?.user?.login}？不要使用他人提供的绑定码。`
-          : '确认解除微信小程序登录？所有小程序会话将立即失效。',
-      )
-    )
-      return;
     setBusy(true);
     setError('');
     try {
-      const response = await fetch('/api/mini/account', {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        ...(method === 'POST'
-          ? { body: JSON.stringify({ pairingCode: code.trim() }) }
-          : {}),
-      });
-      const data = (await response.json()) as AccountState;
-      if (!response.ok) throw new Error(data.error);
-      setCode('');
-      setState(await loadAccount());
+      if (await action()) setState(await loadAccount());
     } catch (e) {
       setError(e instanceof Error ? e.message : '操作失败');
     } finally {
       setBusy(false);
     }
+  }
+  function bind() {
+    void run(async () => {
+      const pairingCode = code.trim();
+      // Show which WeChat the code belongs to before anything is bound.
+      const preview = await request('POST', { pairingCode, preview: true });
+      if (
+        !window.confirm(
+          `这个绑定码来自微信识别码 ${preview.fingerprint}。\n请确认它与你自己小程序里显示的识别码一致，再绑定到 @${state?.user?.login}。不要使用他人提供的绑定码。`,
+        )
+      )
+        return false;
+      await request('POST', { pairingCode });
+      setCode('');
+      return true;
+    });
+  }
+  function unlink() {
+    if (!window.confirm('确认解除微信小程序登录？所有小程序会话将立即失效。'))
+      return;
+    void run(async () => {
+      await request('DELETE');
+      return true;
+    });
+  }
+  function revokeSession(sessionId: number) {
+    if (!window.confirm('确认让这个小程序会话退出登录？')) return;
+    void run(async () => {
+      await request('DELETE', { sessionId });
+      return true;
+    });
   }
   return (
     <main className="mx-auto max-w-lg px-6 py-16">
@@ -96,9 +126,43 @@ export function MiniAccount() {
           {state.linked ? (
             <>
               <p>已绑定微信小程序登录。</p>
+              <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+                <dt className="text-muted-foreground">微信识别码</dt>
+                <dd className="font-mono">{state.fingerprint ?? '—'}</dd>
+                <dt className="text-muted-foreground">绑定时间</dt>
+                <dd>{formatTime(state.linkedAt)}</dd>
+                <dt className="text-muted-foreground">最近登录</dt>
+                <dd>{formatTime(state.lastLoginAt)}</dd>
+              </dl>
+              <p className="text-sm text-muted-foreground">
+                识别码应与你自己小程序里显示的一致；不一致或不是你本人绑定，请立即解除绑定。
+              </p>
+              {state.sessions && state.sessions.length > 0 && (
+                <ul className="space-y-2 text-sm">
+                  {state.sessions.map((session) => (
+                    <li
+                      key={session.id}
+                      className="flex items-center justify-between gap-3 rounded-xl border p-3"
+                    >
+                      <span>
+                        登录于 {formatTime(session.createdAt)}，
+                        {formatTime(session.expiresAt)} 过期
+                      </span>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => revokeSession(session.id)}
+                        className="shrink-0 underline"
+                      >
+                        退出此会话
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
               <button
                 disabled={busy}
-                onClick={() => void change('DELETE')}
+                onClick={unlink}
                 className="rounded-xl border px-5 py-3"
               >
                 解除绑定
@@ -124,7 +188,7 @@ export function MiniAccount() {
               />
               <button
                 disabled={busy || code.trim().length !== 43}
-                onClick={() => void change('POST')}
+                onClick={bind}
                 className="rounded-xl bg-foreground px-5 py-3 text-background disabled:opacity-50"
               >
                 确认绑定到当前账号

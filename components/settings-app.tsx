@@ -102,6 +102,7 @@ type GitHubDiagnostics = {
   failures: Array<{
     id: string;
     event: string;
+    abandoned?: boolean;
     attempts: number;
     error: string | null;
     updatedAt: number;
@@ -326,7 +327,8 @@ export function SettingsApp() {
           identity: identity.trim(),
         }),
       });
-      if (!response.ok) throw new Error('invite');
+      if (!response.ok)
+        throw new Error(response.status === 404 ? 'not_found' : 'invite');
       const payload = (await response.json()) as { members: ProjectMember[] };
       setMembers(payload.members);
       setProjects((current) =>
@@ -337,8 +339,12 @@ export function SettingsApp() {
         ),
       );
       setIdentity('');
-    } catch {
-      setError('成员添加失败，请检查 GitHub 用户名或邮箱。');
+    } catch (error) {
+      setError(
+        error instanceof Error && error.message === 'not_found'
+          ? 'GitHub 上找不到这个用户名，请检查拼写。'
+          : '成员添加失败，请检查 GitHub 用户名或邮箱。',
+      );
     }
   }
 
@@ -896,6 +902,9 @@ export function SettingsApp() {
                             <p className="mt-3 truncate border-t border-ink/10 pt-3 text-[10px] text-[#9d3026]">
                               最近失败：{githubDiagnostics.failures[0].event} ·
                               尝试 {githubDiagnostics.failures[0].attempts} 次 ·{' '}
+                              {githubDiagnostics.failures[0].abandoned
+                                ? '已停止重试 · '
+                                : ''}
                               {githubDiagnostics.failures[0].error ??
                                 '等待重试'}
                             </p>

@@ -14,7 +14,7 @@ import {
 import {
   hasActiveProjectMembership,
   hasPendingProjectInvitation,
-  registerUserAndAcceptInvitations,
+  registerOAuthUser,
 } from '@/lib/db';
 import { recoverySnapshot } from '@/lib/recovery';
 
@@ -103,7 +103,11 @@ async function githubUserAccess(
       config.allowedTeams.has(`${organization}/${slug}`),
     );
   });
-  const invited = await hasPendingProjectInvitation(username, verifiedEmails);
+  const invited = await hasPendingProjectInvitation(
+    username,
+    verifiedEmails,
+    String(profile.id),
+  );
   const githubAdminAccountIds = [
     String(profile.id),
     ...memberships
@@ -212,7 +216,7 @@ export async function GET(request: Request) {
         status: 403,
       });
   } else {
-    await registerUserAndAcceptInvitations(user, access.verifiedEmails);
+    await registerOAuthUser(user, access.verifiedEmails);
   }
   const session = await createSessionToken(user, config.sessionSecret);
   const secure = config.origin.startsWith('https://');

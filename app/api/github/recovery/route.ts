@@ -4,7 +4,7 @@ import {
   isSameOriginMutation,
 } from '@/lib/auth';
 import { getProjectRole } from '@/lib/db';
-import { getGitHubAppConfig, verifyGitHubWebhook } from '@/lib/github';
+import { getGitHubAppConfig, verifyRecoveryRequest } from '@/lib/github';
 import {
   backfillGitHubProject,
   diagnoseGitHubProject,
@@ -33,13 +33,12 @@ export async function POST(request: Request) {
   const app = getGitHubAppConfig();
   if (request.headers.get('x-kanby-scheduled') === '1' && app) {
     const raw = await request.text();
-    const valid = await verifyGitHubWebhook(
+    const valid = await verifyRecoveryRequest(
       raw,
       request.headers.get('x-kanby-signature'),
       app.webhookSecret,
     );
-    if (!valid || raw !== 'kanby-recovery-v1')
-      return Response.json({ error: 'Forbidden' }, { status: 403 });
+    if (!valid) return Response.json({ error: 'Forbidden' }, { status: 403 });
     return Response.json(await runGitHubRecovery());
   }
 

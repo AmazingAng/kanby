@@ -14,10 +14,23 @@ export const users = sqliteTable(
     login: text('login').notNull(),
     name: text('name').notNull(),
     avatarUrl: text('avatar_url'),
+    // Browser sessions issued at or before this time (ms) are rejected.
+    sessionsRevokedAt: integer('sessions_revoked_at'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
   },
   (table) => [uniqueIndex('idx_users_login').on(table.login)],
+);
+
+/** Logged-out browser session ids, kept until the cookie would expire. */
+export const sessionRevocations = sqliteTable(
+  'session_revocations',
+  {
+    sid: text('sid').primaryKey(),
+    userId: text('user_id').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+  },
+  (table) => [index('idx_session_revocations_expiry').on(table.expiresAt)],
 );
 
 export const projects = sqliteTable(
@@ -27,6 +40,8 @@ export const projects = sqliteTable(
     name: text('name').notNull(),
     slug: text('slug'),
     ownerId: text('owner_id'),
+    // Highest KANBY-n ever issued; never decreases, so numbers are not reused.
+    lastTaskNumber: integer('last_task_number').notNull().default(0),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
   },
@@ -56,6 +71,9 @@ export const projectInvitations = sqliteTable(
     id: text('id').primaryKey(),
     projectId: text('project_id').notNull(),
     identity: text('identity').notNull(),
+    // GitHub user id the login resolved to when invited (null for e-mail or
+    // when GitHub was unreachable); binds the invitation to that account.
+    githubUserId: text('github_user_id'),
     invitedBy: text('invited_by').notNull(),
     createdAt: integer('created_at').notNull(),
     acceptedAt: integer('accepted_at'),
@@ -397,6 +415,7 @@ export const githubRedeliveryAttempts = sqliteTable(
     deliveryId: text('delivery_id').primaryKey(),
     guid: text('guid').notNull(),
     attemptedAt: integer('attempted_at').notNull(),
+    attemptCount: integer('attempt_count').notNull().default(1),
   },
   (table) => [uniqueIndex('idx_github_redelivery_guid').on(table.guid)],
 );
@@ -586,11 +605,20 @@ export const notificationDeliveries = sqliteTable(
     eventKind: text('event_kind').notNull(),
     status: text('status').notNull(),
     error: text('error'),
+    // Who the delivery was for: `user:<id>` or `channel:<id>` for a project
+    // bot. Used to coalesce and cap notifications per recipient.
+    recipientKey: text('recipient_key'),
+    // Member who caused the notification; mention caps are per sender.
+    senderKey: text('sender_key'),
     createdAt: integer('created_at').notNull(),
   },
   (table) => [
     index('idx_notification_deliveries_project').on(
       table.projectId,
+      table.createdAt,
+    ),
+    index('idx_notification_deliveries_recipient').on(
+      table.recipientKey,
       table.createdAt,
     ),
   ],

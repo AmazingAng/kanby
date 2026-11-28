@@ -254,6 +254,10 @@ describe('WeChat binding flow', () => {
     ).item_list[0]!.text_item.text;
     expect(text).toContain('轮到 Alice（待验收）');
 
+    // Move the first delivery out of the coalescing window.
+    database.sqlite.exec(
+      'UPDATE notification_deliveries SET created_at = created_at - 600000',
+    );
     // An expired bot token falls back to the personal WeCom bot.
     sendResult = { ret: -14, errmsg: 'session timeout' };
     calls = [];

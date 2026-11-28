@@ -78,6 +78,11 @@ platform schedules that invoke the Worker's `scheduled()` handler. Do not also
 enable the legacy HTTP `/__kanby_recovery` schedule. The handler internally
 signs its call to the existing GitHub recovery route using the environment's
 `GITHUB_WEBHOOK_SECRET`; no signature needs to be copied into a schedule body.
+The signed body is `kanby-recovery-v2:<unix ms>` and the route rejects
+signatures older than five minutes, so a captured signature cannot be replayed.
+The constant `kanby-recovery-v1` signature is no longer accepted; the legacy
+`/__kanby_recovery` endpoint requires `{timestamp, signature}` with the same
+freshness, which a static schedule body cannot provide.
 
 The current production schedule `29c4626a-1f34-8eb3-a6c2-231c81936ce0` runs
 `*/10 * * * *`. The old HTTP schedule
