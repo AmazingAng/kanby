@@ -5,6 +5,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { zhCN } from 'date-fns/locale/zh-CN';
 import { taskLoginReturnTo } from '@/lib/task-deep-link';
+import { KanbyIcon } from '@/components/kanby-icon';
 import {
   closestCorners,
   closestCenter,
@@ -55,7 +56,6 @@ import {
   Search,
   Send,
   Settings,
-  Sparkles,
   RotateCcw,
   Trash2,
   UserPlus,
@@ -1030,9 +1030,7 @@ function LoginScreen({ returnTo = '/' }: { returnTo?: string }) {
     <main className="grid min-h-dvh place-items-center bg-background p-4 pb-[max(1rem,env(safe-area-inset-bottom))] text-foreground sm:p-5">
       <section className="w-full max-w-md rounded-[24px] border border-ink/10 bg-card p-6 shadow-[0_30px_100px_rgba(20,20,15,0.08)] sm:rounded-[28px] sm:p-9">
         <div className="mb-8 flex items-center gap-3 sm:mb-10">
-          <div className="grid size-9 place-items-center rounded-[11px] bg-ink text-background">
-            <Sparkles className="size-4" />
-          </div>
+          <KanbyIcon className="size-9 rounded-[11px]" />
           <div>
             <p className="text-base font-bold tracking-tight">kanby</p>
             <p className="text-[10px] uppercase tracking-[0.14em] text-ink-faint">
@@ -2982,7 +2980,7 @@ export function KanbanApp({
               className="grid size-8 place-items-center rounded-[10px] bg-ink text-background"
               aria-label="返回 Kanby"
             >
-              <Sparkles className="size-4" />
+              <KanbyIcon />
             </Link>
             <div className="relative">
               <div className="flex items-center gap-2">

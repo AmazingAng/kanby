@@ -17,6 +17,14 @@ export const metadata: Metadata = {
   metadataBase: new URL(process.env.PUBLIC_APP_ORIGIN ?? 'https://kanby.dev'),
   title: 'Kanby — 少开会，多交付',
   description: '为 1–3 人 vibe coding 团队打造的极简 Kanban。',
+  icons: {
+    icon: {
+      url: '/kanby-avatar-v1.png',
+      type: 'image/png',
+      sizes: '1254x1254',
+    },
+    apple: { url: '/kanby-avatar-v1.png', sizes: '1254x1254' },
+  },
   openGraph: {
     title: 'Kanby — 少开会，多交付',
     description: '为 1–3 人 vibe coding 团队打造的极简 Kanban。',

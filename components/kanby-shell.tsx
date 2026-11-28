@@ -2,7 +2,8 @@
 
 /* oxlint-disable next/no-html-link-for-pages -- vinext RSC Link navigation is unstable on the Worker runtime; force document navigation. */
 
-import { LayoutGrid, LogOut, Settings, Sparkles } from 'lucide-react';
+import { LayoutGrid, LogOut, Settings } from 'lucide-react';
+import { KanbyIcon } from '@/components/kanby-icon';
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -22,9 +23,7 @@ export function KanbyMark({ href = '/app' }: { href?: string }) {
       className="flex items-center gap-2.5"
       aria-label="Kanby 首页"
     >
-      <span className="grid size-8 place-items-center rounded-[10px] bg-ink text-background">
-        <Sparkles className="size-4" />
-      </span>
+      <KanbyIcon />
       <span className="text-[15px] font-bold tracking-[-0.03em]">kanby</span>
     </a>
   );
