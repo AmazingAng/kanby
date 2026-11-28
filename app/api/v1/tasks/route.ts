@@ -337,35 +337,51 @@ export async function POST(request: Request) {
   );
   const replayed = replay(idempotency);
   if (replayed) return replayed;
-  let task = await createTask(
-    {
-      id: auth.userId,
-      login: auth.userLogin,
-      name: auth.userName,
-      avatarUrl: auth.userAvatarUrl,
-    },
-    auth.projectId,
-    { title, status, due },
-  );
-  const note = typeof body.note === 'string' ? body.note.trim() : '';
-  if (note)
-    task =
-      (await updateTask(auth.projectId, {
-        id: task.id,
-        title: task.title,
-        note: note.slice(0, 2000),
-        due: task.due,
-        tag: task.tag,
-        ownerId: task.owner.id,
-        status: task.status,
-        expectedUpdatedAt: task.updatedAt,
-      })) ?? task;
-  await recordAgentUpdate(
-    auth,
-    task.id,
-    'created',
-    `Created task: ${task.title}`,
-  );
+  let task: Awaited<ReturnType<typeof createTask>> | null = null;
+  try {
+    task = await createTask(
+      {
+        id: auth.userId,
+        login: auth.userLogin,
+        name: auth.userName,
+        avatarUrl: auth.userAvatarUrl,
+      },
+      auth.projectId,
+      { title, status, due },
+    );
+    const note = typeof body.note === 'string' ? body.note.trim() : '';
+    if (note)
+      task =
+        (await updateTask(auth.projectId, {
+          id: task.id,
+          title: task.title,
+          note: note.slice(0, 2000),
+          due: task.due,
+          tag: task.tag,
+          ownerId: task.owner.id,
+          status: task.status,
+          expectedUpdatedAt: task.updatedAt,
+        })) ?? task;
+    await recordAgentUpdate(
+      auth,
+      task.id,
+      'created',
+      `Created task: ${task.title}`,
+    );
+  } catch (error) {
+    if (idempotency.kind === 'acquired') {
+      // Once the card exists, a retry must replay it rather than create a
+      // duplicate; before that, release the key so the retry can proceed.
+      if (task)
+        await completeIdempotentRequest(
+          idempotency.reservation,
+          { ok: true, data: publicTask(task) },
+          201,
+        ).catch(() => abortIdempotentRequest(idempotency.reservation));
+      else await abortIdempotentRequest(idempotency.reservation);
+    }
+    throw error;
+  }
   const response = { ok: true, data: publicTask(task) };
   if (idempotency.kind === 'acquired')
     await completeIdempotentRequest(idempotency.reservation, response, 201);
@@ -878,6 +894,12 @@ export async function PATCH(request: Request) {
         409,
       );
     }
+    // Release the key on unexpected failures too, so a retry is not reported
+    // as "in progress" forever.
+    if (idempotency.kind === 'acquired')
+      await abortIdempotentRequest(idempotency.reservation).catch(
+        () => undefined,
+      );
     throw error;
   }
   if (idempotency.kind === 'acquired')

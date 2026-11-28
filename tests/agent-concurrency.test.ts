@@ -87,6 +87,75 @@ describe('Agent mutation coordination', () => {
     });
   });
 
+  it('releases the key when the request fails so a retry can succeed', async () => {
+    const request = () =>
+      new Request(`${origin}/api/v1/tasks`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenOne}`,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'failing-create-key',
+        },
+        body: JSON.stringify({ title: 'Retry me', status: 'ideas' }),
+      });
+    database.exec(
+      "CREATE TRIGGER fail_task_insert BEFORE INSERT ON tasks BEGIN SELECT RAISE(ABORT, 'boom'); END",
+    );
+    await expect(POST(request())).rejects.toThrow('boom');
+    database.exec('DROP TRIGGER fail_task_insert');
+
+    expect((await POST(request())).status).toBe(201);
+  });
+
+  it('takes over a pending key abandoned by a dead request and expires old keys', async () => {
+    const body = JSON.stringify({ title: 'Abandoned', status: 'ideas' });
+    const { createHash } = await import('node:crypto');
+    const requestHash = createHash('sha256').update(body).digest('hex');
+    const now = Date.now();
+    const insert = database.sqlite.prepare(
+      'INSERT INTO agent_idempotency_keys (token_id, key, operation, response_json, created_at) VALUES (?, ?, ?, ?, ?)',
+    );
+    insert.run(
+      tokenOneId,
+      'abandoned-key',
+      'task:create',
+      JSON.stringify({
+        __kanbyIdempotency: 1,
+        state: 'pending',
+        requestHash,
+        ownerNonce: 'dead',
+      }),
+      now - 10 * 60 * 1000,
+    );
+    insert.run(
+      tokenOneId,
+      'ancient-key',
+      'task:create',
+      '{}',
+      now - 2 * 86_400_000,
+    );
+
+    const response = await POST(
+      new Request(`${origin}/api/v1/tasks`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${tokenOne}`,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'abandoned-key',
+        },
+        body,
+      }),
+    );
+    expect(response.status).toBe(201);
+    expect(
+      database.sqlite
+        .prepare(
+          "SELECT key FROM agent_idempotency_keys WHERE key IN ('abandoned-key', 'ancient-key')",
+        )
+        .all(),
+    ).toEqual([{ key: 'abandoned-key' }]);
+  });
+
   it('does not let another Agent Token complete a claimed task', async () => {
     const task = seedTask(database, { id: 'task-claimed' });
     expect(
