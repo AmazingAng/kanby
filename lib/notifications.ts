@@ -310,20 +310,26 @@ async function deliver(channel: ChannelRow, text: string) {
   }
 }
 
+type DeliveryOutcome =
+  | { status: 'sent' }
+  | { status: 'failed'; error: string }
+  | { status: 'suppressed'; reason: SuppressionReason };
+
 async function recordDelivery(
   channel: { id: string; kind: string },
-  event: TaskNotification,
-  error: string | null,
+  event: { projectId: string; taskId: string | null; kind: string },
+  recipientKey: string,
+  outcome: DeliveryOutcome,
 ) {
-  if (error)
+  if (outcome.status === 'failed')
     // Never log the webhook URL: it embeds the bot key.
     console.error(
-      `Kanby notification ${channel.kind} channel ${channel.id} failed: ${error}`,
+      `Kanby notification ${channel.kind} channel ${channel.id} failed: ${outcome.error}`,
     );
   await database()
     .prepare(
-      `INSERT INTO notification_deliveries (id, project_id, channel_id, task_id, event_kind, status, error, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO notification_deliveries (id, project_id, channel_id, task_id, event_kind, status, error, recipient_key, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       crypto.randomUUID(),
@@ -331,12 +337,79 @@ async function recordDelivery(
       channel.id,
       event.taskId,
       event.kind,
-      error ? 'failed' : 'sent',
-      error,
+      outcome.status,
+      outcome.status === 'failed'
+        ? outcome.error
+        : outcome.status === 'suppressed'
+          ? outcome.reason
+          : null,
+      recipientKey,
       Date.now(),
     )
-    .run();
+    .run()
+    .catch((logError: unknown) =>
+      console.error('Kanby notification log failed', logError),
+    );
 }
+
+function outcomeOf(error: string | null): DeliveryOutcome {
+  return error ? { status: 'failed', error } : { status: 'sent' };
+}
+
+// --- Rate limiting -----------------------------------------------------------
+
+/** Repeated pings about the same card to the same recipient collapse into one. */
+export const NOTIFICATION_COALESCE_MS = 2 * 60_000;
+/** At most this many notifications reach one recipient per rolling hour. */
+export const NOTIFICATION_HOURLY_CAP = 20;
+
+export type SuppressionReason = 'coalesced' | 'hourly_cap';
+
+/**
+ * Decides, before anything is sent, which recipients may be notified about this
+ * task now. Only successful deliveries count. Suppressed decisions are logged
+ * as `suppressed` deliveries so the history stays complete.
+ */
+export async function throttleRecipients(
+  recipientKeys: string[],
+  taskId: string,
+  now = Date.now(),
+) {
+  const decisions = new Map<string, SuppressionReason | null>();
+  if (recipientKeys.length === 0) return decisions;
+  const recent = await database()
+    .prepare(
+      `SELECT recipient_key, task_id, created_at FROM notification_deliveries
+       WHERE recipient_key IN (SELECT value FROM json_each(?))
+         AND status = 'sent' AND created_at > ?`,
+    )
+    .bind(JSON.stringify(recipientKeys), now - 60 * 60_000)
+    .all<{
+      recipient_key: string;
+      task_id: string | null;
+      created_at: number;
+    }>();
+  for (const key of recipientKeys) {
+    const rows = recent.results.filter((row) => row.recipient_key === key);
+    decisions.set(
+      key,
+      rows.some(
+        (row) =>
+          row.task_id === taskId &&
+          Number(row.created_at) > now - NOTIFICATION_COALESCE_MS,
+      )
+        ? 'coalesced'
+        : rows.length >= NOTIFICATION_HOURLY_CAP
+          ? 'hourly_cap'
+          : null,
+    );
+  }
+  return decisions;
+}
+
+const userKey = (userId: string) => `user:${userId}`;
+const channelKey = (channel: Pick<ChannelRow, 'id' | 'user_id'>) =>
+  channel.user_id ? userKey(channel.user_id) : `channel:${channel.id}`;
 
 export async function sendTaskNotification(event: TaskNotification) {
   if (recoverySnapshot() || event.recipients.length === 0) return;
@@ -347,10 +420,51 @@ export async function sendTaskNotification(event: TaskNotification) {
   // WeChat (hosted iLink binding) is each member's preferred channel; their
   // personal Feishu/WeCom bots are only a fallback when WeChat cannot deliver.
   const { activeWeixinUsers, sendWeixinText } = await import('@/lib/weixin');
-  const weixinUsers = await activeWeixinUsers(recipientIds);
+  const [weixinUsers, channels] = await Promise.all([
+    activeWeixinUsers(recipientIds),
+    database()
+      .prepare(
+        `SELECT id, project_id, user_id, kind, webhook_url, secret, enabled, updated_at
+       FROM notification_channels
+       WHERE project_id = ? AND enabled = 1
+         AND (user_id IS NULL OR user_id IN (SELECT value FROM json_each(?)))`,
+      )
+      .bind(event.projectId, JSON.stringify(recipientIds))
+      .all<ChannelRow>(),
+  ]);
+  const throttled = await throttleRecipients(
+    [
+      ...new Set([
+        ...[...weixinUsers].map(userKey),
+        ...channels.results.map(channelKey),
+      ]),
+    ],
+    event.taskId,
+  );
+  const suppressed = new Set<string>();
+  const suppress = async (
+    channel: { id: string; kind: string },
+    key: string,
+  ) => {
+    const reason = throttled.get(key);
+    if (!reason) return false;
+    if (!suppressed.has(key)) {
+      suppressed.add(key);
+      await recordDelivery(channel, event, key, {
+        status: 'suppressed',
+        reason,
+      });
+    }
+    return true;
+  };
   const deliveredByWeixin = new Set<string>();
   await Promise.all(
     [...weixinUsers].map(async (userId) => {
+      const channel = { id: `weixin:${userId}`, kind: 'weixin' };
+      if (await suppress(channel, userKey(userId))) {
+        deliveredByWeixin.add(userId);
+        return;
+      }
       const names = event.recipients
         .filter((recipient) => recipient.userId === userId)
         .map((recipient) => recipient.name);
@@ -359,24 +473,9 @@ export async function sendTaskNotification(event: TaskNotification) {
         notificationText(event, names),
       );
       if (!error) deliveredByWeixin.add(userId);
-      await recordDelivery(
-        { id: `weixin:${userId}`, kind: 'weixin' },
-        event,
-        error,
-      ).catch((logError: unknown) =>
-        console.error('Kanby notification log failed', logError),
-      );
+      await recordDelivery(channel, event, userKey(userId), outcomeOf(error));
     }),
   );
-  const channels = await database()
-    .prepare(
-      `SELECT id, project_id, user_id, kind, webhook_url, secret, enabled, updated_at
-       FROM notification_channels
-       WHERE project_id = ? AND enabled = 1
-         AND (user_id IS NULL OR user_id IN (SELECT value FROM json_each(?)))`,
-    )
-    .bind(event.projectId, JSON.stringify(recipientIds))
-    .all<ChannelRow>();
   await Promise.all(
     channels.results
       .filter(
@@ -384,24 +483,75 @@ export async function sendTaskNotification(event: TaskNotification) {
           !channel.user_id || !deliveredByWeixin.has(channel.user_id),
       )
       .map(async (channel) => {
+        if (await suppress(channel, channelKey(channel))) return;
         const names = channel.user_id
           ? event.recipients
               .filter((recipient) => recipient.userId === channel.user_id)
               .map((recipient) => recipient.name)
           : event.recipients.map((recipient) => recipient.name);
         const error = await deliver(channel, notificationText(event, names));
-        await recordDelivery(channel, event, error).catch((logError: unknown) =>
-          console.error('Kanby notification log failed', logError),
+        await recordDelivery(
+          channel,
+          event,
+          channelKey(channel),
+          outcomeOf(error),
         );
       }),
   );
 }
 
-/** Best effort: never throws and, when the runtime allows, runs after the response. */
-export async function notifyTaskEvent(event: TaskNotification) {
-  const task = sendTaskNotification(event).catch((error: unknown) =>
-    console.error('Kanby notification dispatch failed', error),
+/**
+ * Sends an account/security notice to one member: WeChat first, otherwise
+ * each of their personal bots (in any project). Never rate limited.
+ */
+export async function sendMemberNotice(
+  userId: string,
+  kind: string,
+  text: string,
+) {
+  if (recoverySnapshot()) return;
+  await ensureSchema();
+  const { activeWeixinUsers, sendWeixinText } = await import('@/lib/weixin');
+  const key = userKey(userId);
+  if ((await activeWeixinUsers([userId])).has(userId)) {
+    const error = await sendWeixinText(userId, text);
+    await recordDelivery(
+      { id: `weixin:${userId}`, kind: 'weixin' },
+      { projectId: '', taskId: null, kind },
+      key,
+      outcomeOf(error),
+    );
+    if (!error) return;
+  }
+  const channels = await database()
+    .prepare(
+      `SELECT id, project_id, user_id, kind, webhook_url, secret, enabled, updated_at
+       FROM notification_channels WHERE user_id = ? AND enabled = 1
+       ORDER BY created_at`,
+    )
+    .bind(userId)
+    .all<ChannelRow>();
+  const seen = new Set<string>();
+  await Promise.all(
+    channels.results
+      .filter((channel) => {
+        if (seen.has(channel.webhook_url)) return false;
+        seen.add(channel.webhook_url);
+        return true;
+      })
+      .map(async (channel) => {
+        const error = await deliver(channel, text);
+        await recordDelivery(
+          channel,
+          { projectId: channel.project_id, taskId: null, kind },
+          key,
+          outcomeOf(error),
+        );
+      }),
   );
+}
+
+async function inBackground(task: Promise<unknown>) {
   const runtime = (await import('cloudflare:workers')) as {
     waitUntil?: (promise: Promise<unknown>) => void;
   };
@@ -414,4 +564,22 @@ export async function notifyTaskEvent(event: TaskNotification) {
     }
   }
   await task;
+}
+
+/** Best effort: never throws and, when the runtime allows, runs after the response. */
+export async function notifyMember(userId: string, kind: string, text: string) {
+  await inBackground(
+    sendMemberNotice(userId, kind, text).catch((error: unknown) =>
+      console.error('Kanby member notice failed', error),
+    ),
+  );
+}
+
+/** Best effort: never throws and, when the runtime allows, runs after the response. */
+export async function notifyTaskEvent(event: TaskNotification) {
+  await inBackground(
+    sendTaskNotification(event).catch((error: unknown) =>
+      console.error('Kanby notification dispatch failed', error),
+    ),
+  );
 }

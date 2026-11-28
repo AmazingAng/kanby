@@ -586,11 +586,18 @@ export const notificationDeliveries = sqliteTable(
     eventKind: text('event_kind').notNull(),
     status: text('status').notNull(),
     error: text('error'),
+    // Who the delivery was for: `user:<id>` or `channel:<id>` for a project
+    // bot. Used to coalesce and cap notifications per recipient.
+    recipientKey: text('recipient_key'),
     createdAt: integer('created_at').notNull(),
   },
   (table) => [
     index('idx_notification_deliveries_project').on(
       table.projectId,
+      table.createdAt,
+    ),
+    index('idx_notification_deliveries_recipient').on(
+      table.recipientKey,
       table.createdAt,
     ),
   ],
