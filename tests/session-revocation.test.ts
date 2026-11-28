@@ -59,6 +59,7 @@ describe('server-side session revocation', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
     database.close();
   });
@@ -94,6 +95,16 @@ describe('server-side session revocation', () => {
     expect(await getSessionUser(withCookie(legacy))).toBeNull();
     const fresh = await createSessionToken(bob, sessionSecret);
     expect(await getSessionUser(withCookie(fresh))).not.toBeNull();
+  });
+
+  it('still clears the cookie when the revocation cannot be stored', async () => {
+    const token = await createSessionToken(bob, sessionSecret);
+    database.exec('DROP TABLE session_revocations');
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const response = await logout(withCookie(token, 'POST'));
+    expect(response.status).toBe(303);
+    expect(response.headers.get('Set-Cookie')).toContain('Max-Age=0');
+    expect(console.error).toHaveBeenCalled();
   });
 
   it('fails closed when revocation cannot be checked', async () => {
