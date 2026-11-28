@@ -17,8 +17,8 @@
     `UPDATE`：按当前最大任务编号初始化，编号以后只增不减。
 - 不新增 secret。Feishu/企业微信机器人 webhook 和签名密钥改为用**已有的**
   `WEIXIN_CREDENTIAL_KEY` 加密（预览、生产都已声明）。注意：此后轮换该 key 会同时
-  让已绑定的微信通知和所有机器人通知失效（无法解密的渠道会被跳过，不会发送），
-  需要成员重新添加机器人。
+  让已绑定的微信通知和所有机器人通知失效。无法解密的机器人不会发送，在设置页显示为
+  「无法读取，请删除后重新添加」，删除后即可重新添加（删除前仍占用每个范围 3 个的名额）。
 - 已有的明文机器人记录在第一次被读取（打开设置页或发送通知）时自动重新加密，
   无需维护 SQL。上线一段时间后可用只读查询确认：
   `SELECT COUNT(*) AS plaintext FROM notification_channels WHERE webhook_url LIKE 'https://%'`
@@ -65,12 +65,13 @@ fs.writeFileSync(
         Token 仍然 401。
   - [ ] 删除编号最大的已归档任务后新建任务，编号不复用。
   - [ ] GitHub 以“not planned”关闭关联 Issue，卡片不移动。
+  - [ ] 任务详情里编辑验收条件时按 Esc 只取消该条编辑，不关闭对话框。
   - [ ] 新加一个机器人：`SELECT webhook_url FROM notification_channels` 显示 `v1.` 开头；
         交出卡片后机器人收到消息。
   - [ ] 任务详情：Esc 关闭（有冲突或保存失败时不关闭）、Tab 不跑出对话框、关闭后焦点
         回到卡片。
   - [ ] CLI 0.8.0（仓库内 `node packages/cli/bin/kanby.js`）：`kanby auth login --url <预览>`
-        在提示符输入 Token 成功；`KANBY_URL` 换成别的地址时不发送保存的 Token。
+        在提示符输入 Token 成功，`printf '%s\n' <token> | kanby auth login --token-stdin` 也成功；`KANBY_URL` 换成别的地址时不发送保存的 Token。
 
 ## 生产
 
