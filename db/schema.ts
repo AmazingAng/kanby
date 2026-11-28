@@ -27,6 +27,8 @@ export const projects = sqliteTable(
     name: text('name').notNull(),
     slug: text('slug'),
     ownerId: text('owner_id'),
+    // Highest KANBY-n ever issued; never decreases, so numbers are not reused.
+    lastTaskNumber: integer('last_task_number').notNull().default(0),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
   },

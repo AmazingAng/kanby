@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DELETE as deleteTaskRoute } from '@/app/api/tasks/route';
 import { createSessionToken, SESSION_COOKIE } from '@/lib/auth';
 import {
+  createTask,
   createTaskAttachment,
   listTasks,
   permanentlyDeleteArchivedTask,
@@ -62,6 +63,40 @@ describe('task archive and permanent deletion', () => {
     expect((await listTasks('project-1')).map((item) => item.id)).toContain(
       task.id,
     );
+  });
+
+  it('never reuses the number of a deleted highest-numbered task', async () => {
+    const user = {
+      id: 'user-1',
+      login: 'alice',
+      name: 'Alice',
+      avatarUrl: null,
+    };
+    const first = await createTask(user, 'project-1', {
+      title: 'One',
+      status: 'ideas',
+    });
+    const second = await createTask(user, 'project-1', {
+      title: 'Two',
+      status: 'ideas',
+    });
+    expect([first.number, second.number]).toEqual([1, 2]);
+    const archived = await setTaskArchived(
+      'project-1',
+      second.id,
+      true,
+      second.updatedAt,
+    );
+    await permanentlyDeleteArchivedTask(
+      'project-1',
+      second.id,
+      archived!.updatedAt,
+    );
+    const third = await createTask(user, 'project-1', {
+      title: 'Three',
+      status: 'ideas',
+    });
+    expect(third.number).toBe(3);
   });
 
   it('permanently deletes only archived tasks and returns R2 cleanup keys', async () => {

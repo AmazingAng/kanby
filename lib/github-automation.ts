@@ -3,6 +3,8 @@ import {
   database,
   ensureSchema,
   listTasks,
+  reserveTaskNumberStatement,
+  TASK_NUMBER_SQL,
   type ColumnId,
   type TaskRecord,
 } from '@/lib/db';
@@ -263,6 +265,7 @@ export async function importGitHubIssueTask(
     event.title.trim().slice(0, 160) || `GitHub Issue #${event.item_number}`;
   const state = event.action === 'closed' ? 'closed' : 'open';
   await db.batch([
+    reserveTaskNumberStatement(db, projectId),
     db
       .prepare(
         `INSERT OR IGNORE INTO github_issue_imports
@@ -283,7 +286,7 @@ export async function importGitHubIssueTask(
         `INSERT INTO tasks
          (id, project_id, task_number, title, note, tag, owner_id, owner_login, owner_name,
           owner_avatar_url, due, status, position, created_at, updated_at, archived_at, created_by)
-         SELECT ?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM tasks WHERE project_id = ?), ?, ?, '代码', ?, ?, ?, ?, NULL, 'ideas',
+         SELECT ?, ?, ${TASK_NUMBER_SQL}, ?, ?, '代码', ?, ?, ?, ?, NULL, 'ideas',
                 COALESCE((SELECT MAX(position) + 1 FROM tasks WHERE project_id = ? AND status = 'ideas' AND archived_at IS NULL), 0),
                 ?, ?, NULL, ?
          WHERE EXISTS (

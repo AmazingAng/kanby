@@ -807,6 +807,29 @@ export async function listTasks(
   );
 }
 
+/**
+ * Reserves the next KANBY-n number for a project. The per-project counter
+ * never goes down, so deleting the highest-numbered task cannot hand its
+ * number (and any `Kanby-Task: KANBY-n` PR trailers) to a new card. MAX()
+ * with the existing numbers keeps it correct for rows created before the
+ * counter existed. Run it in the same batch, before the INSERT that reads
+ * TASK_NUMBER_SQL.
+ */
+export function reserveTaskNumberStatement(db: D1Database, projectId: string) {
+  return db
+    .prepare(
+      `UPDATE projects SET last_task_number = MAX(
+         last_task_number,
+         (SELECT COALESCE(MAX(task_number), 0) FROM tasks WHERE project_id = ?)
+       ) + 1 WHERE id = ?`,
+    )
+    .bind(projectId, projectId);
+}
+
+/** The number reserved by reserveTaskNumberStatement; binds one project id. */
+export const TASK_NUMBER_SQL =
+  '(SELECT last_task_number FROM projects WHERE id = ?)';
+
 export async function createTask(
   user: AuthUser,
   projectId: string,
@@ -846,11 +869,12 @@ export async function createTask(
     acceptanceCriteria: [],
   };
   const statements: D1PreparedStatement[] = [
+    reserveTaskNumberStatement(db, projectId),
     db
       .prepare(
         `INSERT INTO tasks
         (id, project_id, task_number, title, note, tag, owner_id, owner_login, owner_name, owner_avatar_url, due, status, position, created_at, updated_at, created_by)
-       VALUES (?, ?, (SELECT COALESCE(MAX(task_number), 0) + 1 FROM tasks WHERE project_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ${TASK_NUMBER_SQL}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         task.id,
@@ -897,7 +921,11 @@ export async function createTask(
     );
   }
   await db.batch(statements);
-  return task;
+  const stored = await db
+    .prepare('SELECT task_number FROM tasks WHERE id = ?')
+    .bind(task.id)
+    .first<{ task_number: number }>();
+  return { ...task, number: Number(stored?.task_number ?? task.number) };
 }
 
 export class TaskRevisionConflictError extends Error {
@@ -1338,28 +1366,32 @@ export async function splitTask(
   const firstPosition = Number(positionRow?.position ?? 0);
   const now = Math.max(Date.now(), Number(parent.updated_at) + 1);
   const taskIds = input.titles.map(() => crypto.randomUUID());
-  const statements: D1PreparedStatement[] = input.titles.map((title, index) =>
-    db
-      .prepare(
-        `INSERT INTO tasks
+  const statements: D1PreparedStatement[] = input.titles.flatMap(
+    (title, index) => [
+      reserveTaskNumberStatement(db, projectId),
+      db
+        .prepare(
+          `INSERT INTO tasks
          (id, project_id, task_number, title, note, tag, owner_id, owner_login, owner_name, owner_avatar_url, due, status, position, created_at, updated_at, created_by, parent_task_id)
          SELECT ?, project_id,
-                (SELECT COALESCE(MAX(numbered.task_number), 0) + 1 FROM tasks numbered WHERE numbered.project_id = tasks.project_id),
+                ${TASK_NUMBER_SQL},
                 ?, '', tag, owner_id, owner_login, owner_name, owner_avatar_url, due, 'ideas', ?, ?, ?, ?, id
          FROM tasks
          WHERE id = ? AND project_id = ? AND archived_at IS NULL AND parent_task_id IS NULL AND updated_at = ?`,
-      )
-      .bind(
-        taskIds[index],
-        title,
-        firstPosition + index,
-        now,
-        now,
-        user.id,
-        input.parentTaskId,
-        projectId,
-        input.expectedUpdatedAt,
-      ),
+        )
+        .bind(
+          taskIds[index],
+          projectId,
+          title,
+          firstPosition + index,
+          now,
+          now,
+          user.id,
+          input.parentTaskId,
+          projectId,
+          input.expectedUpdatedAt,
+        ),
+    ],
   );
   for (const taskId of taskIds) {
     statements.push(

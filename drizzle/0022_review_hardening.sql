@@ -1,0 +1,1 @@
+ALTER TABLE `projects` ADD `last_task_number` integer DEFAULT 0 NOT NULL;
