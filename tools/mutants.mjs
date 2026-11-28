@@ -25,10 +25,38 @@ const mutations = [
     test: 'tests/weixin-mini.test.ts',
   },
   {
+    name: 'reorder never changes a neighbour column',
+    file: 'lib/db.ts',
+    from: "WHERE json_extract(j.value, '$.status') = tasks.status",
+    to: 'WHERE 1 = 1',
+    test: 'tests/task-reorder.test.ts',
+  },
+  {
+    name: 'unlinked repository stops driving tasks',
+    file: 'lib/github-db.ts',
+    from: 'return `EXISTS (',
+    to: 'return `1 OR EXISTS (',
+    test: 'tests/github-security.test.ts',
+  },
+  {
+    name: 'backfill never moves cards',
+    file: 'lib/github-webhook.ts',
+    from: 'automationTrigger: options.backfill ? undefined : automationTrigger,',
+    to: 'automationTrigger,',
+    test: 'tests/github-backfill.test.ts',
+  },
+  {
+    name: 'scheduled recovery signature expires',
+    file: 'lib/github.ts',
+    from: 'if (Math.abs(now - Number(timestamp)) > RECOVERY_SIGNATURE_MAX_AGE_MS)',
+    to: 'if (Number(timestamp) < 0)',
+    test: 'tests/github-recovery-limits.test.ts',
+  },
+  {
     name: 'mini binding expiry',
     file: 'app/api/mini/account/route.ts',
-    from: 'AND expires_at>?',
-    to: 'AND ?>0',
+    from: 'SELECT ?,app_id,subject_hash,?,? FROM mini_pairs WHERE code_hash=? AND app_id=? AND expires_at>?',
+    to: 'SELECT ?,app_id,subject_hash,?,? FROM mini_pairs WHERE code_hash=? AND app_id=? AND ?>0',
     test: 'tests/weixin-mini.test.ts',
   },
   {
@@ -237,8 +265,8 @@ const mutations = [
   {
     name: 'create note preserves deadline',
     file: 'app/api/v1/tasks/route.ts',
-    from: 'due: task.due,\n        tag: task.tag,',
-    to: 'due: undefined,\n        tag: task.tag,',
+    from: 'due: task.due,\n          tag: task.tag,',
+    to: 'due: undefined,\n          tag: task.tag,',
     test: 'tests/agent-deadline-workflow.test.ts',
   },
   {
@@ -307,8 +335,8 @@ const mutations = [
   {
     name: 'GitHub API redirect rejection',
     file: 'lib/github.ts',
-    from: "redirect: 'manual',",
-    to: "redirect: 'follow',",
+    from: "headers,\n    redirect: 'manual',",
+    to: "headers,\n    redirect: 'follow',",
     test: 'tests/github-security.test.ts',
   },
   {
