@@ -4,6 +4,51 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 const mutations = [
   {
+    name: 'mini board client cache account isolation',
+    file: 'miniprogram/pages/index/index.js',
+    from: 'canWrite() {\n    this.detailCache();',
+    to: 'canWrite() {',
+    test: 'tests/weixin-mini-client.test.ts',
+  },
+  {
+    name: 'mini board client matched task writes',
+    file: 'miniprogram/pages/index/index.js',
+    from: 'this.matchesTask(this.data.task) &&',
+    to: 'true &&',
+    test: 'tests/weixin-mini-client.test.ts',
+  },
+  {
+    name: 'mini old request cannot remove new session',
+    file: 'miniprogram/utils/api.js',
+    from: 'wx.getStorageSync(tokenKey) === token',
+    to: 'true',
+    test: 'tests/weixin-mini-client.test.ts',
+  },
+  {
+    name: 'mini board backend: board path',
+    file: 'app/api/mini/tasks/route.ts',
+    from: "query.get('view') === 'board'",
+    to: "query.get('view') === 'disabled-board'",
+    test: 'tests/weixin-mini.test.ts',
+    testName: 'returns the complete active board',
+  },
+  {
+    name: 'mini board backend: targeted lookup reverts to full scan',
+    file: 'app/api/mini/tasks/route.ts',
+    from: 'const task = await getTask(projectId, id);',
+    to: 'const task = (await listTasks(projectId)).find((task) => task.id === id || `KANBY-${task.number}` === id);',
+    test: 'tests/weixin-mini.test.ts',
+    testName: 'keeps detail query scope and returned row cost bounded',
+  },
+  {
+    name: 'mini board backend: archived detail scoping',
+    file: 'lib/db.ts',
+    from: "WHERE t.project_id = ? AND t.archived_at IS NULL\n         AND ${taskNumber === null ? 't.id' : 't.task_number'} = ?",
+    to: "WHERE t.project_id = ?\n         AND ${taskNumber === null ? 't.id' : 't.task_number'} = ?",
+    test: 'tests/weixin-mini.test.ts',
+    testName: 'excludes archived and foreign tasks by id and reference',
+  },
+  {
     name: 'mini template hides login after authentication',
     file: 'miniprogram/pages/index/index.wxml',
     from: 'wx:if="{{!authenticated}}"',
@@ -912,7 +957,14 @@ function hash(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
-for (const mutation of mutations) {
+// Run a focused subset with MUTATION_FILTER='mini board backend' node tools/mutants.mjs.
+const filter = process.env.MUTATION_FILTER;
+const selected = filter
+  ? mutations.filter((mutation) => mutation.name.includes(filter))
+  : mutations;
+if (selected.length === 0) throw new Error(`No mutations match: ${filter}`);
+
+for (const mutation of selected) {
   const original = readFileSync(mutation.file, 'utf8');
   const occurrences = original.split(mutation.from).length - 1;
   if (occurrences !== 1) {
@@ -924,10 +976,19 @@ for (const mutation of mutations) {
   writeFileSync(mutation.file, original.replace(mutation.from, mutation.to));
   let result;
   try {
-    result = spawnSync('npx', ['vitest', 'run', mutation.test], {
-      encoding: 'utf8',
-      stdio: 'pipe',
-    });
+    result = spawnSync(
+      'npx',
+      [
+        'vitest',
+        'run',
+        mutation.test,
+        ...(mutation.testName ? ['-t', mutation.testName] : []),
+      ],
+      {
+        encoding: 'utf8',
+        stdio: 'pipe',
+      },
+    );
   } finally {
     writeFileSync(mutation.file, original);
   }
@@ -948,5 +1009,5 @@ for (const mutation of mutations) {
 }
 
 process.stdout.write(
-  `Mutation gate passed: ${mutations.length}/${mutations.length} killed.\n`,
+  `Mutation gate passed: ${selected.length}/${selected.length} killed.\n`,
 );

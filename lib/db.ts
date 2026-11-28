@@ -854,6 +854,74 @@ export function reserveTaskNumberStatement(db: D1Database, projectId: string) {
 export const TASK_NUMBER_SQL =
   '(SELECT last_task_number FROM projects WHERE id = ?)';
 
+export async function getTask(
+  projectId: string,
+  reference: string,
+): Promise<TaskRecord | null> {
+  await ensureSchema();
+  const db = database();
+  // Preserve the mini API's exact, canonical KANBY-N reference matching.
+  const number = /^KANBY-(0|[1-9]\d*)$/.exec(reference)?.[1];
+  const taskNumber = number === undefined ? null : Number(number);
+  if (taskNumber !== null && !Number.isSafeInteger(taskNumber)) return null;
+  const task = await db
+    .prepare(
+      `SELECT t.id, t.task_number, t.title, t.note, t.tag, t.owner_id, t.owner_login, t.owner_name, t.owner_avatar_url, t.due, t.status, t.position, t.updated_at, t.archived_at, t.parent_task_id,
+         ${TURN_ROW_COLUMNS}
+       FROM tasks t ${TURN_ROW_JOINS}
+       WHERE t.project_id = ? AND t.archived_at IS NULL
+         AND ${taskNumber === null ? 't.id' : 't.task_number'} = ?`,
+    )
+    .bind(projectId, taskNumber ?? reference)
+    .first<TaskRow>();
+  if (!task) return null;
+  const [record, state] = await Promise.all([
+    hydrateTask(db, projectId, task),
+    db
+      .prepare(
+        `SELECT c.agent_name, c.lease_expires_at, c.updated_at,
+         e.body AS latest_progress, e.created_at AS latest_progress_at, u.name AS owner_name
+       FROM task_agent_claims c
+       LEFT JOIN agent_tokens at ON at.id = c.token_id
+       LEFT JOIN users u ON u.id = at.user_id
+       LEFT JOIN task_events e ON e.id = (
+         SELECT recent.id FROM task_events recent
+         WHERE recent.project_id = c.project_id AND recent.task_id = c.task_id
+           AND recent.kind = 'agent.progress' AND recent.created_at >= c.created_at
+         ORDER BY recent.created_at DESC, recent.id DESC LIMIT 1
+       )
+       WHERE c.task_id = ? AND c.project_id = ? AND c.lease_expires_at > ?`,
+      )
+      .bind(task.id, projectId, Date.now())
+      .first<{
+        agent_name: string;
+        lease_expires_at: number;
+        updated_at: number;
+        latest_progress: string | null;
+        latest_progress_at: number | null;
+        owner_name: string | null;
+      }>(),
+  ]);
+  return {
+    ...record,
+    agentState: state
+      ? {
+          agentName: state.agent_name,
+          agentLabel: state.owner_name
+            ? `${state.owner_name} 的 ${state.agent_name}`
+            : state.agent_name,
+          leaseExpiresAt: Number(state.lease_expires_at),
+          lastHeartbeatAt: Number(state.updated_at),
+          latestProgress: state.latest_progress,
+          latestProgressAt:
+            state.latest_progress_at == null
+              ? null
+              : Number(state.latest_progress_at),
+        }
+      : undefined,
+  };
+}
+
 export async function createTask(
   user: AuthUser,
   projectId: string,
@@ -1758,44 +1826,56 @@ export async function updateTask(
     .bind(input.id, projectId)
     .first<TaskRow>();
   if (!updated) return null;
-  const attachments = await db
-    .prepare(
-      'SELECT id, project_id, task_id, object_key, file_name, content_type, size, created_at FROM task_attachments WHERE task_id = ? AND project_id = ? ORDER BY created_at ASC',
-    )
-    .bind(input.id, projectId)
-    .all<TaskAttachmentRow>();
-  const acceptanceCriteria = await db
-    .prepare(
-      'SELECT id, task_id, body, completed, position, created_at, updated_at FROM task_acceptance_items WHERE task_id = ? AND project_id = ? ORDER BY position, created_at, id',
-    )
-    .bind(input.id, projectId)
-    .all<TaskAcceptanceCriterionRow>();
-  const assignees = await db
-    .prepare(
-      `SELECT ta.task_id, ta.user_id, u.login, u.name, u.avatar_url, ta.position
+  return hydrateTask(db, projectId, updated);
+}
+
+// Share the relationship loading and mapping used after a task update.
+async function hydrateTask(
+  db: D1Database,
+  projectId: string,
+  task: TaskRow,
+): Promise<TaskRecord> {
+  const [attachments, acceptanceCriteria, assignees, githubLink, parent] =
+    await Promise.all([
+      db
+        .prepare(
+          'SELECT id, project_id, task_id, object_key, file_name, content_type, size, created_at FROM task_attachments WHERE task_id = ? AND project_id = ? ORDER BY created_at ASC',
+        )
+        .bind(task.id, projectId)
+        .all<TaskAttachmentRow>(),
+      db
+        .prepare(
+          'SELECT id, task_id, body, completed, position, created_at, updated_at FROM task_acceptance_items WHERE task_id = ? AND project_id = ? ORDER BY position, created_at, id',
+        )
+        .bind(task.id, projectId)
+        .all<TaskAcceptanceCriterionRow>(),
+      db
+        .prepare(
+          `SELECT ta.task_id, ta.user_id, u.login, u.name, u.avatar_url, ta.position
        FROM task_assignees ta JOIN users u ON u.id = ta.user_id
        WHERE ta.task_id = ? AND ta.project_id = ?
        ORDER BY ta.position, ta.created_at, ta.user_id`,
-    )
-    .bind(input.id, projectId)
-    .all<TaskAssigneeRow>();
-  const githubLink = await db
-    .prepare(
-      `SELECT gtl.task_id, gr.full_name, gtl.kind, gtl.item_number, gtl.url, gtl.title, gtl.state, gtl.ci_status
-     FROM github_task_links gtl JOIN github_repositories gr ON gr.id = gtl.repository_id WHERE gtl.task_id = ? AND gtl.project_id = ?`,
-    )
-    .bind(input.id, projectId)
-    .first<TaskGitHubLinkRow>();
-  const parent = updated.parent_task_id
-    ? await db
-        .prepare(
-          'SELECT id, title, archived_at FROM tasks WHERE id = ? AND project_id = ?',
         )
-        .bind(updated.parent_task_id, projectId)
-        .first<ParentTaskRow>()
-    : null;
+        .bind(task.id, projectId)
+        .all<TaskAssigneeRow>(),
+      db
+        .prepare(
+          `SELECT gtl.task_id, gr.full_name, gtl.kind, gtl.item_number, gtl.url, gtl.title, gtl.state, gtl.ci_status
+     FROM github_task_links gtl JOIN github_repositories gr ON gr.id = gtl.repository_id WHERE gtl.task_id = ? AND gtl.project_id = ?`,
+        )
+        .bind(task.id, projectId)
+        .first<TaskGitHubLinkRow>(),
+      task.parent_task_id
+        ? db
+            .prepare(
+              'SELECT id, title, archived_at FROM tasks WHERE id = ? AND project_id = ?',
+            )
+            .bind(task.parent_task_id, projectId)
+            .first<ParentTaskRow>()
+        : null,
+    ]);
   return mapTask(
-    updated,
+    task,
     attachments.results.map(mapAttachment),
     acceptanceCriteria.results.map(mapAcceptanceCriterion),
     assignees.results.map(mapTaskAssignee),

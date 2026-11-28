@@ -24,7 +24,11 @@ function api(path, method = 'GET', data) {
           resolve(response.data);
           return;
         }
-        if (response.statusCode === 401) wx.removeStorageSync(tokenKey);
+        if (
+          response.statusCode === 401 &&
+          wx.getStorageSync(tokenKey) === token
+        )
+          wx.removeStorageSync(tokenKey);
         reject(
           Object.assign(new Error(response.data?.error || '请求失败，请重试'), {
             status: response.statusCode,
