@@ -4,6 +4,7 @@ import {
   projectGitHubSettings,
   recordLinkedTaskPush,
   saveGitHubInstallation,
+  setProjectGitHubRepositories,
   startGitHubDelivery,
   updateLinkedTaskCi,
   updateLinkedTasksFromGitHub,
@@ -13,7 +14,7 @@ import { githubApiRequest } from '@/lib/github';
 
 import { createMigratedDatabase, type TestD1Database } from './support/d1';
 import { configureEnvironment, seedProject } from './support/fixtures';
-import { seedTask } from './support/fixtures';
+import { linkGitHubRepository, seedTask } from './support/fixtures';
 
 describe('GitHub installation boundaries', () => {
   let database: TestD1Database;
@@ -135,6 +136,7 @@ describe('GitHub installation boundaries', () => {
          VALUES (?, 'project-1', 'repository-1', 'pull_request', 32, 'activity-timeline', 'https://github.com/xapi-labs/kanby/pull/32', 'Timeline', 'open', NULL, ?)`,
       )
       .run(task.id, now);
+    linkGitHubRepository(database, 'repository-1');
 
     const update = () =>
       updateLinkedTasksFromGitHub({
@@ -175,6 +177,93 @@ describe('GitHub installation boundaries', () => {
     ]);
   });
 
+  it('saves a selection of more than 99 repositories', async () => {
+    const insert = database.sqlite.prepare(
+      `INSERT INTO github_repositories
+       (id, installation_id, name, full_name, html_url, default_branch, private, active, updated_at)
+       VALUES (?, 'installation-many', ?, ?, 'https://github.com/test', 'main', 1, 1, 1)`,
+    );
+    const ids = Array.from({ length: 150 }, (_, index) => `repo-${index}`);
+    for (const id of ids) insert.run(id, id, `test/${id}`);
+    database.sqlite
+      .prepare(
+        `INSERT INTO github_installations
+         (id, account_id, account_login, account_type, repository_selection, html_url, created_at, updated_at)
+         VALUES ('installation-many', '1', 'test', 'Organization', 'all', NULL, 1, 1)`,
+      )
+      .run();
+    linkGitHubRepository(database, 'repo-0');
+
+    expect(await setProjectGitHubRepositories('project-1', ids)).toBe(true);
+    expect(
+      database.sqlite
+        .prepare(
+          "SELECT COUNT(*) AS n FROM github_project_repositories WHERE project_id = 'project-1'",
+        )
+        .get(),
+    ).toEqual({ n: 150 });
+    expect(
+      await setProjectGitHubRepositories('project-1', [...ids, 'foreign']),
+    ).toBe(false);
+  });
+
+  it('stops driving tasks once the project unlinks the repository', async () => {
+    const task = seedTask(database, { id: 'task-unlinked-repo' });
+    database.sqlite
+      .prepare(
+        `INSERT INTO github_task_links
+         (task_id, project_id, repository_id, kind, item_number, branch, url, title, state, ci_status, updated_at)
+         VALUES (?, 'project-1', 'repository-old', 'pull_request', 7, 'old-branch', 'https://github.com/test/old/pull/7', 'Old', 'open', NULL, 1)`,
+      )
+      .run(task.id);
+    linkGitHubRepository(database, 'repository-old');
+    database.sqlite
+      .prepare(
+        "DELETE FROM github_project_repositories WHERE repository_id = 'repository-old'",
+      )
+      .run();
+    const before = database.sqlite
+      .prepare('SELECT status, updated_at FROM tasks WHERE id = ?')
+      .get(task.id);
+
+    await updateLinkedTasksFromGitHub({
+      repositoryId: 'repository-old',
+      kind: 'pull_request',
+      number: 7,
+      title: 'Old',
+      state: 'merged',
+      url: 'https://github.com/test/old/pull/7',
+      targetStatus: 'shipped',
+    });
+    const activity = {
+      deliveryId: 'delivery-unlinked',
+      action: 'pushed',
+      actorLogin: 'alice',
+      actorAvatarUrl: null,
+      summary: 'old',
+    };
+    await recordLinkedTaskPush('repository-old', 'old-branch', activity);
+    await updateLinkedTaskCi(
+      'repository-old',
+      'old-branch',
+      'failure',
+      activity,
+    );
+
+    expect(
+      database.sqlite
+        .prepare('SELECT status, updated_at FROM tasks WHERE id = ?')
+        .get(task.id),
+    ).toEqual(before);
+    expect(
+      database.sqlite
+        .prepare(
+          "SELECT COUNT(*) AS n FROM task_events WHERE source = 'github'",
+        )
+        .get(),
+    ).toEqual({ n: 0 });
+  });
+
   it('routes Push activity only to tasks linked to the pushed branch', async () => {
     const linked = seedTask(database, { id: 'task-linked-push' });
     const unrelated = seedTask(database, { id: 'task-unrelated-push' });
@@ -207,6 +296,7 @@ describe('GitHub installation boundaries', () => {
       'Other work',
       now,
     );
+    linkGitHubRepository(database, 'repository-push');
 
     await recordLinkedTaskPush('repository-push', 'activity-timeline', {
       deliveryId: 'delivery-push-linked',
@@ -241,6 +331,7 @@ describe('GitHub installation boundaries', () => {
          VALUES (?, 'project-1', 'repository-ci', 'pull_request', 51, 'ci-branch', 'https://github.com/xapi-labs/kanby/pull/51', 'CI work', 'open', NULL, ?)`,
       )
       .run(task.id, now);
+    linkGitHubRepository(database, 'repository-ci');
     const activity = {
       deliveryId: 'delivery-ci-linked',
       action: 'completed',

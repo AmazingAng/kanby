@@ -279,32 +279,31 @@ export async function setProjectGitHubRepositories(
   const installation = await projectGitHubInstallation(projectId);
   if (!installation) return false;
   const unique = [...new Set(repositoryIds)].slice(0, 500);
+  // A single JSON parameter keeps any selection under D1's 100-parameter limit.
+  const selection = JSON.stringify(unique);
   if (unique.length > 0) {
-    const placeholders = unique.map(() => '?').join(', ');
     const allowed = await db
       .prepare(
-        `SELECT id FROM github_repositories WHERE installation_id = ? AND active = 1 AND id IN (${placeholders})`,
+        `SELECT COUNT(*) AS n FROM github_repositories
+         WHERE installation_id = ? AND active = 1
+           AND id IN (SELECT value FROM json_each(?))`,
       )
-      .bind(installation.installation_id, ...unique)
-      .all<{ id: string }>();
-    if (allowed.results.length !== unique.length) return false;
+      .bind(installation.installation_id, selection)
+      .first<{ n: number }>();
+    if (Number(allowed?.n ?? 0) !== unique.length) return false;
   }
   const now = Date.now();
-  const statements = [
+  await db.batch([
     db
       .prepare('DELETE FROM github_project_repositories WHERE project_id = ?')
       .bind(projectId),
-  ];
-  statements.push(
-    ...unique.map((repositoryId) =>
-      db
-        .prepare(
-          'INSERT INTO github_project_repositories (project_id, repository_id, created_at) VALUES (?, ?, ?)',
-        )
-        .bind(projectId, repositoryId, now),
-    ),
-  );
-  await runBatches(db, statements);
+    db
+      .prepare(
+        `INSERT INTO github_project_repositories (project_id, repository_id, created_at)
+         SELECT ?, value, ? FROM json_each(?)`,
+      )
+      .bind(projectId, now, selection),
+  ]);
   return true;
 }
 
@@ -800,6 +799,20 @@ export async function recordGitHubEvent(input: {
     .run();
 }
 
+/**
+ * Restricts linked-task lookups to projects that currently link the repository
+ * through their current installation. Task links and issue imports survive an
+ * unlink (for history), but must stop driving cards once it happens.
+ */
+function linkedProjectGuard(projectColumn: string) {
+  return `EXISTS (
+    SELECT 1 FROM github_project_repositories gpr
+    JOIN github_project_installations gpi ON gpi.project_id = gpr.project_id
+    JOIN github_repositories gr ON gr.id = gpr.repository_id
+      AND gr.installation_id = gpi.installation_id AND gr.active = 1
+    WHERE gpr.project_id = ${projectColumn} AND gpr.repository_id = ?)`;
+}
+
 export async function updateLinkedTasksFromGitHub(input: {
   repositoryId: string;
   kind: 'issue' | 'pull_request';
@@ -826,7 +839,8 @@ export async function updateLinkedTasksFromGitHub(input: {
        )
        SELECT linked_tasks.task_id, linked_tasks.project_id, t.status, t.updated_at
        FROM linked_tasks JOIN tasks t
-         ON t.id = linked_tasks.task_id AND t.project_id = linked_tasks.project_id`,
+         ON t.id = linked_tasks.task_id AND t.project_id = linked_tasks.project_id
+       WHERE ${linkedProjectGuard('linked_tasks.project_id')}`,
     )
     .bind(
       input.repositoryId,
@@ -835,6 +849,7 @@ export async function updateLinkedTasksFromGitHub(input: {
       input.kind,
       input.repositoryId,
       input.number,
+      input.repositoryId,
     )
     .all<{
       task_id: string;
@@ -942,9 +957,10 @@ export async function updateLinkedTaskCi(
     .prepare(
       `SELECT gtl.task_id, gtl.project_id, t.updated_at
        FROM github_task_links gtl JOIN tasks t ON t.id = gtl.task_id AND t.project_id = gtl.project_id
-       WHERE gtl.repository_id = ? AND gtl.branch = ? AND gtl.kind = 'pull_request'`,
+       WHERE gtl.repository_id = ? AND gtl.branch = ? AND gtl.kind = 'pull_request'
+         AND ${linkedProjectGuard('gtl.project_id')}`,
     )
-    .bind(repositoryId, branch)
+    .bind(repositoryId, branch, repositoryId)
     .all<{ task_id: string; project_id: string; updated_at: number }>();
   const automation = new Map<string, GitHubAutomationSettings>();
   await Promise.all(
@@ -1013,9 +1029,9 @@ export async function recordLinkedTaskPush(
       `SELECT gtl.task_id, gtl.project_id, t.updated_at
        FROM github_task_links gtl JOIN tasks t ON t.id = gtl.task_id AND t.project_id = gtl.project_id
        WHERE gtl.repository_id = ? AND gtl.branch = ? AND gtl.kind = 'pull_request'
-         AND t.archived_at IS NULL`,
+         AND t.archived_at IS NULL AND ${linkedProjectGuard('gtl.project_id')}`,
     )
-    .bind(repositoryId, branch)
+    .bind(repositoryId, branch, repositoryId)
     .all<{ task_id: string; project_id: string; updated_at: number }>();
   const { prepareTaskActivityStatement } = await import('@/lib/task-activity');
   const statements = links.results.flatMap((link) => {
