@@ -4,6 +4,13 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 const mutations = [
   {
+    name: 'mini template hides login after authentication',
+    file: 'miniprogram/pages/index/index.wxml',
+    from: 'wx:if="{{!authenticated}}"',
+    to: 'wx:if="!authenticated"',
+    test: 'tests/weixin-mini-client.test.ts',
+  },
+  {
     name: 'mini concurrent unlink refuses session issuance',
     file: 'lib/weixin-mini.ts',
     from: 'if (issued[1].meta.changes !== 1)',

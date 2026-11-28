@@ -3,21 +3,23 @@
 个人主体的小程序客户端：微信登录并绑定已有 Kanby 账号、项目切换、轮到我、
 卡片详情、评论、验收清单和显式验收。原生 WXML/WXSS/JavaScript，不使用 web-view。
 
-本次交付是源码和本地验证。尚无真实 AppID/Secret，未进行微信真机登录、平台
-编译审核、备案、发布或通知跳转联调。`touristappid` 只是开发工具占位值，不能登录。
+官方小程序 AppID 为 `wx358a6eafff0c9884`。源码已配置该公开标识；AppSecret 和
+代码上传密钥不包含在源码中。服务端部署和开发版上传结果见
+[发布记录](../docs/WEIXIN_MINI_RELEASE_20261128.md)，微信真机登录、
+平台审核、备案、正式发布和通知跳转仍需分别验证，不能由后端上线推断成功。
 
 ## 注册与配置
 
 1. 在 https://mp.weixin.qq.com 注册小程序，选择个人主体。按后台要求完成实名、
    认证、类目、隐私指引和小程序备案；Kanby 的任务协作功能能否归入个人可选类目，
    以平台实际审核为准。费用和最新政策以后台为准，本仓库不承诺审核结果。
-2. 用微信开发者工具导入本目录，将 `project.config.json` 的 `appid` 改为你的 AppID。
+2. 用微信开发者工具导入本目录；自托管时将 `project.config.json` 的 `appid` 改为你的 AppID。
    AppID 是公开标识，AppSecret 永远不能放进小程序代码、Git 或聊天中。
 3. Worker 端设置 `WEIXIN_MINI_APP_ID` 和 secret `WEIXIN_MINI_APP_SECRET`。
    本地开发使用 `.dev.vars`；仓库 `.env` 仅作为你的部署工具输入，不会自动成为
    Worker 运行时绑定。不要把根目录 `.env` 复制到此目录。
 4. 后端先备份 D1，再通过现有部署流程应用 `drizzle/0020_weixin_mini.sql`；
-   部署包含 `/api/mini/*`、`/mini` 的 Worker。当前对话没有执行生产迁移/部署。
+   部署包含 `/api/mini/*`、`/mini` 的 Worker，以对应发布记录确认迁移状态。
    0020 只添加四张 mini 表和索引，保留所有用户、项目、任务及 iLink 绑定。
 5. `config.js` 中的 `origin` 指向后端 HTTPS 域名，默认 `https://kanby.dev`。
    将同一域名添加为小程序的 request 合法域名；核实后台的备案、证书和访问要求。
@@ -26,6 +28,30 @@
 6. `/api/mini/*` 使用独立 bearer 会话，不需要向原来的网页接口开放 CORS。
    `CF-Connecting-IP` 限流键要求入口由 Cloudflare 提供可信客户端 IP；其他反向
    代理部署必须设置可信 IP 来源。缺失时共享 unknown 桶，默认每分钟 10 次登录。
+
+## 使用 miniprogram-ci 上传
+
+无需安装微信开发者工具，也可以用官方 `miniprogram-ci@2.1.31` 编译并上传开发版。
+需要在微信后台「开发管理 → 开发设置 → 小程序代码上传」下载该 AppID 的上传密钥，
+并把实际上传机器的出口 IP 加入上传 IP 白名单。不要关闭 IP 限制来绕过配置。
+
+官方实例的密钥放在仓库根目录 `private.wx358a6eafff0c9884.key`；该路径已由
+`*.key` 忽略规则排除。不要放到 `miniprogram/` 上传目录，不要将 AppSecret 当作上传密钥。
+在仓库根目录执行：
+
+```sh
+npx --yes --package miniprogram-ci@2.1.31 miniprogram-ci upload \
+  --pp ./miniprogram \
+  --pkp ./private.wx358a6eafff0c9884.key \
+  --appid wx358a6eafff0c9884 \
+  --uv 0.1.0 \
+  --ud 'Kanby 微信任务看板：登录、待办与验收' \
+  -r 1 \
+  --use-project-config true
+```
+
+上传成功仅代表开发版本已传到后台。体验版设置、测试人员、request 合法域名、
+真机验收以及提审和正式发布仍需分别完成；保留 `urlCheck: true`。
 
 ## 首次绑定
 
